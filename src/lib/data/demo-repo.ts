@@ -38,6 +38,12 @@ export function listCropYears(fieldId?: string) {
   return fieldId ? db.cropYears.filter((c) => c.fieldId === fieldId) : db.cropYears;
 }
 
+export function listTaxYears() {
+  const years = new Set(getDB().transactions.map((t) => t.taxYear));
+  years.add(FARM.currentTaxYear);
+  return Array.from(years).sort((a, b) => b - a);
+}
+
 export function listTransactions(filters: {
   taxYear?: number; type?: string; status?: string; fieldId?: string;
   customerId?: string; vendorId?: string; search?: string;

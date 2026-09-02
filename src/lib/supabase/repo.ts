@@ -116,6 +116,14 @@ function mapTransaction(r: any, splits: TransactionSplit[]): Transaction {
   };
 }
 
+export async function listTaxYears(): Promise<number[]> {
+  const { supabase, farm } = await ctx();
+  const { data } = await supabase.from("tax_year").select("year").eq("farm_business_id", farm.id);
+  const years = new Set((data ?? []).map((r: any) => r.year));
+  years.add(farm.currentTaxYear);
+  return Array.from(years).sort((a, b) => b - a);
+}
+
 const TXN_SELECT = "*, vendor:vendor_id(name), tax_year:tax_year_id(year), tax_category:tax_category_id(code)";
 
 export async function listTransactions(filters: {

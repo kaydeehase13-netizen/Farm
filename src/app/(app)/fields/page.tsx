@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { allFieldProfitability, getFarm } from "@/lib/data/repo";
 import { PageHeader, money, moneyPrecise } from "@/components/ui/stat-card";
+import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function FieldsPage() {
   const farm = await getFarm();
-  const rows = await allFieldProfitability(farm.currentTaxYear);
+  const taxYear = await getViewTaxYear();
+  const rows = await allFieldProfitability(taxYear);
   const totalAcres = rows.reduce((s, r) => s + r.acres, 0);
   const totalMargin = rows.reduce((s, r) => s + r.margin, 0);
 
@@ -12,7 +14,7 @@ export default async function FieldsPage() {
     <div>
       <PageHeader
         title="Fields"
-        description={`${rows.length} fields · ${totalAcres.toFixed(1)} acres · ${money(totalMargin)} total margin (${farm.currentTaxYear})`}
+        description={`${rows.length} fields · ${totalAcres.toFixed(1)} acres · ${money(totalMargin)} total margin (${taxYear})`}
         action={
           <div className="flex gap-2">
             <Link href="/fields/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">

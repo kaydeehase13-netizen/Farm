@@ -47,6 +47,11 @@ export async function listCropYears(fieldId?: string) {
   return demo.listCropYears(fieldId);
 }
 
+export async function listTaxYears() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listTaxYears();
+  return demo.listTaxYears();
+}
+
 export async function listTransactions(filters: Parameters<typeof demo.listTransactions>[0] = {}) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listTransactions(filters);
   return demo.listTransactions(filters);

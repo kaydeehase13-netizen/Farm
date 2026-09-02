@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   Home, Landmark, Sprout, Briefcase, MoreHorizontal, Plus, FileSpreadsheet,
   Users, Search, LogOut, ChevronDown,
@@ -9,6 +9,7 @@ import {
 import { useState } from "react";
 import GlobalAddMenu from "./global-add-menu";
 import { signOutAction, switchFarmAction } from "@/lib/auth-actions";
+import { setViewTaxYearAction } from "@/lib/actions";
 
 const PRIMARY_NAV = [
   { href: "/home", label: "Home", icon: Home },
@@ -165,7 +166,13 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
   );
 }
 
-export function TopBar({ farmName = "Mohler Farms", taxYear = 2026 }: { farmName?: string; taxYear?: number }) {
+export function TopBar({ farmName = "Mohler Farms", taxYear = 2026, years = [] }: { farmName?: string; taxYear?: number; years?: number[] }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const qs = searchParams.toString();
+  const returnTo = qs ? `${pathname}?${qs}` : pathname;
+  const options = years.includes(taxYear) ? years : [...years, taxYear].sort((a, b) => b - a);
+
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between gap-4 bg-cream/95 backdrop-blur border-b border-[--border-color] px-4 md:px-8 py-3">
       <div className="flex items-center gap-2 text-sm text-charcoal/60 max-w-md w-full">
@@ -177,7 +184,18 @@ export function TopBar({ farmName = "Mohler Farms", taxYear = 2026 }: { farmName
       </div>
       <div className="flex items-center gap-3 text-sm">
         <span className="status-pill status-green">{farmName}</span>
-        <span className="text-charcoal/60">{taxYear}</span>
+        <form action={setViewTaxYearAction}>
+          <input type="hidden" name="returnTo" value={returnTo} />
+          <select
+            name="year"
+            defaultValue={taxYear}
+            onChange={(e) => e.currentTarget.form?.requestSubmit()}
+            className="bg-transparent text-charcoal/70 text-sm font-medium border border-[--border-color] rounded-md px-2 py-1 cursor-pointer"
+            title="Viewing tax year"
+          >
+            {options.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </form>
       </div>
     </header>
   );

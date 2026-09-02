@@ -97,7 +97,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
   const [fieldValueMap, setFieldValueMap] = useState<Record<string, string>>({});
   const [typeValueMap, setTypeValueMap] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<{ imported: number; failed: number; errors: string[]; createdFieldNames: string[] } | null>(null);
+  const [result, setResult] = useState<{ imported: number; failed: number; errors: string[]; createdFieldNames: string[]; skippedDuplicates?: number } | null>(null);
 
   function handleFile(file: File) {
     setFileName(file.name);
@@ -351,6 +351,11 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
     <div className="card p-6 text-center space-y-3">
       <div className="text-3xl">✅</div>
       <div className="font-medium text-forest">Imported {result?.imported ?? 0} activities</div>
+      {result && !!result.skippedDuplicates && (
+        <div className="text-left text-sm bg-sage/20 border border-sage/40 rounded-lg p-3 text-charcoal/70">
+          Skipped {result.skippedDuplicates} row{result.skippedDuplicates === 1 ? "" : "s"} that matched an activity already on file (same field, date, type, acreage, and product) — nothing was duplicated.
+        </div>
+      )}
       {result && result.createdFieldNames.length > 0 && (
         <div className="text-left text-sm bg-wheat/30 border border-wheat rounded-lg p-3">
           <div className="font-medium mb-1">

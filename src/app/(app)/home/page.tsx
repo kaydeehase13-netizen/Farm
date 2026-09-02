@@ -2,11 +2,13 @@ import Link from "next/link";
 import { dashboardSummary, listTransactions, getFarm } from "@/lib/data/repo";
 import { StatCard, PageHeader, money } from "@/components/ui/stat-card";
 import { AlertTriangle, FileWarning, HelpCircle, Receipt, Boxes, WifiOff } from "lucide-react";
+import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function HomePage() {
   const farm = await getFarm();
-  const summary = await dashboardSummary(farm.currentTaxYear);
-  const recent = (await listTransactions({ taxYear: farm.currentTaxYear })).slice(0, 6);
+  const taxYear = await getViewTaxYear();
+  const summary = await dashboardSummary(taxYear);
+  const recent = (await listTransactions({ taxYear: taxYear })).slice(0, 6);
 
   const attention = [
     { label: "Missing Receipts", count: summary.needsAttention.missingReceipts, href: "/money/receipts", icon: Receipt },
@@ -20,12 +22,12 @@ export default async function HomePage() {
   return (
     <div>
       <PageHeader
-        title={`Good to see you — ${farm.name}, ${farm.currentTaxYear}`}
+        title={`Good to see you — ${farm.name}, ${taxYear}`}
         description="Here's where things stand across the farm."
       />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <StatCard label="Income" value={money(summary.income)} sub={`Tax year ${farm.currentTaxYear}`} />
+        <StatCard label="Income" value={money(summary.income)} sub={`Tax year ${taxYear}`} />
         <StatCard label="Expenses" value={money(summary.expenses)} />
         <StatCard label="Farm Margin" value={money(summary.margin)} tone={summary.margin >= 0 ? "green" : "red"} sub="Not the same as taxable income — ask your tax professional." />
         <StatCard

@@ -1,6 +1,7 @@
 import { listTransactions, getFarm, getAppData } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { TransactionsTable } from "@/components/money/transactions-table";
+import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function TransactionsPage({
   searchParams,
@@ -9,20 +10,21 @@ export default async function TransactionsPage({
 }) {
   const params = await searchParams;
   const farm = await getFarm();
+  const taxYear = await getViewTaxYear();
   const transactions = await listTransactions({
-    taxYear: farm.currentTaxYear,
+    taxYear: taxYear,
     type: params.type,
     status: params.status,
     fieldId: params.fieldId,
     search: params.q,
   });
-  const data = await getAppData(farm.currentTaxYear);
+  const data = await getAppData(taxYear);
 
   return (
     <div>
       <PageHeader
         title="Transactions"
-        description={`${transactions.length} transaction${transactions.length === 1 ? "" : "s"} · Tax year ${farm.currentTaxYear}`}
+        description={`${transactions.length} transaction${transactions.length === 1 ? "" : "s"} · Tax year ${taxYear}`}
         action={
           <div className="flex gap-2">
             <a href={`/api/export/cpa-workbook?type=full`} className="card px-4 py-2 text-sm font-medium hover:border-forest">

@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/ui/stat-card";
 import { getFarm } from "@/lib/data/repo";
+import { getViewTaxYear } from "@/lib/tax-year";
 
 const REPORTS = [
   { title: "Income Summary", desc: "Income by source and category", href: "/money/transactions?type=income" },
@@ -16,11 +17,12 @@ const REPORTS = [
 
 export default async function ReportsPage() {
   const farm = await getFarm();
+  const taxYear = await getViewTaxYear();
   return (
     <div>
       <PageHeader
         title="Reports"
-        description={`Tax year ${farm.currentTaxYear}. Every report below can be viewed, filtered, exported to Excel/CSV, or printed.`}
+        description={`Tax year ${taxYear}. Every report below can be viewed, filtered, exported to Excel/CSV, or printed.`}
         action={
           <div className="flex gap-2">
             <a href="/api/export/cpa-workbook?type=full" className="card px-4 py-2 text-sm font-medium hover:border-forest">Full Excel Workbook</a>

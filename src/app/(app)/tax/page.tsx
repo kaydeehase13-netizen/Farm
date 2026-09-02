@@ -2,10 +2,12 @@ import { dashboardSummary, listTaxOpportunities, listTaxQuestions, getFarm } fro
 import { PageHeader, StatCard } from "@/components/ui/stat-card";
 import { createTaxQuestionAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
+import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function TaxCenterPage() {
   const farm = await getFarm();
-  const summary = await dashboardSummary(farm.currentTaxYear);
+  const taxYear = await getViewTaxYear();
+  const summary = await dashboardSummary(taxYear);
   const opportunities = await listTaxOpportunities();
   const questions = await listTaxQuestions();
 
@@ -58,7 +60,7 @@ export default async function TaxCenterPage() {
               </div>
             </div>
           ))}
-          {opportunities.length === 0 && <p className="text-sm text-charcoal/50">No potential tax opportunities flagged for {farm.currentTaxYear} yet.</p>}
+          {opportunities.length === 0 && <p className="text-sm text-charcoal/50">No potential tax opportunities flagged for {taxYear} yet.</p>}
         </div>
       </div>
 

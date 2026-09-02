@@ -2,13 +2,15 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getField, fieldProfitability, listActivities, listCropYears, getFarm } from "@/lib/data/repo";
 import { PageHeader, StatCard, money, moneyPrecise } from "@/components/ui/stat-card";
+import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function FieldDetailPage({ params }: { params: Promise<{ fieldId: string }> }) {
   const { fieldId } = await params;
   const field = await getField(fieldId);
   if (!field) notFound();
   const farm = await getFarm();
-  const profit = await fieldProfitability(fieldId, farm.currentTaxYear);
+  const taxYear = await getViewTaxYear();
+  const profit = await fieldProfitability(fieldId, taxYear);
   const activities = await listActivities({ fieldId });
   const cropYears = await listCropYears(fieldId);
 

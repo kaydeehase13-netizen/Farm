@@ -1,8 +1,21 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import * as repo from "@/lib/data/repo";
 import { getFarm } from "@/lib/data/repo";
+
+/** Switch which tax year the app is currently displaying (Transactions, Reports, Home, etc). */
+export async function setViewTaxYearAction(formData: FormData) {
+  const year = Number(formData.get("year"));
+  const returnTo = String(formData.get("returnTo") ?? "/home");
+  if (Number.isFinite(year)) {
+    const jar = await cookies();
+    jar.set("fl_view_tax_year", String(year), { path: "/", maxAge: 60 * 60 * 24 * 365 });
+  }
+  redirect(returnTo);
+}
 
 function str(fd: FormData, key: string) {
   const v = fd.get(key);
@@ -158,10 +171,47 @@ export async function importActivitiesAction(rows: {
 }[]) {
   const farm = await getFarm();
   let imported = 0;
+  let skippedDuplicates = 0;
   const errors: string[] = [];
+
+  // Guard against re-importing the same CSV (or a file with repeated rows):
+  // build a signature for every activity already on each field, then skip
+  // any incoming row that matches one already there (checked against both
+  // what's already saved AND what this same import has already inserted).
+  const existingByField = new Map<string, Set<string>>();
+  function signature(row: { activityDate: string; activityType: string; acres?: number | null; productName?: string | null; yieldAmount?: number | null }) {
+    const acres = row.acres != null ? Math.round(row.acres * 1000) / 1000 : "";
+    const yieldAmount = row.yieldAmount != null ? Math.round(row.yieldAmount * 1000) / 1000 : "";
+    return [row.activityDate, row.activityType, acres, (row.productName ?? "").trim().toLowerCase(), yieldAmount].join("|");
+  }
+  async function seenForField(fieldId: string) {
+    let set = existingByField.get(fieldId);
+    if (!set) {
+      const existing = await repo.listActivities({ fieldId });
+      set = new Set(existing.map((a) =>
+        signature({
+          activityDate: a.activityDate,
+          activityType: a.activityType,
+          acres: a.acres ?? null,
+          productName: a.sprayProducts?.[0]?.productName ?? a.seedProductName ?? null,
+          yieldAmount: a.yieldAmount ?? null,
+        })
+      ));
+      existingByField.set(fieldId, set);
+    }
+    return set;
+  }
 
   for (const row of rows) {
     try {
+      const seen = await seenForField(row.fieldId);
+      const sig = signature(row);
+      if (seen.has(sig)) {
+        skippedDuplicates++;
+        continue;
+      }
+      seen.add(sig);
+
       const isSpray = row.activityType === "spray" || row.activityType === "fertilize";
       await repo.createActivity({
         farmBusinessId: farm.id,
@@ -195,7 +245,7 @@ export async function importActivitiesAction(rows: {
 
   revalidatePath("/fields");
   revalidatePath("/home");
-  return { imported, failed: errors.length, errors };
+  return { imported, failed: errors.length, errors, skippedDuplicates };
 }
 
 export async function createReceiptAction(formData: FormData) {

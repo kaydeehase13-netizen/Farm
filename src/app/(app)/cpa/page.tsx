@@ -2,11 +2,13 @@ import { listTransactions, listTaxQuestions, dashboardSummary, getFarm, listAsse
 import { PageHeader, StatCard, money } from "@/components/ui/stat-card";
 import { answerTaxQuestionAction, toggleCpaReviewAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
+import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function CpaPortalPage() {
   const farm = await getFarm();
-  const summary = await dashboardSummary(farm.currentTaxYear);
-  const flagged = (await listTransactions({ taxYear: farm.currentTaxYear })).filter((t) => t.cpaFlag);
+  const taxYear = await getViewTaxYear();
+  const summary = await dashboardSummary(taxYear);
+  const flagged = (await listTransactions({ taxYear: taxYear })).filter((t) => t.cpaFlag);
   const questions = await listTaxQuestions();
   const assets = await listAssets();
 
@@ -25,7 +27,7 @@ export default async function CpaPortalPage() {
     <div>
       <PageHeader
         title="CPA Portal"
-        description={`${farm.name} · Tax year ${farm.currentTaxYear} — full web experience, no mobile app needed.`}
+        description={`${farm.name} · Tax year ${taxYear} — full web experience, no mobile app needed.`}
         action={
           <div className="flex gap-2">
             <a href="/api/export/cpa-workbook?type=cpa" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">Download CPA Workbook (.xlsx)</a>
