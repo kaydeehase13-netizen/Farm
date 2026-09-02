@@ -70,10 +70,10 @@ do $$
 declare
   t text;
   operational_tables text[] := array[
-    'tax_year','field','field_boundary','crop_year','customer','customer_field',
-    'job','product','inventory_item','activity','vendor','farm_category',
-    'document','asset','asset_repair','mileage_trip','livestock_group',
-    'notification','export_job','report_definition','bank_connection'
+    'tax_year','field','customer',
+    'job','product','inventory_item','activity','vendor',
+    'document','asset','mileage_trip','livestock_group',
+    'notification','export_job','bank_connection'
   ];
 begin
   foreach t in array operational_tables loop
@@ -84,6 +84,58 @@ begin
     );
   end loop;
 end $$;
+
+-- Tables scoped through a parent (no farm_business_id column of their own)
+alter table field_boundary enable row level security;
+create policy field_boundary_all on field_boundary for all using (
+  exists (select 1 from field f where f.id = field_boundary.field_id and is_farm_member(f.farm_business_id))
+) with check (
+  exists (select 1 from field f where f.id = field_boundary.field_id and is_farm_member(f.farm_business_id))
+);
+
+alter table crop_year enable row level security;
+create policy crop_year_all on crop_year for all using (
+  exists (select 1 from field f where f.id = crop_year.field_id and is_farm_member(f.farm_business_id))
+) with check (
+  exists (select 1 from field f where f.id = crop_year.field_id and is_farm_member(f.farm_business_id))
+);
+
+alter table customer_field enable row level security;
+create policy customer_field_all on customer_field for all using (
+  exists (select 1 from customer c where c.id = customer_field.customer_id and is_farm_member(c.farm_business_id))
+) with check (
+  exists (select 1 from customer c where c.id = customer_field.customer_id and is_farm_member(c.farm_business_id))
+);
+
+alter table asset_repair enable row level security;
+create policy asset_repair_all on asset_repair for all using (
+  exists (select 1 from asset a where a.id = asset_repair.asset_id and can_view_financials(a.farm_business_id))
+) with check (
+  exists (select 1 from asset a where a.id = asset_repair.asset_id and can_edit_financials(a.farm_business_id))
+);
+
+-- farm_category: farm_business_id is null for global defaults, which are
+-- readable by any authenticated user but only editable when farm-owned.
+alter table farm_category enable row level security;
+create policy farm_category_select on farm_category for select using (
+  farm_business_id is null or is_farm_member(farm_business_id)
+);
+create policy farm_category_write on farm_category for all using (
+  farm_business_id is not null and is_farm_member(farm_business_id)
+) with check (
+  farm_business_id is not null and is_farm_member(farm_business_id)
+);
+
+-- report_definition: same null-is-global convention as farm_category.
+alter table report_definition enable row level security;
+create policy report_definition_select on report_definition for select using (
+  farm_business_id is null or is_farm_member(farm_business_id)
+);
+create policy report_definition_write on report_definition for all using (
+  farm_business_id is not null and is_farm_member(farm_business_id)
+) with check (
+  farm_business_id is not null and is_farm_member(farm_business_id)
+);
 
 -- Financial tables: read requires can_view_financials, write requires can_edit_financials
 do $$
