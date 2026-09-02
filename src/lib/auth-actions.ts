@@ -99,7 +99,11 @@ export async function createFarmAction(formData: FormData) {
     redirect(`/onboarding?error=${encodeURIComponent(farmError?.message ?? "Could not create farm")}`);
   }
 
-  const { error: memberError } = await supabase.from("farm_membership").insert({
+  // farm_membership has no INSERT policy for regular users (only a SELECT
+  // policy for fellow members) — membership rows are only ever created by
+  // trusted server-side code (here, or inviteMemberAction), so use the
+  // admin client to bypass RLS for this one bootstrap write too.
+  const { error: memberError } = await admin.from("farm_membership").insert({
     farm_business_id: farm.id,
     user_id: user.id,
     role: "owner_admin",
