@@ -48,12 +48,15 @@ export const FARM_CATEGORIES: FarmCategory[] = [
   { id: "cat-fert", name: "Fertilizer", defaultTaxCategoryCode: "exp_fertilizer" },
   { id: "cat-chem", name: "Chemical", defaultTaxCategoryCode: "exp_chemicals" },
   { id: "cat-fuel", name: "Fuel", defaultTaxCategoryCode: "exp_fuel" },
+  { id: "cat-feed", name: "Feed", defaultTaxCategoryCode: "exp_feed" },
   { id: "cat-rent", name: "Rent", defaultTaxCategoryCode: "exp_rent_lease_land" },
   { id: "cat-ins", name: "Insurance", defaultTaxCategoryCode: "exp_insurance" },
   { id: "cat-custom", name: "Custom Work", defaultTaxCategoryCode: "exp_custom_hire" },
   { id: "cat-repairs", name: "Repairs & Maintenance", defaultTaxCategoryCode: "exp_repairs_maintenance" },
   { id: "cat-trucking", name: "Trucking", defaultTaxCategoryCode: "exp_freight_trucking" },
   { id: "cat-supplies", name: "Supplies", defaultTaxCategoryCode: "exp_supplies" },
+  { id: "cat-benefits", name: "Employee Benefits", defaultTaxCategoryCode: "exp_employee_benefits" },
+  { id: "cat-pension", name: "Pension & Profit-Sharing", defaultTaxCategoryCode: "exp_pension" },
   { id: "cat-other", name: "Other", defaultTaxCategoryCode: "exp_other" },
 ];
 

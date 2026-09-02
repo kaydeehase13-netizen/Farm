@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { getDB } from "@/lib/data/store";
 import { getFarm, allFieldProfitability, jobMargin } from "@/lib/data/repo";
+import { taxCategoryLabel, taxCategoryScheduleRef } from "@/lib/tax-categories";
 
 // -----------------------------------------------------------------------
 // Professional CPA/tax workbook generator.
@@ -123,7 +124,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     const key = t.taxCategoryCode ?? "uncategorized";
     taxTotals.set(key, (taxTotals.get(key) ?? 0) + t.amount);
   }
-  for (const [code, total] of taxTotals) byTax.addRow({ cat: taxCategoryLabel(code), ref: "", total });
+  for (const [code, total] of taxTotals) byTax.addRow({ cat: taxCategoryLabel(code), ref: taxCategoryScheduleRef(code), total });
 
   // --- Expenses by Farm Category ---
   const byFarm = addSheet(wb, "Expenses by Farm Category", [
@@ -370,10 +371,6 @@ function fieldNamesForTxn(t: { splits: { fieldId?: string }[] }, db: ReturnType<
 }
 function farmCategoryLabel(id: string | undefined, db: ReturnType<typeof getDB>) {
   return db.farmCategories.find((c) => c.id === id)?.name ?? "Uncategorized";
-}
-function taxCategoryLabel(code?: string) {
-  if (!code) return "Uncategorized";
-  return code.replace(/^(exp|income)_/, "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 function splitTargetLabel(s: { targetType: string; fieldId?: string; jobId?: string }, db: ReturnType<typeof getDB>) {
   if (s.targetType === "field") return db.fields.find((f) => f.id === s.fieldId)?.name ?? "Field";
