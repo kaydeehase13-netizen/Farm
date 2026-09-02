@@ -1,0 +1,38 @@
+import Link from "next/link";
+import { listReceipts } from "@/lib/data/repo";
+import { PageHeader } from "@/components/ui/stat-card";
+
+export default function ReceiptsPage() {
+  const receipts = listReceipts();
+  return (
+    <div>
+      <PageHeader
+        title="Receipts"
+        description={`${receipts.length} receipt${receipts.length === 1 ? "" : "s"} on file`}
+        action={<Link href="/money/receipts/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Scan / Upload Receipt</Link>}
+      />
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {receipts.map((r) => (
+          <div key={r.id} className="card p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-charcoal/50">{r.captureSource.replace("_", " ")}</span>
+              <span className={`status-pill ${r.ocrStatus === "confirmed" ? "status-green" : r.ocrStatus === "failed" ? "status-red" : "status-amber"}`}>
+                {r.ocrStatus}
+              </span>
+            </div>
+            <div className="font-medium">{r.ocrVendorGuess ?? "Vendor unknown"}</div>
+            <div className="text-sm text-charcoal/55">{r.ocrDateGuess ?? "—"} · {r.ocrAmountGuess ? `$${r.ocrAmountGuess.toFixed(2)}` : "—"}</div>
+            {r.ocrStatus !== "confirmed" ? (
+              <Link href={`/money/receipts/${r.id}/confirm`} className="mt-3 inline-block text-sm font-medium text-forest hover:underline">
+                Review & confirm →
+              </Link>
+            ) : (
+              <div className="mt-3 text-sm text-status-green">Linked to transaction</div>
+            )}
+          </div>
+        ))}
+        {receipts.length === 0 && <div className="text-charcoal/50">No receipts yet.</div>}
+      </div>
+    </div>
+  );
+}

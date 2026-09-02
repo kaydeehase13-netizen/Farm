@@ -1,0 +1,10 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Server Actions and API routes need real server compute, which is what
+# @netlify/plugin-nextjs provides (Netlify Functions under the hood).
+# Static assets are served from the CDN automatically by the plugin.
