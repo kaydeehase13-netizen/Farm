@@ -152,12 +152,15 @@ const ROLE_DEFAULT_PERMISSIONS: Record<string, { financials: boolean; editFinanc
 export async function inviteMemberAction(formData: FormData) {
   const { requireActiveFarm } = await import("@/lib/supabase/auth");
   const farm = await requireActiveFarm();
+  const name = str(formData, "name");
   const email = str(formData, "email");
   const role = str(formData, "role") || "employee";
   if (!email) redirect("/more/settings?error=missing-email");
 
   const admin = createAdminClient();
-  const { data: invited, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email);
+  const { data: invited, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, {
+    data: name ? { full_name: name } : undefined,
+  });
   if (inviteError || !invited?.user) {
     redirect(`/more/settings?error=${encodeURIComponent(inviteError?.message ?? "Invite failed")}`);
   }
@@ -166,7 +169,7 @@ export async function inviteMemberAction(formData: FormData) {
   // new invited auth user has no app_user profile row yet, and
   // farm_membership.user_id has a foreign key into app_user.
   const { error: profileError } = await admin.from("app_user").upsert(
-    { id: invited!.user.id, email: invited!.user.email ?? email, full_name: invited!.user.email ?? email },
+    { id: invited!.user.id, email: invited!.user.email ?? email, full_name: name || invited!.user.email || email },
     { onConflict: "id" }
   );
   if (profileError) {

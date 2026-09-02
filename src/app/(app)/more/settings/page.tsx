@@ -43,6 +43,7 @@ export default async function SettingsPage({
             {error && <div className="text-sm text-status-red bg-red-50 rounded-lg px-3 py-2 mb-3">{error}</div>}
             {notice === "invited" && <div className="text-sm text-forest bg-wheat/30 rounded-lg px-3 py-2 mb-3">Invite sent.</div>}
             <form action={inviteMemberAction} className="flex flex-col sm:flex-row gap-2">
+              <input type="text" name="name" placeholder="Their name" className="input sm:w-40" />
               <input type="email" name="email" placeholder="teammate@email.com" required className="input flex-1" />
               <select name="role" className="input sm:w-56" defaultValue="employee">
                 <option value="owner_admin">Farm Owner/Admin</option>
