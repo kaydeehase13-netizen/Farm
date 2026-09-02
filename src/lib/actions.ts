@@ -109,6 +109,73 @@ export async function createFieldActivity(formData: FormData) {
   revalidatePath("/home");
 }
 
+/**
+ * Bulk import of field activities (plant/spray/fertilize/harvest/etc.),
+ * e.g. from a CSV exported out of AgFiniti, FieldView, AFS Connect, or any
+ * similar equipment-data platform. The import UI has already resolved each
+ * row's free-text field name and activity-type text to a real fieldId and
+ * one of our ActivityType enum values before calling this — this action
+ * just does the writes and reports back how many succeeded/failed.
+ */
+export async function importActivitiesAction(rows: {
+  activityDate: string;
+  fieldId: string;
+  fieldName?: string;
+  activityType: string;
+  acres?: number | null;
+  productName?: string | null;
+  rate?: number | null;
+  rateUnit?: string | null;
+  quantity?: number | null;
+  quantityUnit?: string | null;
+  yieldAmount?: number | null;
+  yieldUnit?: string | null;
+  moisturePct?: number | null;
+  applicatorName?: string | null;
+  notes?: string | null;
+}[]) {
+  const farm = await getFarm();
+  let imported = 0;
+  const errors: string[] = [];
+
+  for (const row of rows) {
+    try {
+      const isSpray = row.activityType === "spray" || row.activityType === "fertilize";
+      await repo.createActivity({
+        farmBusinessId: farm.id,
+        activityType: row.activityType as any,
+        fieldId: row.fieldId,
+        fieldName: row.fieldName,
+        activityDate: row.activityDate,
+        acres: row.acres ?? undefined,
+        applicatorName: row.applicatorName ?? undefined,
+        sprayProducts: isSpray && row.productName ? [{
+          productId: "prod-imported",
+          productName: row.productName,
+          rate: row.rate ?? 0,
+          rateUnit: row.rateUnit ?? "",
+          quantityUsed: row.quantity ?? 0,
+          quantityUnit: row.quantityUnit ?? "",
+        }] : undefined,
+        seedProductName: row.activityType === "plant" ? (row.productName ?? undefined) : undefined,
+        seedingRate: row.activityType === "plant" ? (row.rate ?? undefined) : undefined,
+        yieldAmount: row.yieldAmount ?? undefined,
+        yieldUnit: row.yieldUnit ?? undefined,
+        moisturePct: row.moisturePct ?? undefined,
+        notes: row.notes ?? undefined,
+        syncStatus: "synced",
+      });
+      imported++;
+    } catch (e) {
+      errors.push(`${row.activityDate} — ${row.fieldName ?? row.fieldId}: ${e instanceof Error ? e.message : "failed"}`);
+    }
+  }
+
+  revalidatePath("/fields");
+  revalidatePath("/home");
+  return { imported, failed: errors.length, errors };
+}
+
 export async function createReceiptAction(formData: FormData) {
   const farm = await getFarm();
   const fileName = str(formData, "fileName") ?? "receipt.jpg";

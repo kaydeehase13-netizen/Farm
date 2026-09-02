@@ -241,19 +241,27 @@ export async function confirmReceipt(id: string, patch: Partial<Receipt> & { cre
 
 export async function listActivities(filters: { fieldId?: string; activityType?: string; customerId?: string } = {}): Promise<Activity[]> {
   const { supabase, farm } = await ctx();
-  let q = supabase.from("activity").select("*, field:field_id(name), customer_field:customer_field_id(name), spray_product_line(*, product:product_id(name, epa_registration_number)), fertilizer_product_line(*, product:product_id(name))")
+  let q = supabase.from("activity").select("*, field:field_id(name), customer_field:customer_field_id(name), spray_product_line(*, product:product_id(name, epa_registration_number)), fertilizer_product_line(*, product:product_id(name)), planting_activity_detail(seeding_rate, seed_product:seed_product_id(name)), harvest_activity_detail(yield_amount, yield_unit, moisture_pct)")
     .eq("farm_business_id", farm.id).order("activity_date", { ascending: false });
   if (filters.fieldId) q = q.eq("field_id", filters.fieldId);
   if (filters.activityType) q = q.eq("activity_type", filters.activityType);
   if (filters.customerId) q = q.eq("customer_id", filters.customerId);
   const { data } = await q;
-  return (data ?? []).map((r: any): Activity => ({
+  return (data ?? []).map((r: any): Activity => {
+    const planting = Array.isArray(r.planting_activity_detail) ? r.planting_activity_detail[0] : r.planting_activity_detail;
+    const harvest = Array.isArray(r.harvest_activity_detail) ? r.harvest_activity_detail[0] : r.harvest_activity_detail;
+    return {
     id: r.id, farmBusinessId: r.farm_business_id, activityType: r.activity_type, fieldId: r.field_id ?? undefined,
     fieldName: r.field?.name, customerFieldId: r.customer_field_id ?? undefined, customerFieldName: r.customer_field?.name,
     customerId: r.customer_id ?? undefined, jobId: r.job_id ?? undefined, cropYearId: r.crop_year_id ?? undefined,
     activityDate: r.activity_date, startTime: r.start_time ?? undefined, endTime: r.end_time ?? undefined,
     acres: r.acres != null ? Number(r.acres) : undefined, applicatorName: undefined, notes: r.notes ?? undefined,
     weather: r.weather ?? undefined, syncStatus: r.sync_status, createdAt: r.created_at,
+    seedProductName: planting?.seed_product?.name ?? undefined,
+    seedingRate: planting?.seeding_rate != null ? Number(planting.seeding_rate) : undefined,
+    yieldAmount: harvest?.yield_amount != null ? Number(harvest.yield_amount) : undefined,
+    yieldUnit: harvest?.yield_unit ?? undefined,
+    moisturePct: harvest?.moisture_pct != null ? Number(harvest.moisture_pct) : undefined,
     sprayProducts: (r.spray_product_line ?? []).map((p: any) => ({
       productId: p.product_id, productName: p.product?.name ?? "Product", rate: Number(p.rate), rateUnit: p.rate_unit,
       quantityUsed: Number(p.quantity_used), quantityUnit: p.quantity_unit, epaRegistrationNumber: p.product?.epa_registration_number,
@@ -262,28 +270,33 @@ export async function listActivities(filters: { fieldId?: string; activityType?:
       productName: p.product?.name ?? "Product", rate: Number(p.rate), rateUnit: p.rate_unit,
       quantityUsed: Number(p.quantity_used), quantityUnit: p.quantity_unit,
     })),
-  }));
+  };
+  });
 }
 
 export async function createActivity(input: Omit<Activity, "id" | "createdAt">) {
   const { supabase, farm } = await ctx();
+  // The schema has no free-text "applicator name" column (only a FK to a
+  // real app_user), so fold it into notes rather than silently dropping it.
+  const notes = input.applicatorName ? `Applicator: ${input.applicatorName}${input.notes ? ` — ${input.notes}` : ""}` : (input.notes ?? null);
   const { data: activity, error } = await supabase.from("activity").insert({
     farm_business_id: farm.id, activity_type: input.activityType, field_id: input.fieldId ?? null,
     customer_field_id: input.customerFieldId ?? null, job_id: input.jobId ?? null, crop_year_id: input.cropYearId ?? null,
-    activity_date: input.activityDate, acres: input.acres ?? null, notes: input.notes ?? null, sync_status: "synced",
+    activity_date: input.activityDate, acres: input.acres ?? null, notes, sync_status: "synced",
   }).select("id").single();
   if (error || !activity) throw error;
+  const activityId = activity.id;
 
-  for (const line of input.sprayProducts ?? []) {
+  async function upsertProductLine(line: { productId?: string; productName: string; rate: number; rateUnit: string; quantityUsed: number; quantityUnit: string }, category: string, table: "spray_product_line" | "fertilizer_product_line") {
     let productId = line.productId;
-    if (!productId || productId === "prod-custom") {
+    if (!productId || productId.startsWith("prod-")) {
       const { data: prod } = await supabase.from("product").upsert(
-        { farm_business_id: farm.id, category: "chemical", name: line.productName, default_unit: line.quantityUnit },
+        { farm_business_id: farm.id, category, name: line.productName, default_unit: line.quantityUnit },
         { onConflict: "farm_business_id,name" }
       ).select("id").maybeSingle();
       productId = prod?.id;
     }
-    if (!productId) continue;
+    if (!productId) return;
     const { data: item } = await supabase.from("inventory_item").select("id, quantity_on_hand, average_unit_cost")
       .eq("farm_business_id", farm.id).eq("product_id", productId).eq("unit", line.quantityUnit).maybeSingle();
     let inventoryItemId = item?.id;
@@ -293,12 +306,40 @@ export async function createActivity(input: Omit<Activity, "id" | "createdAt">) 
     } else {
       await supabase.from("inventory_item").update({ quantity_on_hand: Math.max(0, Number(item?.quantity_on_hand ?? 0) - line.quantityUsed) }).eq("id", inventoryItemId);
     }
-    await supabase.from("spray_product_line").insert({ activity_id: activity.id, product_id: productId, rate: line.rate, rate_unit: line.rateUnit, quantity_used: line.quantityUsed, quantity_unit: line.quantityUnit });
+    await supabase.from(table).insert({ activity_id: activityId, product_id: productId, rate: line.rate, rate_unit: line.rateUnit, quantity_used: line.quantityUsed, quantity_unit: line.quantityUnit });
     if (inventoryItemId) {
-      await supabase.from("inventory_movement").insert({ inventory_item_id: inventoryItemId, movement_type: input.jobId ? "use_customer_job" : "use_own_field", quantity: -line.quantityUsed, related_activity_id: activity.id, related_job_id: input.jobId ?? null });
+      await supabase.from("inventory_movement").insert({ inventory_item_id: inventoryItemId, movement_type: input.jobId ? "use_customer_job" : "use_own_field", quantity: -line.quantityUsed, related_activity_id: activityId, related_job_id: input.jobId ?? null });
     }
   }
-  return { ...input, id: activity.id, createdAt: new Date().toISOString() };
+
+  for (const line of input.sprayProducts ?? []) {
+    await upsertProductLine(line, "chemical", "spray_product_line");
+  }
+  for (const line of input.fertilizerProducts ?? []) {
+    await upsertProductLine({ ...line, productId: undefined }, "fertilizer", "fertilizer_product_line");
+  }
+
+  if (input.seedProductName || input.seedingRate != null) {
+    let seedProductId: string | undefined;
+    if (input.seedProductName) {
+      const { data: prod } = await supabase.from("product").upsert(
+        { farm_business_id: farm.id, category: "seed", name: input.seedProductName, default_unit: "seeds" },
+        { onConflict: "farm_business_id,name" }
+      ).select("id").maybeSingle();
+      seedProductId = prod?.id;
+    }
+    await supabase.from("planting_activity_detail").upsert({
+      activity_id: activityId, seed_product_id: seedProductId ?? null, seeding_rate: input.seedingRate ?? null,
+    }, { onConflict: "activity_id" });
+  }
+
+  if (input.yieldAmount != null || input.moisturePct != null) {
+    await supabase.from("harvest_activity_detail").upsert({
+      activity_id: activityId, yield_amount: input.yieldAmount ?? null, yield_unit: input.yieldUnit ?? null, moisture_pct: input.moisturePct ?? null,
+    }, { onConflict: "activity_id" });
+  }
+
+  return { ...input, id: activityId, createdAt: new Date().toISOString() };
 }
 
 export async function listCustomers(): Promise<Customer[]> {
