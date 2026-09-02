@@ -9,7 +9,12 @@ export default async function ReceiptsPage() {
       <PageHeader
         title="Receipts"
         description={`${receipts.length} receipt${receipts.length === 1 ? "" : "s"} on file`}
-        action={<Link href="/money/receipts/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Scan / Upload Receipt</Link>}
+        action={
+          <div className="flex gap-2">
+            <Link href="/money/receipts/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Scan / Upload Receipt</Link>
+            <Link href="/money/receipts/batch" className="card px-4 py-2 text-sm font-medium hover:border-forest">Batch Upload</Link>
+          </div>
+        }
       />
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {receipts.map((r) => (

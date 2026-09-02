@@ -141,6 +141,41 @@ export async function confirmReceiptAction(formData: FormData) {
   revalidatePath("/home");
 }
 
+/**
+ * Batch upload: create a receipt record from an OCR scan WITHOUT creating
+ * a transaction. Used by the batch scanner so many receipts can be
+ * uploaded and OCR'd at once, then each one still goes through the normal
+ * human confirm step (/money/receipts/[id]/confirm) before it becomes a
+ * real expense — same "never silently make permanent financial decisions"
+ * rule as the single-receipt flow, just deferred until she reviews them.
+ */
+export async function createPendingReceiptAction(input: {
+  fileName: string;
+  captureSource?: "mobile_camera" | "web_upload" | "web_drag_drop";
+  vendor?: string | null;
+  date?: string | null;
+  amount?: number | null;
+  salesTax?: number | null;
+  lineItems?: { description: string; amount: number; suggestedCategory?: string }[] | null;
+  failed?: boolean;
+}) {
+  const farm = await getFarm();
+  const receipt = await repo.createReceipt({
+    farmBusinessId: farm.id,
+    fileName: input.fileName,
+    captureSource: input.captureSource ?? "web_upload",
+    ocrStatus: input.failed ? "failed" : "processed",
+    ocrVendorGuess: input.vendor ?? undefined,
+    ocrDateGuess: input.date ?? undefined,
+    ocrAmountGuess: input.amount ?? undefined,
+    ocrTaxGuess: input.salesTax ?? undefined,
+    ocrLineItems: input.lineItems ?? undefined,
+    syncStatus: "synced",
+  });
+  revalidatePath("/money/receipts");
+  return receipt.id;
+}
+
 export async function saveReceiptAndCreateExpenseAction(formData: FormData) {
   const farm = await getFarm();
   const receipt = await repo.createReceipt({
