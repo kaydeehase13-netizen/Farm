@@ -3,8 +3,10 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { parseCsv, rowsToObjects } from "@/lib/csv";
-import { importActivitiesAction } from "@/lib/actions";
+import { importActivitiesAction, createFieldsForImportAction } from "@/lib/actions";
 import type { Field } from "@/types/domain";
+
+const CREATE_NEW = "__create_new__";
 
 const ACTIVITY_TYPES: { value: string; label: string }[] = [
   { value: "plant", label: "Plant" }, { value: "spray", label: "Spray" },
@@ -95,7 +97,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
   const [fieldValueMap, setFieldValueMap] = useState<Record<string, string>>({});
   const [typeValueMap, setTypeValueMap] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<{ imported: number; failed: number; errors: string[] } | null>(null);
+  const [result, setResult] = useState<{ imported: number; failed: number; errors: string[]; createdFieldNames: string[] } | null>(null);
 
   function handleFile(file: File) {
     setFileName(file.name);
@@ -130,7 +132,10 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
     const fMap: Record<string, string> = {};
     for (const v of distinctFieldValues) {
       const match = fields.find((f) => f.name.toLowerCase() === v.toLowerCase());
-      fMap[v] = match?.id ?? "";
+      // Default an unmatched name to "create a new field" rather than
+      // skipping it — most unmatched names are just a field FarmLedger
+      // doesn't know about yet, not a typo worth losing the row over.
+      fMap[v] = match?.id ?? CREATE_NEW;
     }
     setFieldValueMap(fMap);
     const tMap: Record<string, string> = {};
@@ -141,18 +146,21 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
     setStep("preview");
   }
 
-  const readyRows = useMemo(() => {
+  // Builds the actual activity rows to submit, given a field-name -> real
+  // fieldId map (no CREATE_NEW sentinels left in it — those must be
+  // resolved to real fields, created or existing, before calling this).
+  function buildRows(resolvedFieldMap: Record<string, string>, fieldNameById: Map<string, string>) {
     if (!colMap.activityDate || !colMap.field || !colMap.activityType) return [];
     return rows
       .map((r) => {
         const fieldRaw = r[colMap.field!];
-        const fieldId = fieldValueMap[fieldRaw];
+        const fieldId = resolvedFieldMap[fieldRaw];
         const activityType = typeValueMap[r[colMap.activityType!]] ?? "other";
-        if (!fieldId) return null;
+        if (!fieldId || fieldId === CREATE_NEW) return null;
         return {
           activityDate: toIsoDate(r[colMap.activityDate!]),
           fieldId,
-          fieldName: fields.find((f) => f.id === fieldId)?.name,
+          fieldName: fieldNameById.get(fieldId),
           activityType,
           acres: colMap.acres ? num(r[colMap.acres]) : null,
           productName: colMap.product ? (r[colMap.product] || null) : null,
@@ -168,14 +176,55 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
         };
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
-  }, [rows, colMap, fieldValueMap, typeValueMap, fields]);
+  }
 
-  const skippedCount = rows.length - readyRows.length;
+  const fieldNameById = useMemo(() => new Map(fields.map((f) => [f.id, f.name])), [fields]);
+
+  // Preview-only counts. Rows headed for a "create new field" name are
+  // counted as ready (not skipped) even though we can't build their real
+  // fieldId until that field actually gets created at import time.
+  const previewCounts = useMemo(() => {
+    if (!colMap.field) return { ready: 0, willCreate: 0, skip: 0 };
+    let ready = 0, skip = 0;
+    const namesToCreate = new Set<string>();
+    for (const r of rows) {
+      const v = fieldValueMap[r[colMap.field!]];
+      if (!v) skip++;
+      else if (v === CREATE_NEW) { ready++; namesToCreate.add(r[colMap.field!]); }
+      else ready++;
+    }
+    return { ready, willCreate: namesToCreate.size, skip };
+  }, [rows, colMap.field, fieldValueMap]);
+
+  const skippedCount = previewCounts.skip;
 
   async function runImport() {
     setImporting(true);
-    const res = await importActivitiesAction(readyRows);
-    setResult(res);
+
+    // Resolve any "create a new field" selections into real fields first.
+    const namesToCreate = Array.from(new Set(
+      Object.entries(fieldValueMap).filter(([, v]) => v === CREATE_NEW).map(([name]) => name)
+    ));
+    const resolvedFieldMap = { ...fieldValueMap };
+    const resolvedNameById = new Map(fieldNameById);
+    let createdFieldNames: string[] = [];
+
+    if (namesToCreate.length > 0 && colMap.field) {
+      const withAcres = namesToCreate.map((name) => {
+        const row = colMap.acres ? rows.find((r) => r[colMap.field!] === name && num(r[colMap.acres!]) != null) : undefined;
+        return { name, acres: row && colMap.acres ? num(row[colMap.acres]) : null };
+      });
+      const created = await createFieldsForImportAction(withAcres);
+      for (const c of created) {
+        resolvedFieldMap[c.name] = c.id;
+        resolvedNameById.set(c.id, c.name);
+      }
+      createdFieldNames = created.map((c) => c.name);
+    }
+
+    const finalRows = buildRows(resolvedFieldMap, resolvedNameById);
+    const res = await importActivitiesAction(finalRows);
+    setResult({ ...res, createdFieldNames });
     setImporting(false);
     setStep("done");
   }
@@ -247,6 +296,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
       <div className="space-y-4">
         <div className="card p-6 space-y-3">
           <div className="text-sm font-semibold text-forest">Match each field name to one of your fields</div>
+          <p className="text-xs text-charcoal/50">A name with no match defaults to creating a new field with that name — switch it to Skip if you&apos;d rather leave those rows out.</p>
           {distinctFieldValues.map((v) => (
             <div key={v} className="flex items-center gap-3">
               <span className="text-sm flex-1 truncate">{v}</span>
@@ -256,6 +306,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
                 onChange={(e) => setFieldValueMap((m) => ({ ...m, [v]: e.target.value }))}
               >
                 <option value="">Skip rows with this field</option>
+                <option value={CREATE_NEW}>+ Create new field &quot;{v}&quot;</option>
                 {fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
               </select>
             </div>
@@ -277,14 +328,19 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
           ))}
         </div>
         <div className="card p-6">
-          <div className="text-sm font-medium mb-1">{readyRows.length} of {rows.length} rows ready to import</div>
-          {skippedCount > 0 && <p className="text-xs text-status-amber mb-3">{skippedCount} row{skippedCount === 1 ? "" : "s"} will be skipped (field set to &quot;Skip&quot;).</p>}
+          <div className="text-sm font-medium mb-1">{previewCounts.ready} of {rows.length} rows ready to import</div>
+          {previewCounts.willCreate > 0 && (
+            <p className="text-xs text-status-amber mb-1">
+              Will create {previewCounts.willCreate} new field{previewCounts.willCreate === 1 ? "" : "s"} — we&apos;ll only have the name{colMap.acres ? " and acreage" : ""} from this file, so we&apos;ll flag those fields as missing details.
+            </p>
+          )}
+          {skippedCount > 0 && <p className="text-xs text-charcoal/50 mb-3">{skippedCount} row{skippedCount === 1 ? "" : "s"} will be skipped (field set to &quot;Skip&quot;).</p>}
           <button
-            type="button" disabled={importing || readyRows.length === 0}
+            type="button" disabled={importing || previewCounts.ready === 0}
             onClick={runImport}
             className="bg-forest text-white px-5 py-2.5 rounded-lg font-medium w-full hover:bg-forest-light disabled:opacity-40"
           >
-            {importing ? "Importing…" : `Import ${readyRows.length} Activities`}
+            {importing ? "Importing…" : `Import ${previewCounts.ready} Activities`}
           </button>
         </div>
       </div>
@@ -295,6 +351,17 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
     <div className="card p-6 text-center space-y-3">
       <div className="text-3xl">✅</div>
       <div className="font-medium text-forest">Imported {result?.imported ?? 0} activities</div>
+      {result && result.createdFieldNames.length > 0 && (
+        <div className="text-left text-sm bg-wheat/30 border border-wheat rounded-lg p-3">
+          <div className="font-medium mb-1">
+            Created {result.createdFieldNames.length} new field{result.createdFieldNames.length === 1 ? "" : "s"}: {result.createdFieldNames.join(", ")}
+          </div>
+          <p className="text-charcoal/60">
+            We only had the name (and acreage, if this file included it) from the import — ownership, county, and FSA numbers are still blank.
+            Fill those in on the <a href="/fields" className="text-forest font-medium hover:underline">Fields page</a> when you get a chance.
+          </p>
+        </div>
+      )}
       {result && result.failed > 0 && (
         <div className="text-left text-sm text-status-amber">
           <div className="font-medium mb-1">{result.failed} row{result.failed === 1 ? "" : "s"} failed:</div>

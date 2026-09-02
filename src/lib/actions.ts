@@ -67,6 +67,28 @@ export async function createFieldAction(formData: FormData) {
   revalidatePath("/fields");
 }
 
+/**
+ * Create one or more fields on the fly during a CSV activity import, for
+ * field names in the file that don't match any existing field. We only
+ * have a name (and, if the file had an Acres column, an acreage guess) —
+ * everything else (ownership, county, FSA numbers) is left blank so the
+ * caller can tell the user to fill those in on the Fields page afterward.
+ */
+export async function createFieldsForImportAction(names: { name: string; acres?: number | null }[]) {
+  const created: { name: string; id: string }[] = [];
+  for (const n of names) {
+    const field = await repo.createField({
+      name: n.name,
+      acres: n.acres ?? 0,
+      ownership: "owned",
+      irrigated: false,
+    });
+    created.push({ name: n.name, id: field.id });
+  }
+  revalidatePath("/fields");
+  return created;
+}
+
 export async function createFieldActivity(formData: FormData) {
   const farm = await getFarm();
   const activityType = str(formData, "activityType") as any;
