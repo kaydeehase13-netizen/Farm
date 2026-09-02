@@ -2,9 +2,9 @@ import Link from "next/link";
 import { allFieldProfitability, getFarm } from "@/lib/data/repo";
 import { PageHeader, money, moneyPrecise } from "@/components/ui/stat-card";
 
-export default function FieldsPage() {
-  const farm = getFarm();
-  const rows = allFieldProfitability(farm.currentTaxYear);
+export default async function FieldsPage() {
+  const farm = await getFarm();
+  const rows = await allFieldProfitability(farm.currentTaxYear);
   const totalAcres = rows.reduce((s, r) => s + r.acres, 0);
   const totalMargin = rows.reduce((s, r) => s + r.margin, 0);
 

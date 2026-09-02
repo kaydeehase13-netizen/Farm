@@ -3,10 +3,10 @@ import ExcelJS from "exceljs";
 import { allFieldProfitability, getFarm } from "@/lib/data/repo";
 
 export async function GET(req: NextRequest) {
-  const farm = getFarm();
+  const farm = await getFarm();
   const { searchParams } = new URL(req.url);
   const taxYear = Number(searchParams.get("taxYear")) || farm.currentTaxYear;
-  const rows = allFieldProfitability(taxYear);
+  const rows = await allFieldProfitability(taxYear);
 
   const wb = new ExcelJS.Workbook();
   wb.creator = "FarmLedger";

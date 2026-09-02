@@ -2,8 +2,8 @@ import Link from "next/link";
 import { listInventory } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 
-export default function InventoryPage() {
-  const items = listInventory();
+export default async function InventoryPage() {
+  const items = await listInventory();
   return (
     <div>
       <PageHeader

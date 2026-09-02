@@ -1,15 +1,15 @@
 import { notFound } from "next/navigation";
-import { listReceipts } from "@/lib/data/repo";
-import { getDB } from "@/lib/data/store";
+import { listReceipts, getAppData, getFarm } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { confirmReceiptAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
 
 export default async function ConfirmReceiptPage({ params }: { params: Promise<{ receiptId: string }> }) {
   const { receiptId } = await params;
-  const receipt = listReceipts().find((r) => r.id === receiptId);
+  const receipt = (await listReceipts()).find((r) => r.id === receiptId);
   if (!receipt) notFound();
-  const db = getDB();
+  const farm = await getFarm();
+  const data = await getAppData(farm.currentTaxYear);
 
   async function action(formData: FormData) {
     "use server";
@@ -44,13 +44,13 @@ export default async function ConfirmReceiptPage({ params }: { params: Promise<{
         <Field label="Amount"><input type="number" step="0.01" name="amount" defaultValue={receipt.ocrAmountGuess} className="input" /></Field>
         <Field label="Category">
           <select name="farmCategoryId" className="input">
-            {db.farmCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {data.farmCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </Field>
         <Field label="Assign to Field (optional)">
           <select name="fieldId" className="input">
             <option value="">— General farm overhead —</option>
-            {db.fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            {data.fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
         </Field>
         <button className="bg-forest text-white px-5 py-2.5 rounded-lg font-medium w-full hover:bg-forest-light">Confirm & Create Expense</button>

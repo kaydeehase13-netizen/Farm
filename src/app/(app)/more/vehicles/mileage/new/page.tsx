@@ -3,8 +3,8 @@ import { PageHeader } from "@/components/ui/stat-card";
 import { createMileageTripAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
 
-export default function NewMileagePage() {
-  const vehicles = listAssets().filter((a) => a.assetType === "vehicle");
+export default async function NewMileagePage() {
+  const vehicles = (await listAssets()).filter((a) => a.assetType === "vehicle");
   async function action(formData: FormData) {
     "use server";
     await createMileageTripAction(formData);

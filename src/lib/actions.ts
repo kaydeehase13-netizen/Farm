@@ -14,13 +14,13 @@ function num(fd: FormData, key: string) {
 }
 
 export async function createExpenseOrIncome(formData: FormData) {
-  const farm = getFarm();
+  const farm = await getFarm();
   const type = (str(formData, "transactionType") ?? "expense") as "income" | "expense";
   const fieldId = str(formData, "fieldId");
   const jobId = str(formData, "jobId");
   const amount = num(formData, "amount") ?? 0;
 
-  repo.createTransaction({
+  await repo.createTransaction({
     farmBusinessId: farm.id,
     taxYear: farm.currentTaxYear,
     transactionType: type,
@@ -50,11 +50,11 @@ export async function createExpenseOrIncome(formData: FormData) {
 }
 
 export async function createFieldActivity(formData: FormData) {
-  const farm = getFarm();
+  const farm = await getFarm();
   const activityType = str(formData, "activityType") as any;
   const fieldId = str(formData, "fieldId");
   const customerFieldId = str(formData, "customerFieldId");
-  const field = fieldId ? repo.getField(fieldId) : null;
+  const field = fieldId ? await repo.getField(fieldId) : null;
 
   const sprayProductName = str(formData, "sprayProductName");
   const sprayProducts = sprayProductName
@@ -68,7 +68,7 @@ export async function createFieldActivity(formData: FormData) {
       }]
     : undefined;
 
-  repo.createActivity({
+  await repo.createActivity({
     farmBusinessId: farm.id,
     activityType,
     fieldId,
@@ -92,9 +92,9 @@ export async function createFieldActivity(formData: FormData) {
 }
 
 export async function createReceiptAction(formData: FormData) {
-  const farm = getFarm();
+  const farm = await getFarm();
   const fileName = str(formData, "fileName") ?? "receipt.jpg";
-  const receipt = repo.createReceipt({
+  const receipt = await repo.createReceipt({
     farmBusinessId: farm.id,
     fileName,
     captureSource: "web_upload",
@@ -110,7 +110,7 @@ export async function createReceiptAction(formData: FormData) {
 
 export async function confirmReceiptAction(formData: FormData) {
   const id = str(formData, "receiptId")!;
-  repo.confirmReceipt(id, {
+  await repo.confirmReceipt(id, {
     ocrVendorGuess: str(formData, "vendorName"),
     ocrDateGuess: str(formData, "date"),
     ocrAmountGuess: num(formData, "amount"),
@@ -124,8 +124,8 @@ export async function confirmReceiptAction(formData: FormData) {
 }
 
 export async function saveReceiptAndCreateExpenseAction(formData: FormData) {
-  const farm = getFarm();
-  const receipt = repo.createReceipt({
+  const farm = await getFarm();
+  const receipt = await repo.createReceipt({
     farmBusinessId: farm.id,
     fileName: str(formData, "fileName") ?? "receipt.jpg",
     fileDataUrl: str(formData, "fileDataUrl"),
@@ -137,7 +137,7 @@ export async function saveReceiptAndCreateExpenseAction(formData: FormData) {
     ocrTaxGuess: num(formData, "salesTax"),
     syncStatus: "synced",
   });
-  repo.confirmReceipt(receipt.id, {
+  await repo.confirmReceipt(receipt.id, {
     ocrVendorGuess: str(formData, "vendorName"),
     ocrDateGuess: str(formData, "date"),
     ocrAmountGuess: num(formData, "amount"),
@@ -152,9 +152,9 @@ export async function saveReceiptAndCreateExpenseAction(formData: FormData) {
 }
 
 export async function createJobAction(formData: FormData) {
-  const farm = getFarm();
-  const customer = repo.getCustomer(str(formData, "customerId")!);
-  repo.createJob({
+  const farm = await getFarm();
+  const customer = await repo.getCustomer(str(formData, "customerId")!);
+  await repo.createJob({
     farmBusinessId: farm.id,
     customerId: str(formData, "customerId")!,
     customerName: customer?.name ?? "Customer",
@@ -175,14 +175,14 @@ export async function createJobAction(formData: FormData) {
 
 export async function createInvoiceAction(formData: FormData) {
   const jobId = str(formData, "jobId")!;
-  repo.createInvoiceFromJob(jobId);
+  await repo.createInvoiceFromJob(jobId);
   revalidatePath("/work/invoices");
   revalidatePath("/work/jobs");
 }
 
 export async function recordPaymentAction(formData: FormData) {
-  const farm = getFarm();
-  repo.recordPayment({
+  const farm = await getFarm();
+  await repo.recordPayment({
     farmBusinessId: farm.id,
     invoiceId: str(formData, "invoiceId"),
     customerId: str(formData, "customerId")!,
@@ -197,7 +197,7 @@ export async function recordPaymentAction(formData: FormData) {
 }
 
 export async function createTaxQuestionAction(formData: FormData) {
-  repo.createTaxQuestion(str(formData, "question") ?? "", str(formData, "raisedByName") ?? "Farm Owner");
+  await repo.createTaxQuestion(str(formData, "question") ?? "", str(formData, "raisedByName") ?? "Farm Owner");
   revalidatePath("/tax");
 }
 
@@ -246,7 +246,7 @@ export async function createLivestockTxnAction(formData: FormData) {
 export async function createMileageTripAction(formData: FormData) {
   const { mutate } = await import("@/lib/data/store");
   const { randomUUID } = await import("node:crypto");
-  const farm = getFarm();
+  const farm = await getFarm();
   mutate((db) => {
     const vehicle = db.assets.find((a) => a.id === str(formData, "vehicleAssetId"));
     db.mileageTrips.push({
@@ -278,8 +278,8 @@ export async function answerTaxQuestionAction(formData: FormData) {
 
 export async function toggleCpaReviewAction(formData: FormData) {
   const id = str(formData, "transactionId")!;
-  const current = repo.listTransactions({}).find((t) => t.id === id);
-  repo.updateTransaction(id, { status: current?.status === "reconciled" ? "categorized" : "reconciled" });
+  const current = (await repo.listTransactions({})).find((t) => t.id === id);
+  await repo.updateTransaction(id, { status: current?.status === "reconciled" ? "categorized" : "reconciled" });
   revalidatePath("/cpa");
   revalidatePath("/money/transactions");
 }
@@ -308,7 +308,7 @@ export async function bulkUpdateCategoryAction(formData: FormData) {
   const ids = formData.getAll("transactionIds").map(String);
   const farmCategoryId = str(formData, "farmCategoryId");
   for (const id of ids) {
-    repo.updateTransaction(id, { farmCategoryId });
+    await repo.updateTransaction(id, { farmCategoryId });
   }
   revalidatePath("/money/transactions");
 }
@@ -317,9 +317,9 @@ export async function bulkAssignFieldAction(formData: FormData) {
   const ids = formData.getAll("transactionIds").map(String);
   const fieldId = str(formData, "fieldId");
   for (const id of ids) {
-    const txn = repo.listTransactions({}).find((t) => t.id === id);
+    const txn = (await repo.listTransactions({})).find((t) => t.id === id);
     if (!txn) continue;
-    repo.updateTransaction(id, {
+    await repo.updateTransaction(id, {
       splits: txn.splits.map((s) => ({ ...s, targetType: "field", fieldId })),
     } as any);
   }
@@ -327,8 +327,8 @@ export async function bulkAssignFieldAction(formData: FormData) {
 }
 
 export async function createDocumentAction(formData: FormData) {
-  const farm = getFarm();
-  repo.createDocument({
+  const farm = await getFarm();
+  await repo.createDocument({
     farmBusinessId: farm.id,
     category: (str(formData, "category") as any) ?? "other",
     fileName: str(formData, "fileName") ?? "document.pdf",

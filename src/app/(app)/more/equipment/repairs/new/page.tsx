@@ -3,8 +3,8 @@ import { PageHeader } from "@/components/ui/stat-card";
 import { createAssetRepairAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
 
-export default function NewRepairPage() {
-  const assets = listAssets();
+export default async function NewRepairPage() {
+  const assets = await listAssets();
   async function action(formData: FormData) {
     "use server";
     await createAssetRepairAction(formData);

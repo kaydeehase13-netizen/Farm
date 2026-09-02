@@ -2,8 +2,8 @@ import Link from "next/link";
 import { listReceipts } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 
-export default function ReceiptsPage() {
-  const receipts = listReceipts();
+export default async function ReceiptsPage() {
+  const receipts = await listReceipts();
   return (
     <div>
       <PageHeader

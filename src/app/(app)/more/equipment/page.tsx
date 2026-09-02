@@ -1,9 +1,9 @@
 import { listAssets, listAssetRepairs } from "@/lib/data/repo";
 import { PageHeader, money } from "@/components/ui/stat-card";
 
-export default function EquipmentPage() {
-  const assets = listAssets().filter((a) => a.assetType === "equipment");
-  const repairs = listAssetRepairs();
+export default async function EquipmentPage() {
+  const assets = (await listAssets()).filter((a) => a.assetType === "equipment");
+  const repairs = await listAssetRepairs();
 
   return (
     <div>

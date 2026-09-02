@@ -3,10 +3,10 @@ import { dashboardSummary, listTransactions, getFarm } from "@/lib/data/repo";
 import { StatCard, PageHeader, money } from "@/components/ui/stat-card";
 import { AlertTriangle, FileWarning, HelpCircle, Receipt, Boxes, WifiOff } from "lucide-react";
 
-export default function HomePage() {
-  const farm = getFarm();
-  const summary = dashboardSummary(farm.currentTaxYear);
-  const recent = listTransactions({ taxYear: farm.currentTaxYear }).slice(0, 6);
+export default async function HomePage() {
+  const farm = await getFarm();
+  const summary = await dashboardSummary(farm.currentTaxYear);
+  const recent = (await listTransactions({ taxYear: farm.currentTaxYear })).slice(0, 6);
 
   const attention = [
     { label: "Missing Receipts", count: summary.needsAttention.missingReceipts, href: "/money/receipts", icon: Receipt },

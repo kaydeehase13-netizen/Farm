@@ -1,4 +1,4 @@
-import { getDB } from "@/lib/data/store";
+import { getAppData, getFarm } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { createExpenseOrIncome } from "@/lib/actions";
 import { redirect } from "next/navigation";
@@ -7,7 +7,8 @@ export default async function NewTransactionPage({
   searchParams,
 }: { searchParams: Promise<{ type?: string }> }) {
   const params = await searchParams;
-  const db = getDB();
+  const farm = await getFarm();
+  const data = await getAppData(farm.currentTaxYear);
   const type = params.type === "income" ? "income" : "expense";
 
   async function action(formData: FormData) {
@@ -41,13 +42,13 @@ export default async function NewTransactionPage({
         )}
         <Field label="Category">
           <select name="farmCategoryId" className="input">
-            {db.farmCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {data.farmCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </Field>
         <Field label="Assign to Field (optional)">
           <select name="fieldId" className="input">
             <option value="">— General farm overhead —</option>
-            {db.fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            {data.fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
         </Field>
         <Field label="Payment Method">

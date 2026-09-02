@@ -1,8 +1,8 @@
 import { listLoans } from "@/lib/data/repo";
 import { PageHeader, money } from "@/components/ui/stat-card";
 
-export default function LoansPage() {
-  const loans = listLoans();
+export default async function LoansPage() {
+  const loans = await listLoans();
   return (
     <div>
       <PageHeader title="Loans" description="Farm loans, balances, and interest." />

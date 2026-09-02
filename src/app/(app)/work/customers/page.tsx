@@ -1,9 +1,9 @@
 import { listCustomers, listJobs } from "@/lib/data/repo";
 import { PageHeader, money } from "@/components/ui/stat-card";
 
-export default function CustomersPage() {
-  const customers = listCustomers();
-  const jobs = listJobs();
+export default async function CustomersPage() {
+  const customers = await listCustomers();
+  const jobs = await listJobs();
   return (
     <div>
       <PageHeader title="Customers" description="Everyone you do custom work for." />

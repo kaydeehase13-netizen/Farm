@@ -3,12 +3,12 @@ import { PageHeader, StatCard, money } from "@/components/ui/stat-card";
 import { answerTaxQuestionAction, toggleCpaReviewAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
 
-export default function CpaPortalPage() {
-  const farm = getFarm();
-  const summary = dashboardSummary(farm.currentTaxYear);
-  const flagged = listTransactions({ taxYear: farm.currentTaxYear }).filter((t) => t.cpaFlag);
-  const questions = listTaxQuestions();
-  const assets = listAssets();
+export default async function CpaPortalPage() {
+  const farm = await getFarm();
+  const summary = await dashboardSummary(farm.currentTaxYear);
+  const flagged = (await listTransactions({ taxYear: farm.currentTaxYear })).filter((t) => t.cpaFlag);
+  const questions = await listTaxQuestions();
+  const assets = await listAssets();
 
   async function answer(formData: FormData) {
     "use server";

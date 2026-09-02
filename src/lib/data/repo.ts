@@ -1,392 +1,205 @@
-import { randomUUID } from "node:crypto";
-import { getDB, mutate } from "./store";
-import { FARM } from "./seed";
+import * as demo from "./demo-repo";
 import type {
-  Transaction, TransactionSplit, FieldProfitability, Job, Invoice, Payment,
-  Activity, Receipt, DocumentRecord,
+  Transaction, TransactionSplit, Receipt, Activity, Job, Payment, DocumentRecord,
 } from "@/types/domain";
 
 // -----------------------------------------------------------------------
-// Repository: the single place UI/API code reads and writes farm data.
-// Backed today by the JSON demo store (src/lib/data/store.ts); swap the
-// implementation for Supabase queries (src/lib/supabase/repo.ts) without
-// touching callers once a live project is connected.
+// Repository facade. Every page/action imports from here. It transparently
+// picks the real Supabase-backed implementation once Supabase is
+// configured (see .env.example), and otherwise falls back to the local
+// JSON demo store (./demo-repo.ts) so the app still runs with zero setup.
+//
+// Every export here is now async (even the demo path, trivially) so call
+// sites are uniform regardless of which backend is active — `await
+// repo.listFields()` works either way.
 // -----------------------------------------------------------------------
 
-export function getFarm() {
-  return FARM;
+async function supabaseConfigured() {
+  const { isSupabaseConfigured } = await import("@/lib/supabase/server");
+  return isSupabaseConfigured();
 }
 
-export function listFields() {
-  return getDB().fields;
-}
-
-export function getField(fieldId: string) {
-  return getDB().fields.find((f) => f.id === fieldId) ?? null;
-}
-
-export function listCropYears(fieldId?: string) {
-  const db = getDB();
-  return fieldId ? db.cropYears.filter((c) => c.fieldId === fieldId) : db.cropYears;
-}
-
-export function listTransactions(filters: {
-  taxYear?: number; type?: string; status?: string; fieldId?: string;
-  customerId?: string; vendorId?: string; search?: string;
-} = {}) {
-  let rows = getDB().transactions;
-  if (filters.taxYear) rows = rows.filter((t) => t.taxYear === filters.taxYear);
-  if (filters.type) rows = rows.filter((t) => t.transactionType === filters.type);
-  if (filters.status) rows = rows.filter((t) => t.status === filters.status);
-  if (filters.customerId) rows = rows.filter((t) => t.customerId === filters.customerId);
-  if (filters.vendorId) rows = rows.filter((t) => t.vendorId === filters.vendorId);
-  if (filters.fieldId) rows = rows.filter((t) => t.splits.some((s) => s.fieldId === filters.fieldId));
-  if (filters.search) {
-    const q = filters.search.toLowerCase();
-    rows = rows.filter((t) =>
-      (t.description ?? "").toLowerCase().includes(q) ||
-      (t.vendorName ?? "").toLowerCase().includes(q)
-    );
+export async function getFarm() {
+  if (await supabaseConfigured()) {
+    const sb = await import("@/lib/supabase/repo");
+    return sb.getFarm();
   }
-  return [...rows].sort((a, b) => b.transactionDate.localeCompare(a.transactionDate));
+  return demo.getFarm();
 }
 
-export function createTransaction(input: Omit<Transaction, "id" | "createdAt" | "splits"> & { splits?: Omit<TransactionSplit, "id" | "transactionId">[] }) {
-  return mutate((db) => {
-    const id = randomUUID();
-    const splits: TransactionSplit[] = (input.splits ?? [{
-      targetType: "general_overhead" as const,
-      allocationMethod: "manual" as const,
-      allocatedAmount: input.amount,
-      farmCategoryId: input.farmCategoryId,
-    }]).map((s) => ({ ...s, id: randomUUID(), transactionId: id }));
-    const txn: Transaction = { ...input, id, createdAt: new Date().toISOString(), splits };
-    db.transactions.push(txn);
-    return txn;
-  });
+export async function listFields() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listFields();
+  return demo.listFields();
 }
 
-export function updateTransaction(id: string, patch: Partial<Transaction>) {
-  return mutate((db) => {
-    const idx = db.transactions.findIndex((t) => t.id === id);
-    if (idx === -1) return null;
-    db.transactions[idx] = { ...db.transactions[idx], ...patch };
-    return db.transactions[idx];
-  });
+export async function getField(fieldId: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).getField(fieldId);
+  return demo.getField(fieldId);
 }
 
-export function listReceipts() {
-  return [...getDB().receipts].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+export async function listCropYears(fieldId?: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listCropYears(fieldId);
+  return demo.listCropYears(fieldId);
 }
 
-export function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {
-  return mutate((db) => {
-    const receipt: Receipt = { ...input, id: randomUUID(), createdAt: new Date().toISOString() };
-    db.receipts.push(receipt);
-    return receipt;
-  });
+export async function listTransactions(filters: Parameters<typeof demo.listTransactions>[0] = {}) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listTransactions(filters);
+  return demo.listTransactions(filters);
 }
 
-export function confirmReceipt(id: string, patch: Partial<Receipt> & { createTransaction?: boolean; farmCategoryId?: string; fieldId?: string }) {
-  return mutate((db) => {
-    const idx = db.receipts.findIndex((r) => r.id === id);
-    if (idx === -1) return null;
-    const receipt = { ...db.receipts[idx], ...patch, ocrStatus: "confirmed" as const, confirmedAt: new Date().toISOString() };
-    db.receipts[idx] = receipt;
-
-    if (patch.createTransaction) {
-      const txnId = randomUUID();
-      const amount = receipt.ocrAmountGuess ?? 0;
-      const txn: Transaction = {
-        id: txnId,
-        farmBusinessId: FARM.id,
-        taxYear: FARM.currentTaxYear,
-        transactionType: "expense",
-        status: "categorized",
-        transactionDate: receipt.ocrDateGuess ?? new Date().toISOString().slice(0, 10),
-        vendorName: receipt.ocrVendorGuess,
-        description: `Receipt — ${receipt.ocrVendorGuess ?? receipt.fileName}`,
-        amount,
-        salesTax: receipt.ocrTaxGuess ?? 0,
-        farmCategoryId: patch.farmCategoryId,
-        isPersonalExcluded: false,
-        cpaFlag: false,
-        receiptId: receipt.id,
-        syncStatus: "synced",
-        createdAt: new Date().toISOString(),
-        splits: [{
-          id: randomUUID(), transactionId: txnId,
-          targetType: patch.fieldId ? "field" : "general_overhead",
-          fieldId: patch.fieldId,
-          allocationMethod: "manual",
-          allocatedAmount: amount,
-          farmCategoryId: patch.farmCategoryId,
-        }],
-      };
-      db.transactions.push(txn);
-      receipt.linkedTransactionId = txnId;
-      db.receipts[idx] = receipt;
-    }
-    return receipt;
-  });
+export async function createTransaction(input: Omit<Transaction, "id" | "createdAt" | "splits"> & { splits?: Omit<TransactionSplit, "id" | "transactionId">[] }) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createTransaction(input);
+  return demo.createTransaction(input);
 }
 
-export function listActivities(filters: { fieldId?: string; activityType?: string; customerId?: string } = {}) {
-  let rows = getDB().activities;
-  if (filters.fieldId) rows = rows.filter((a) => a.fieldId === filters.fieldId);
-  if (filters.activityType) rows = rows.filter((a) => a.activityType === filters.activityType);
-  if (filters.customerId) rows = rows.filter((a) => a.customerId === filters.customerId);
-  return [...rows].sort((a, b) => b.activityDate.localeCompare(a.activityDate));
+export async function updateTransaction(id: string, patch: Partial<Transaction>) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).updateTransaction(id, patch);
+  return demo.updateTransaction(id, patch);
 }
 
-export function createActivity(input: Omit<Activity, "id" | "createdAt">) {
-  return mutate((db) => {
-    const activity: Activity = { ...input, id: randomUUID(), createdAt: new Date().toISOString() };
-    db.activities.push(activity);
-
-    // Deduct chemical/fertilizer inventory used, mirroring the spec's
-    // "record spraying -> subtract inventory -> assign cost" pipeline.
-    const lines = activity.sprayProducts ?? [];
-    for (const line of lines) {
-      const item = db.inventoryItems.find((i) => i.productId === line.productId);
-      if (item) {
-        item.quantityOnHand = Math.max(0, item.quantityOnHand - line.quantityUsed);
-        db.inventoryMovements.push({
-          id: randomUUID(), inventoryItemId: item.id,
-          movementType: activity.jobId ? "use_customer_job" : "use_own_field",
-          quantity: -line.quantityUsed, unitCost: item.averageUnitCost,
-          relatedActivityId: activity.id, relatedJobId: activity.jobId,
-          createdAt: new Date().toISOString(),
-        });
-      }
-    }
-    return activity;
-  });
+export async function listReceipts() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listReceipts();
+  return demo.listReceipts();
 }
 
-export function listCustomers() {
-  return getDB().customers;
+export async function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createReceipt(input);
+  return demo.createReceipt(input);
 }
 
-export function getCustomer(id: string) {
-  return getDB().customers.find((c) => c.id === id) ?? null;
+export async function confirmReceipt(id: string, patch: Parameters<typeof demo.confirmReceipt>[1]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).confirmReceipt(id, patch);
+  return demo.confirmReceipt(id, patch);
 }
 
-export function listJobs(filters: { customerId?: string; status?: string } = {}) {
-  let rows = getDB().jobs;
-  if (filters.customerId) rows = rows.filter((j) => j.customerId === filters.customerId);
-  if (filters.status) rows = rows.filter((j) => j.status === filters.status);
-  return rows;
+export async function listActivities(filters: Parameters<typeof demo.listActivities>[0] = {}) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listActivities(filters);
+  return demo.listActivities(filters);
 }
 
-export function createJob(input: Omit<Job, "id">) {
-  return mutate((db) => {
-    const job: Job = { ...input, id: randomUUID() };
-    db.jobs.push(job);
-    return job;
-  });
+export async function createActivity(input: Omit<Activity, "id" | "createdAt">) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createActivity(input);
+  return demo.createActivity(input);
 }
 
-export function jobMargin(job: Job) {
+export async function listCustomers() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listCustomers();
+  return demo.listCustomers();
+}
+
+export async function getCustomer(id: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).getCustomer(id);
+  return demo.getCustomer(id);
+}
+
+export async function listJobs(filters: Parameters<typeof demo.listJobs>[0] = {}) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listJobs(filters);
+  return demo.listJobs(filters);
+}
+
+export async function createJob(input: Omit<Job, "id">) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createJob(input);
+  return demo.createJob(input);
+}
+
+export async function jobMargin(job: Job) {
   return job.revenue - job.directCost;
 }
 
-export function listInvoices() {
-  return getDB().invoices;
+export async function listInvoices() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listInvoices();
+  return demo.listInvoices();
 }
 
-export function createInvoiceFromJob(jobId: string): Invoice | null {
-  return mutate((db) => {
-    const job = db.jobs.find((j) => j.id === jobId);
-    if (!job) return null;
-    const customer = db.customers.find((c) => c.id === job.customerId);
-    const nextNumber = String(1000 + db.invoices.length + 1);
-    const amount = job.revenue;
-    const invoice: Invoice = {
-      id: randomUUID(), farmBusinessId: FARM.id, customerId: job.customerId,
-      customerName: customer?.name ?? "Customer", invoiceNumber: nextNumber,
-      status: "draft", issueDate: new Date().toISOString().slice(0, 10),
-      lines: [{
-        id: randomUUID(),
-        description: `${job.jobService} — ${job.customerFieldName ?? "Field"} (${job.acres ?? 0} ac @ $${job.rate ?? 0}/${job.rateUnit === "per_acre" ? "ac" : job.rateUnit})`,
-        quantity: job.acres ?? 1, unitRate: job.rate ?? amount, amount, jobId: job.id,
-      }],
-      subtotal: amount, additionalCharges: 0, total: amount, amountPaid: 0,
-    };
-    db.invoices.push(invoice);
-    job.status = "invoiced";
-    job.invoiceId = invoice.id;
-    return invoice;
-  });
+export async function createInvoiceFromJob(jobId: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createInvoiceFromJob(jobId);
+  return demo.createInvoiceFromJob(jobId);
 }
 
-export function recordPayment(input: Omit<Payment, "id">) {
-  return mutate((db) => {
-    const payment: Payment = { ...input, id: randomUUID() };
-    db.payments.push(payment);
-
-    if (input.invoiceId) {
-      const invoice = db.invoices.find((i) => i.id === input.invoiceId);
-      if (invoice) {
-        invoice.amountPaid += input.amount;
-        invoice.status = invoice.amountPaid >= invoice.total ? "paid" : "partial";
-      }
-    }
-    const customer = db.customers.find((c) => c.id === input.customerId);
-    if (customer) customer.balanceDue = Math.max(0, customer.balanceDue - input.amount);
-
-    // Recording payment automatically creates associated farm income.
-    const txn: Transaction = {
-      id: randomUUID(), farmBusinessId: FARM.id, taxYear: FARM.currentTaxYear,
-      transactionType: "income", status: "categorized",
-      transactionDate: input.paymentDate, customerId: input.customerId,
-      description: `Payment received${input.paymentMethod ? " — " + input.paymentMethod : ""}`,
-      amount: input.amount, farmCategoryId: "cat-custom", taxCategoryCode: "income_custom_hire",
-      isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced", createdAt: new Date().toISOString(),
-      splits: [{ id: randomUUID(), transactionId: "", targetType: "general_overhead", allocationMethod: "manual", allocatedAmount: input.amount }],
-    };
-    txn.splits[0].transactionId = txn.id;
-    db.transactions.push(txn);
-
-    return payment;
-  });
+export async function recordPayment(input: Omit<Payment, "id">) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).recordPayment(input);
+  return demo.recordPayment(input);
 }
 
-export function listAssets() { return getDB().assets; }
-export function listAssetRepairs(assetId?: string) {
-  const rows = getDB().assetRepairs;
-  return assetId ? rows.filter((r) => r.assetId === assetId) : rows;
+export async function listAssets() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listAssets();
+  return demo.listAssets();
 }
-export function listMileageTrips() { return getDB().mileageTrips; }
-export function listLivestockGroups() { return getDB().livestockGroups; }
-export function listLivestockTransactions(groupId?: string) {
-  const rows = getDB().livestockTransactions;
-  return groupId ? rows.filter((t) => t.livestockGroupId === groupId) : rows;
+export async function listAssetRepairs(assetId?: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listAssetRepairs(assetId);
+  return demo.listAssetRepairs(assetId);
 }
-export function listLoans() { return getDB().loans; }
-export function listInventory() { return getDB().inventoryItems; }
-export function listInventoryMovements(itemId?: string) {
-  const rows = getDB().inventoryMovements;
-  return itemId ? rows.filter((m) => m.inventoryItemId === itemId) : rows;
+export async function listMileageTrips() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listMileageTrips();
+  return demo.listMileageTrips();
 }
-export function listDocuments(category?: string) {
-  const rows = getDB().documents;
-  return category ? rows.filter((d) => d.category === category) : rows;
+export async function listLivestockGroups() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listLivestockGroups();
+  return demo.listLivestockGroups();
 }
-export function createDocument(input: Omit<DocumentRecord, "id" | "createdAt">) {
-  return mutate((db) => {
-    const doc: DocumentRecord = { ...input, id: randomUUID(), createdAt: new Date().toISOString() };
-    db.documents.push(doc);
-    return doc;
-  });
+export async function listLivestockTransactions(groupId?: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listLivestockTransactions(groupId);
+  return demo.listLivestockTransactions(groupId);
 }
-export function listTaxOpportunities() { return getDB().taxOpportunities; }
-export function listTaxQuestions() { return getDB().taxQuestions; }
-export function createTaxQuestion(question: string, raisedByName: string) {
-  return mutate((db) => {
-    const tq = {
-      id: randomUUID(), farmBusinessId: FARM.id, taxYear: FARM.currentTaxYear,
-      question, raisedByName, status: "open" as const, createdAt: new Date().toISOString(),
-    };
-    db.taxQuestions.push(tq);
-    return tq;
-  });
+export async function listLoans() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listLoans();
+  return demo.listLoans();
+}
+export async function listInventory() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listInventory();
+  return demo.listInventory();
+}
+export async function listInventoryMovements(itemId?: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listInventoryMovements(itemId);
+  return demo.listInventoryMovements(itemId);
+}
+export async function listDocuments(category?: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listDocuments(category);
+  return demo.listDocuments(category);
+}
+export async function createDocument(input: Omit<DocumentRecord, "id" | "createdAt">) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createDocument(input);
+  return demo.createDocument(input);
+}
+export async function listTaxOpportunities() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listTaxOpportunities();
+  return demo.listTaxOpportunities();
+}
+export async function listTaxQuestions() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listTaxQuestions();
+  return demo.listTaxQuestions();
+}
+export async function createTaxQuestion(question: string, raisedByName: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createTaxQuestion(question, raisedByName);
+  return demo.createTaxQuestion(question, raisedByName);
 }
 
-// -----------------------------------------------------------------------
-// Field & crop-year profitability
-// -----------------------------------------------------------------------
+export async function fieldProfitability(fieldId: string, taxYear: number) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).fieldProfitability(fieldId, taxYear);
+  return demo.fieldProfitability(fieldId, taxYear);
+}
+export async function allFieldProfitability(taxYear: number) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).allFieldProfitability(taxYear);
+  return demo.allFieldProfitability(taxYear);
+}
+export async function dashboardSummary(taxYear: number) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).dashboardSummary(taxYear);
+  return demo.dashboardSummary(taxYear);
+}
 
-const EXPENSE_BUCKETS: Record<string, keyof Omit<FieldProfitability, "fieldId" | "fieldName" | "acres" | "cropName" | "income" | "totalExpense" | "margin" | "incomePerAcre" | "expensePerAcre" | "marginPerAcre">> = {
-  "cat-seed": "expenseSeed",
-  "cat-fert": "expenseFertilizer",
-  "cat-chem": "expenseChemical",
-  "cat-fuel": "expenseFuel",
-  "cat-rent": "expenseRent",
-  "cat-ins": "expenseInsurance",
-  "cat-custom": "expenseCustomWork",
-  "cat-trucking": "expenseTrucking",
-};
-
-export function fieldProfitability(fieldId: string, taxYear: number): FieldProfitability {
+/** Aggregate accessor used by pages that previously read the demo store's getDB() directly. */
+export async function getAppData(taxYear: number) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).getAppData(taxYear);
+  const { getDB } = await import("./store");
   const db = getDB();
-  const field = db.fields.find((f) => f.id === fieldId)!;
-  const cropYear = db.cropYears.find((c) => c.fieldId === fieldId && c.year === taxYear);
-  const relevantTxns = db.transactions.filter((t) => t.taxYear === taxYear);
-
-  const result: FieldProfitability = {
-    fieldId, fieldName: field?.name ?? "Unknown", acres: field?.acres ?? 0, cropName: cropYear?.cropName,
-    income: 0, expenseSeed: 0, expenseFertilizer: 0, expenseChemical: 0, expenseFuel: 0,
-    expenseRent: 0, expenseInsurance: 0, expenseCustomWork: 0, expenseHarvest: 0,
-    expenseDrying: 0, expenseTrucking: 0, expenseOther: 0, totalExpense: 0, margin: 0,
-    incomePerAcre: 0, expensePerAcre: 0, marginPerAcre: 0,
-  };
-
-  for (const txn of relevantTxns) {
-    for (const split of txn.splits) {
-      if (split.fieldId !== fieldId) continue;
-      if (txn.transactionType === "income") {
-        result.income += split.allocatedAmount;
-      } else if (txn.transactionType === "expense") {
-        const bucketKey = txn.farmCategoryId ? EXPENSE_BUCKETS[txn.farmCategoryId] : undefined;
-        if (bucketKey) (result[bucketKey] as number) += split.allocatedAmount;
-        else result.expenseOther += split.allocatedAmount;
-      }
-    }
-  }
-
-  result.totalExpense = result.expenseSeed + result.expenseFertilizer + result.expenseChemical +
-    result.expenseFuel + result.expenseRent + result.expenseInsurance + result.expenseCustomWork +
-    result.expenseHarvest + result.expenseDrying + result.expenseTrucking + result.expenseOther;
-  result.margin = result.income - result.totalExpense;
-  const acres = result.acres || 1;
-  result.incomePerAcre = round2(result.income / acres);
-  result.expensePerAcre = round2(result.totalExpense / acres);
-  result.marginPerAcre = round2(result.margin / acres);
-  return result;
-}
-
-export function allFieldProfitability(taxYear: number) {
-  return listFields().map((f) => fieldProfitability(f.id, taxYear));
-}
-
-function round2(n: number) {
-  return Math.round(n * 100) / 100;
-}
-
-// -----------------------------------------------------------------------
-// Dashboard summary
-// -----------------------------------------------------------------------
-
-export function dashboardSummary(taxYear: number) {
-  const txns = listTransactions({ taxYear }).filter((t) => !t.isPersonalExcluded);
-  const income = txns.filter((t) => t.transactionType === "income").reduce((s, t) => s + t.amount, 0);
-  const expenses = txns.filter((t) => t.transactionType === "expense").reduce((s, t) => s + t.amount, 0);
-  const margin = income - expenses;
-
-  const receipts = listReceipts();
-  const missingReceipts = txns.filter((t) => t.transactionType === "expense" && !t.receiptId).length;
-  const needsReview = txns.filter((t) => t.status === "needs_review").length;
-  const overdueInvoices = listInvoices().filter((i) => i.status !== "paid" && i.status !== "void" && new Date(i.dueDate ?? 0) < new Date()).length;
-  const cpaQuestionsOpen = listTaxQuestions().filter((q) => q.status === "open").length;
-  const unconfirmedReceipts = receipts.filter((r) => r.ocrStatus !== "confirmed").length;
-  const lowInventory = listInventory().filter((i) => i.reorderThreshold && i.quantityOnHand < i.reorderThreshold).length;
-
-  const totalChecklist = 6;
-  let complete = 0;
-  if (missingReceipts === 0) complete++;
-  if (needsReview === 0) complete++;
-  if (cpaQuestionsOpen === 0) complete++;
-  if (overdueInvoices === 0) complete++;
-  if (unconfirmedReceipts === 0) complete++;
-  if (lowInventory === 0) complete++;
-  const taxReadinessPct = Math.round((complete / totalChecklist) * 100);
-
   return {
-    income, expenses, margin, taxReadinessPct,
-    needsAttention: {
-      missingReceipts, transactionsNeedingReview: needsReview, cpaQuestionsOpen,
-      overdueInvoices, unconfirmedReceipts, lowInventory,
-    },
+    fields: db.fields, farmCategories: db.farmCategories, customers: db.customers,
+    customerFields: db.customerFields, transactions: db.transactions.filter((t) => t.taxYear === taxYear),
   };
+}
+
+/** Full demo-shaped snapshot (used by the CPA/field Excel export, which needs every collection). Supabase mode fetches each collection directly instead — see src/lib/export/workbook.ts. */
+export async function getFullSnapshot() {
+  const { getDB } = await import("./store");
+  return getDB();
 }

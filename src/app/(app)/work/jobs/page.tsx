@@ -2,8 +2,8 @@ import Link from "next/link";
 import { listJobs } from "@/lib/data/repo";
 import { PageHeader, money } from "@/components/ui/stat-card";
 
-export default function JobsPage() {
-  const jobs = listJobs();
+export default async function JobsPage() {
+  const jobs = await listJobs();
   return (
     <div>
       <PageHeader

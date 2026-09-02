@@ -14,8 +14,8 @@ const REPORTS = [
   { title: "Tax Organization", desc: "Readiness, missing docs, CPA questions", href: "/tax" },
 ];
 
-export default function ReportsPage() {
-  const farm = getFarm();
+export default async function ReportsPage() {
+  const farm = await getFarm();
   return (
     <div>
       <PageHeader

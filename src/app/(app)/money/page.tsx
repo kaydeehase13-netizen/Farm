@@ -13,11 +13,11 @@ const TILES = [
   { href: "/money/loans", label: "Loans", desc: "Farm loans, balances & interest" },
 ];
 
-export default function MoneyOverviewPage() {
-  const farm = getFarm();
-  const summary = dashboardSummary(farm.currentTaxYear);
-  const invoices = listInvoices();
-  const loans = listLoans();
+export default async function MoneyOverviewPage() {
+  const farm = await getFarm();
+  const summary = await dashboardSummary(farm.currentTaxYear);
+  const invoices = await listInvoices();
+  const loans = await listLoans();
   const outstanding = invoices.reduce((s, i) => s + (i.total - i.amountPaid), 0);
   const loanBalance = loans.reduce((s, l) => s + (l.currentBalance ?? 0), 0);
 

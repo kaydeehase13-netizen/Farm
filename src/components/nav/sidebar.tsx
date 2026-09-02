@@ -4,10 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Home, Landmark, Sprout, Briefcase, MoreHorizontal, Plus, FileSpreadsheet,
-  Users, Search,
+  Users, Search, LogOut, ChevronDown,
 } from "lucide-react";
 import { useState } from "react";
 import GlobalAddMenu from "./global-add-menu";
+import { signOutAction, switchFarmAction } from "@/lib/auth-actions";
 
 const PRIMARY_NAV = [
   { href: "/home", label: "Home", icon: Home },
@@ -23,9 +24,18 @@ const SECONDARY_NAV = [
   { href: "/cpa", label: "CPA Portal", icon: Users },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  farmName?: string;
+  taxYear?: number;
+  authenticated?: boolean;
+  farms?: { id: string; name: string }[];
+  activeFarmId?: string;
+}
+
+export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticated = false, farms = [], activeFarmId }: SidebarProps) {
   const pathname = usePathname();
   const [addOpen, setAddOpen] = useState(false);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   return (
     <>
@@ -81,10 +91,43 @@ export function Sidebar() {
           </div>
         </nav>
 
-        <div className="px-4 py-4 border-t border-white/10">
-          <Link href="/more/settings" className="text-xs text-sage-light/70 hover:text-white">
-            Mohler Farms · 2026 · Settings
+        <div className="px-4 py-4 border-t border-white/10 space-y-2">
+          {authenticated && farms.length > 1 && (
+            <div className="relative">
+              <button
+                onClick={() => setSwitcherOpen((v) => !v)}
+                className="w-full flex items-center justify-between text-xs text-sage-light/80 hover:text-white bg-forest-light/40 rounded-md px-2 py-1.5"
+              >
+                <span className="truncate">{farmName}</span>
+                <ChevronDown size={12} />
+              </button>
+              {switcherOpen && (
+                <div className="absolute bottom-full mb-1 left-0 right-0 bg-white rounded-lg shadow-lg overflow-hidden text-charcoal z-10">
+                  {farms.map((f) => (
+                    <form action={switchFarmAction} key={f.id}>
+                      <input type="hidden" name="farmId" value={f.id} />
+                      <button
+                        type="submit"
+                        className={`w-full text-left px-3 py-2 text-xs hover:bg-cream ${f.id === activeFarmId ? "font-semibold text-forest" : ""}`}
+                      >
+                        {f.name}
+                      </button>
+                    </form>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          <Link href="/more/settings" className="text-xs text-sage-light/70 hover:text-white block">
+            {farmName} · {taxYear} · Settings
           </Link>
+          {authenticated && (
+            <form action={signOutAction}>
+              <button type="submit" className="flex items-center gap-1.5 text-xs text-sage-light/70 hover:text-white">
+                <LogOut size={12} /> Sign out
+              </button>
+            </form>
+          )}
         </div>
       </aside>
 
@@ -122,7 +165,7 @@ export function Sidebar() {
   );
 }
 
-export function TopBar() {
+export function TopBar({ farmName = "Mohler Farms", taxYear = 2026 }: { farmName?: string; taxYear?: number }) {
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between gap-4 bg-cream/95 backdrop-blur border-b border-[--border-color] px-4 md:px-8 py-3">
       <div className="flex items-center gap-2 text-sm text-charcoal/60 max-w-md w-full">
@@ -133,8 +176,8 @@ export function TopBar() {
         />
       </div>
       <div className="flex items-center gap-3 text-sm">
-        <span className="status-pill status-green">Mohler Farms</span>
-        <span className="text-charcoal/60">2026</span>
+        <span className="status-pill status-green">{farmName}</span>
+        <span className="text-charcoal/60">{taxYear}</span>
       </div>
     </header>
   );

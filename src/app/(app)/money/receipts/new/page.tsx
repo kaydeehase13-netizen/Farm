@@ -1,13 +1,14 @@
-import { getDB } from "@/lib/data/store";
+import { getAppData, getFarm } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { ReceiptScanner } from "@/components/money/receipt-scanner";
 
-export default function NewReceiptPage() {
-  const db = getDB();
+export default async function NewReceiptPage() {
+  const farm = await getFarm();
+  const data = await getAppData(farm.currentTaxYear);
   return (
     <div>
       <PageHeader title="Scan Receipt" description="Photograph or upload a receipt — AI reads it, you confirm." />
-      <ReceiptScanner categories={db.farmCategories} fields={db.fields} />
+      <ReceiptScanner categories={data.farmCategories} fields={data.fields} />
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { getFarm } from "@/lib/data/repo";
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type") === "cpa" ? "cpa" : "full";
-  const farm = getFarm();
+  const farm = await getFarm();
   const taxYear = Number(searchParams.get("taxYear")) || farm.currentTaxYear;
 
   const buffer = await buildWorkbook({ scope: type, taxYear });

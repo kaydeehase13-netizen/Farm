@@ -6,7 +6,7 @@ const CATEGORIES = ["receipt", "invoice", "tax", "equipment", "land", "insurance
 
 export default async function DocumentsPage({ searchParams }: { searchParams: Promise<{ category?: string }> }) {
   const params = await searchParams;
-  const docs = listDocuments(params.category);
+  const docs = await listDocuments(params.category);
   return (
     <div>
       <PageHeader

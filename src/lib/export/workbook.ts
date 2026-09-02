@@ -42,7 +42,7 @@ export interface WorkbookOptions {
 }
 
 export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buffer> {
-  const farm = getFarm();
+  const farm = await getFarm();
   const db = getDB();
   const wb = new ExcelJS.Workbook();
   wb.creator = "FarmLedger";
@@ -52,7 +52,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   cover.columns = [{ width: 28 }, { width: 40 }];
   const coverRows: [string, string | number][] = [
     ["Farm / Business", farm.name],
-    ["State", farm.state],
+    ["State", farm.state ?? ""],
     ["Operation Type", farm.operationType],
     ["Tax Year", opts.taxYear],
     ["Report", opts.scope === "cpa" ? "CPA Export" : opts.scope === "full" ? "Full Financial Records" : opts.scope],
@@ -146,7 +146,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Expense/Acre", key: "expAcre", width: 14, style: { numFmt: CURRENCY_FMT } },
     { header: "Margin/Acre", key: "marginAcre", width: 14, style: { numFmt: CURRENCY_FMT } },
   ]);
-  for (const fp of allFieldProfitability(opts.taxYear)) {
+  for (const fp of await allFieldProfitability(opts.taxYear)) {
     fieldProfit.addRow({
       field: fp.fieldName, crop: fp.cropName, acres: fp.acres, income: fp.income, expense: fp.totalExpense,
       margin: fp.margin, incAcre: fp.incomePerAcre, expAcre: fp.expensePerAcre, marginAcre: fp.marginPerAcre,
@@ -201,7 +201,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   for (const j of db.jobs) {
     customWork.addRow({
       date: dateCell(j.completedDate ?? j.scheduledDate), customer: j.customerName, field: j.customerFieldName,
-      service: j.jobService, acres: j.acres, revenue: j.revenue, cost: j.directCost, margin: jobMargin(j), status: j.status,
+      service: j.jobService, acres: j.acres, revenue: j.revenue, cost: j.directCost, margin: await jobMargin(j), status: j.status,
     });
   }
 

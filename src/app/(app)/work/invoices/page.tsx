@@ -3,9 +3,9 @@ import { PageHeader, money } from "@/components/ui/stat-card";
 import { createInvoiceAction, recordPaymentAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
 
-export default function InvoicesPage() {
-  const invoices = listInvoices();
-  const uninvoicedJobs = listJobs().filter((j) => j.status === "completed" || (j.status === "scheduled" && !j.invoiceId));
+export default async function InvoicesPage() {
+  const invoices = await listInvoices();
+  const uninvoicedJobs = (await listJobs()).filter((j) => j.status === "completed" || (j.status === "scheduled" && !j.invoiceId));
 
   async function makeInvoice(formData: FormData) {
     "use server";

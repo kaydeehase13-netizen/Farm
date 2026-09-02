@@ -1,6 +1,4 @@
-import Link from "next/link";
-import { listTransactions, getFarm } from "@/lib/data/repo";
-import { getDB } from "@/lib/data/store";
+import { listTransactions, getFarm, getAppData } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { TransactionsTable } from "@/components/money/transactions-table";
 
@@ -10,15 +8,15 @@ export default async function TransactionsPage({
   searchParams: Promise<{ type?: string; status?: string; q?: string; fieldId?: string }>;
 }) {
   const params = await searchParams;
-  const farm = getFarm();
-  const transactions = listTransactions({
+  const farm = await getFarm();
+  const transactions = await listTransactions({
     taxYear: farm.currentTaxYear,
     type: params.type,
     status: params.status,
     fieldId: params.fieldId,
     search: params.q,
   });
-  const db = getDB();
+  const data = await getAppData(farm.currentTaxYear);
 
   return (
     <div>
@@ -30,9 +28,9 @@ export default async function TransactionsPage({
             <a href={`/api/export/cpa-workbook?type=full`} className="card px-4 py-2 text-sm font-medium hover:border-forest">
               Export Excel
             </a>
-            <Link href="/money/transactions/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">
+            <a href="/money/transactions/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">
               + Add Transaction
-            </Link>
+            </a>
           </div>
         }
       />
@@ -52,12 +50,12 @@ export default async function TransactionsPage({
         </select>
         <select name="fieldId" defaultValue={params.fieldId ?? ""} className="card px-3 py-2">
           <option value="">All fields</option>
-          {db.fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          {data.fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
         </select>
         <button className="bg-cream-deep px-4 py-2 rounded-lg font-medium">Filter</button>
       </form>
 
-      <TransactionsTable transactions={transactions} categories={db.farmCategories} fields={db.fields} />
+      <TransactionsTable transactions={transactions} categories={data.farmCategories} fields={data.fields} />
     </div>
   );
 }

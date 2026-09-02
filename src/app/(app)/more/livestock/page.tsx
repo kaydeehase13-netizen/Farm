@@ -2,9 +2,9 @@ import Link from "next/link";
 import { listLivestockGroups, listLivestockTransactions } from "@/lib/data/repo";
 import { PageHeader, money } from "@/components/ui/stat-card";
 
-export default function LivestockPage() {
-  const groups = listLivestockGroups();
-  const txns = listLivestockTransactions();
+export default async function LivestockPage() {
+  const groups = await listLivestockGroups();
+  const txns = await listLivestockTransactions();
   return (
     <div>
       <PageHeader

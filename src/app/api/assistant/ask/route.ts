@@ -11,11 +11,11 @@ export async function POST(req: NextRequest) {
   const { question } = await req.json();
   if (!question) return NextResponse.json({ error: "question is required" }, { status: 400 });
 
-  const farm = getFarm();
+  const farm = await getFarm();
   const db = getDB();
-  const summary = dashboardSummary(farm.currentTaxYear);
-  const fieldProfit = allFieldProfitability(farm.currentTaxYear);
-  const inventory = listInventory();
+  const summary = await dashboardSummary(farm.currentTaxYear);
+  const fieldProfit = await allFieldProfitability(farm.currentTaxYear);
+  const inventory = await listInventory();
 
   const snapshot = {
     farm: farm.name, taxYear: farm.currentTaxYear,

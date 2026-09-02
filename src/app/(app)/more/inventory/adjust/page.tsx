@@ -3,8 +3,8 @@ import { PageHeader } from "@/components/ui/stat-card";
 import { adjustInventoryAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
 
-export default function AdjustInventoryPage() {
-  const items = listInventory();
+export default async function AdjustInventoryPage() {
+  const items = await listInventory();
   async function action(formData: FormData) {
     "use server";
     await adjustInventoryAction(formData);

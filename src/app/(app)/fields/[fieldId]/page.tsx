@@ -5,12 +5,12 @@ import { PageHeader, StatCard, money, moneyPrecise } from "@/components/ui/stat-
 
 export default async function FieldDetailPage({ params }: { params: Promise<{ fieldId: string }> }) {
   const { fieldId } = await params;
-  const field = getField(fieldId);
+  const field = await getField(fieldId);
   if (!field) notFound();
-  const farm = getFarm();
-  const profit = fieldProfitability(fieldId, farm.currentTaxYear);
-  const activities = listActivities({ fieldId });
-  const cropYears = listCropYears(fieldId);
+  const farm = await getFarm();
+  const profit = await fieldProfitability(fieldId, farm.currentTaxYear);
+  const activities = await listActivities({ fieldId });
+  const cropYears = await listCropYears(fieldId);
 
   const expenseRows: [string, number][] = ([
     ["Seed", profit.expenseSeed], ["Fertilizer", profit.expenseFertilizer], ["Chemical", profit.expenseChemical],

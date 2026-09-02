@@ -3,8 +3,8 @@ import { PageHeader } from "@/components/ui/stat-card";
 import { createLivestockTxnAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
 
-export default function NewLivestockTxnPage() {
-  const groups = listLivestockGroups();
+export default async function NewLivestockTxnPage() {
+  const groups = await listLivestockGroups();
   async function action(formData: FormData) {
     "use server";
     await createLivestockTxnAction(formData);

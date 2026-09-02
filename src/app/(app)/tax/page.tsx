@@ -3,11 +3,11 @@ import { PageHeader, StatCard } from "@/components/ui/stat-card";
 import { createTaxQuestionAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
 
-export default function TaxCenterPage() {
-  const farm = getFarm();
-  const summary = dashboardSummary(farm.currentTaxYear);
-  const opportunities = listTaxOpportunities();
-  const questions = listTaxQuestions();
+export default async function TaxCenterPage() {
+  const farm = await getFarm();
+  const summary = await dashboardSummary(farm.currentTaxYear);
+  const opportunities = await listTaxOpportunities();
+  const questions = await listTaxQuestions();
 
   async function askQuestion(formData: FormData) {
     "use server";

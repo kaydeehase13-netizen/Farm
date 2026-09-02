@@ -2,9 +2,9 @@ import Link from "next/link";
 import { listAssets, listMileageTrips } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 
-export default function VehiclesPage() {
-  const vehicles = listAssets().filter((a) => a.assetType === "vehicle");
-  const trips = listMileageTrips();
+export default async function VehiclesPage() {
+  const vehicles = (await listAssets()).filter((a) => a.assetType === "vehicle");
+  const trips = await listMileageTrips();
   const totalMiles = trips.reduce((s, t) => s + t.miles, 0);
 
   return (
