@@ -145,11 +145,12 @@ export function confirmReceipt(id: string, patch: Partial<Receipt> & { createTra
   });
 }
 
-export function listActivities(filters: { fieldId?: string; activityType?: string; customerId?: string } = {}) {
+export function listActivities(filters: { fieldId?: string; activityType?: string; customerId?: string; year?: number } = {}) {
   let rows = getDB().activities;
   if (filters.fieldId) rows = rows.filter((a) => a.fieldId === filters.fieldId);
   if (filters.activityType) rows = rows.filter((a) => a.activityType === filters.activityType);
   if (filters.customerId) rows = rows.filter((a) => a.customerId === filters.customerId);
+  if (filters.year) rows = rows.filter((a) => a.activityDate.startsWith(String(filters.year)));
   return [...rows].sort((a, b) => b.activityDate.localeCompare(a.activityDate));
 }
 

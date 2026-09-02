@@ -11,7 +11,7 @@ export default async function FieldDetailPage({ params }: { params: Promise<{ fi
   const farm = await getFarm();
   const taxYear = await getViewTaxYear();
   const profit = await fieldProfitability(fieldId, taxYear);
-  const activities = await listActivities({ fieldId });
+  const activities = await listActivities({ fieldId, year: taxYear });
   const cropYears = await listCropYears(fieldId);
 
   const expenseRows: [string, number][] = ([
@@ -25,7 +25,7 @@ export default async function FieldDetailPage({ params }: { params: Promise<{ fi
     <div>
       <PageHeader
         title={field.name}
-        description={`${field.acres} acres · ${field.ownership.replace("_", " ")} · ${field.county ?? ""} County ${field.fsaFarmNumber ? `· FSA Farm ${field.fsaFarmNumber}` : ""}`}
+        description={`${field.acres} acres · ${field.ownership.replace("_", " ")} · ${field.county ?? ""} County ${field.fsaFarmNumber ? `· FSA Farm ${field.fsaFarmNumber}` : ""} · Viewing ${taxYear}`}
         action={
           <Link href={`/fields/activities/new?fieldId=${fieldId}`} className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">
             + Log Field Activity
@@ -42,8 +42,8 @@ export default async function FieldDetailPage({ params }: { params: Promise<{ fi
 
       <div className="grid lg:grid-cols-2 gap-6">
         <div className="card p-5">
-          <div className="text-sm font-semibold text-forest mb-3">Expense Breakdown</div>
-          {expenseRows.length === 0 && <p className="text-sm text-charcoal/50">No expenses recorded for this field yet.</p>}
+          <div className="text-sm font-semibold text-forest mb-3">Expense Breakdown ({taxYear})</div>
+          {expenseRows.length === 0 && <p className="text-sm text-charcoal/50">No expenses recorded for this field in {taxYear}.</p>}
           <div className="space-y-2">
             {expenseRows.map(([label, value]) => (
               <div key={label} className="flex items-center gap-3 text-sm">
@@ -60,7 +60,7 @@ export default async function FieldDetailPage({ params }: { params: Promise<{ fi
             <div className="mt-6 pt-4 border-t border-[--border-color]">
               <div className="text-sm font-semibold text-forest mb-2">Crop History</div>
               {cropYears.map((cy) => (
-                <div key={cy.id} className="flex justify-between text-sm py-1">
+                <div key={cy.id} className={`flex justify-between text-sm py-1 ${cy.year === taxYear ? "font-semibold text-forest" : ""}`}>
                   <span>{cy.year} — {cy.cropName}</span>
                   <span className="text-charcoal/55">{cy.actualYield ? `${cy.actualYield} ${cy.yieldUnit}` : "—"}</span>
                 </div>
@@ -70,7 +70,7 @@ export default async function FieldDetailPage({ params }: { params: Promise<{ fi
         </div>
 
         <div className="card p-5">
-          <div className="text-sm font-semibold text-forest mb-3">Field Activity History</div>
+          <div className="text-sm font-semibold text-forest mb-3">Field Activity History ({taxYear})</div>
           <ol className="relative border-l-2 border-cream-deep ml-2 space-y-5">
             {activities.map((a) => (
               <li key={a.id} className="ml-4">
@@ -85,7 +85,7 @@ export default async function FieldDetailPage({ params }: { params: Promise<{ fi
                 {a.notes && <div className="text-sm text-charcoal/50 italic">{a.notes}</div>}
               </li>
             ))}
-            {activities.length === 0 && <p className="text-sm text-charcoal/50">No activity logged yet.</p>}
+            {activities.length === 0 && <p className="text-sm text-charcoal/50">No activity logged for {taxYear}. Switch the year at the top of the page to see other years.</p>}
           </ol>
         </div>
       </div>

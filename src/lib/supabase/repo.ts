@@ -247,13 +247,14 @@ export async function confirmReceipt(id: string, patch: Partial<Receipt> & { cre
   return null;
 }
 
-export async function listActivities(filters: { fieldId?: string; activityType?: string; customerId?: string } = {}): Promise<Activity[]> {
+export async function listActivities(filters: { fieldId?: string; activityType?: string; customerId?: string; year?: number } = {}): Promise<Activity[]> {
   const { supabase, farm } = await ctx();
   let q = supabase.from("activity").select("*, field:field_id(name), customer_field:customer_field_id(name), spray_product_line(*, product:product_id(name, epa_registration_number)), fertilizer_product_line(*, product:product_id(name)), planting_activity_detail(seeding_rate, seed_product:seed_product_id(name)), harvest_activity_detail(yield_amount, yield_unit, moisture_pct)")
     .eq("farm_business_id", farm.id).order("activity_date", { ascending: false });
   if (filters.fieldId) q = q.eq("field_id", filters.fieldId);
   if (filters.activityType) q = q.eq("activity_type", filters.activityType);
   if (filters.customerId) q = q.eq("customer_id", filters.customerId);
+  if (filters.year) q = q.gte("activity_date", `${filters.year}-01-01`).lt("activity_date", `${filters.year + 1}-01-01`);
   const { data } = await q;
   return (data ?? []).map((r: any): Activity => {
     const planting = Array.isArray(r.planting_activity_detail) ? r.planting_activity_detail[0] : r.planting_activity_detail;
