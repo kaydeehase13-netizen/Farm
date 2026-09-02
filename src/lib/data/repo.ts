@@ -37,6 +37,11 @@ export async function getField(fieldId: string) {
   return demo.getField(fieldId);
 }
 
+export async function createField(input: Parameters<typeof demo.createField>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createField(input);
+  return demo.createField(input);
+}
+
 export async function listCropYears(fieldId?: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listCropYears(fieldId);
   return demo.listCropYears(fieldId);

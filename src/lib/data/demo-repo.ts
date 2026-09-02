@@ -25,6 +25,14 @@ export function getField(fieldId: string) {
   return getDB().fields.find((f) => f.id === fieldId) ?? null;
 }
 
+export function createField(input: Omit<import("@/types/domain").Field, "id" | "farmBusinessId">) {
+  return mutate((db) => {
+    const field: import("@/types/domain").Field = { ...input, id: randomUUID(), farmBusinessId: FARM.id };
+    db.fields.push(field);
+    return field;
+  });
+}
+
 export function listCropYears(fieldId?: string) {
   const db = getDB();
   return fieldId ? db.cropYears.filter((c) => c.fieldId === fieldId) : db.cropYears;

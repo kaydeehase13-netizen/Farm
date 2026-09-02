@@ -49,6 +49,30 @@ export async function getField(fieldId: string): Promise<Field | null> {
   return data ? mapField(data) : null;
 }
 
+export async function createField(input: Omit<Field, "id" | "farmBusinessId">): Promise<Field> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase
+    .from("field")
+    .insert({
+      farm_business_id: farm.id,
+      name: input.name,
+      acres: input.acres,
+      tillable_acres: input.tillableAcres ?? null,
+      ownership: input.ownership,
+      landowner_name: input.landownerName ?? null,
+      county: input.county ?? null,
+      fsa_farm_number: input.fsaFarmNumber ?? null,
+      fsa_tract_number: input.fsaTractNumber ?? null,
+      fsa_field_number: input.fsaFieldNumber ?? null,
+      irrigated: input.irrigated,
+      notes: input.notes ?? null,
+    })
+    .select("*")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Could not create field");
+  return mapField(data);
+}
+
 export async function listCropYears(fieldId?: string): Promise<CropYear[]> {
   const { supabase, farm } = await ctx();
   let q = supabase.from("crop_year").select("id, field_id, planted_acres, actual_yield, yield_unit, crop:crop_id(name), tax_year:tax_year_id(year, farm_business_id)");

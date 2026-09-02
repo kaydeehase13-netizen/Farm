@@ -13,8 +13,20 @@ export default async function FieldsPage() {
       <PageHeader
         title="Fields"
         description={`${rows.length} fields · ${totalAcres.toFixed(1)} acres · ${money(totalMargin)} total margin (${farm.currentTaxYear})`}
-        action={<a href="/api/export/field-report" className="card px-4 py-2 text-sm font-medium hover:border-forest">Export Field Report</a>}
+        action={
+          <div className="flex gap-2">
+            <Link href="/fields/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">
+              + Add Field
+            </Link>
+            <a href="/api/export/field-report" className="card px-4 py-2 text-sm font-medium hover:border-forest">Export Field Report</a>
+          </div>
+        }
       />
+      {rows.length === 0 && (
+        <div className="card p-8 text-center text-charcoal/55">
+          No fields yet. <Link href="/fields/new" className="text-forest font-medium hover:underline">Add your first field</Link> to start tracking acres, activities, and profitability.
+        </div>
+      )}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {rows.map((r) => (
           <Link key={r.fieldId} href={`/fields/${r.fieldId}`} className="card p-5 hover:border-forest transition-colors">

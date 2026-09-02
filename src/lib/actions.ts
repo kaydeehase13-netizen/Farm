@@ -49,6 +49,24 @@ export async function createExpenseOrIncome(formData: FormData) {
   revalidatePath("/home");
 }
 
+export async function createFieldAction(formData: FormData) {
+  await repo.createField({
+    name: str(formData, "name") ?? "Untitled Field",
+    acres: num(formData, "acres") ?? 0,
+    tillableAcres: num(formData, "tillableAcres"),
+    ownership: (str(formData, "ownership") ?? "owned") as any,
+    landownerName: str(formData, "landownerName"),
+    county: str(formData, "county"),
+    fsaFarmNumber: str(formData, "fsaFarmNumber"),
+    fsaTractNumber: str(formData, "fsaTractNumber"),
+    fsaFieldNumber: str(formData, "fsaFieldNumber"),
+    irrigated: str(formData, "irrigated") === "on",
+    notes: str(formData, "notes"),
+  });
+
+  revalidatePath("/fields");
+}
+
 export async function createFieldActivity(formData: FormData) {
   const farm = await getFarm();
   const activityType = str(formData, "activityType") as any;
