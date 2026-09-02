@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { listInvoices, listJobs } from "@/lib/data/repo";
 import { PageHeader, money } from "@/components/ui/stat-card";
 import { createInvoiceAction, recordPaymentAction } from "@/lib/actions";
@@ -20,7 +21,11 @@ export default async function InvoicesPage() {
 
   return (
     <div>
-      <PageHeader title="Invoices & Payments" description={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"}`} />
+      <PageHeader
+        title="Invoices & Payments"
+        description={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"}`}
+        action={<Link href="/work/invoices/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ New Invoice</Link>}
+      />
 
       <div className="card overflow-x-auto mb-8">
         <table className="data-table">

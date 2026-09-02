@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
-import { getDB } from "@/lib/data/store";
-import { getFarm, allFieldProfitability, jobMargin } from "@/lib/data/repo";
+import * as repo from "@/lib/data/repo";
 import { taxCategoryLabel, taxCategoryScheduleRef } from "@/lib/tax-categories";
+import type { Field, Job, FarmCategory } from "@/types/domain";
 
 // -----------------------------------------------------------------------
 // Professional CPA/tax workbook generator.
@@ -43,8 +43,17 @@ export interface WorkbookOptions {
 }
 
 export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buffer> {
-  const farm = await getFarm();
-  const db = getDB();
+  const farm = await repo.getFarm();
+  const [
+    fields, cropYears, yearTxns, farmCategories, jobs, customers, invoices, payments,
+    assets, assetRepairs, mileageTrips, livestockGroups, livestockTransactions, loans,
+    inventoryItems, activities, taxOpportunities, taxQuestions,
+  ] = await Promise.all([
+    repo.listFields(), repo.listCropYears(), repo.listTransactions({ taxYear: opts.taxYear }), repo.listFarmCategories(),
+    repo.listJobs(), repo.listCustomers(), repo.listInvoices(), repo.listPayments(),
+    repo.listAssets(), repo.listAssetRepairs(), repo.listMileageTrips(), repo.listLivestockGroups(), repo.listLivestockTransactions(),
+    repo.listLoans(), repo.listInventory(), repo.listActivities(), repo.listTaxOpportunities(), repo.listTaxQuestions(),
+  ]);
   const wb = new ExcelJS.Workbook();
   wb.creator = "FarmLedger";
   wb.created = new Date();
@@ -64,8 +73,6 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   coverRows.forEach((r) => cover.addRow(r));
   cover.getColumn(1).font = { bold: true };
 
-  const yearTxns = db.transactions.filter((t) => t.taxYear === opts.taxYear);
-
   // --- Income ---
   const incomeSheet = addSheet(wb, "Income", [
     { header: "Date", key: "date", width: 14 },
@@ -80,7 +87,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     incomeSheet.addRow({
       date: dateCell(t.transactionDate), source: t.vendorName ?? t.customerId ?? "—", description: t.description,
       taxCategory: taxCategoryLabel(t.taxCategoryCode), amount: t.amount,
-      field: fieldNamesForTxn(t, db), doc: t.receiptId ? "On file" : "Missing",
+      field: fieldNamesForTxn(t, fields), doc: t.receiptId ? "On file" : "Missing",
     });
   }
   incomeSheet.getColumn("date").numFmt = "mm/dd/yyyy";
@@ -104,8 +111,8 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded)) {
     expenseSheet.addRow({
       date: dateCell(t.transactionDate), vendor: t.vendorName, description: t.description,
-      farmCategory: farmCategoryLabel(t.farmCategoryId, db), taxCategory: taxCategoryLabel(t.taxCategoryCode),
-      amount: t.amount, salesTax: t.salesTax ?? 0, field: fieldNamesForTxn(t, db),
+      farmCategory: farmCategoryLabel(t.farmCategoryId, farmCategories), taxCategory: taxCategoryLabel(t.taxCategoryCode),
+      amount: t.amount, salesTax: t.salesTax ?? 0, field: fieldNamesForTxn(t, fields),
       doc: t.receiptId ? "On file" : "Missing", cpaFlag: t.cpaFlag ? "Yes" : "",
     });
   }
@@ -135,7 +142,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     const key = t.farmCategoryId ?? "uncategorized";
     farmTotals.set(key, (farmTotals.get(key) ?? 0) + t.amount);
   }
-  for (const [id, total] of farmTotals) byFarm.addRow({ cat: farmCategoryLabel(id, db), total });
+  for (const [id, total] of farmTotals) byFarm.addRow({ cat: farmCategoryLabel(id, farmCategories), total });
 
   // --- Field Profitability ---
   const fieldProfit = addSheet(wb, "Field Profitability", [
@@ -147,7 +154,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Expense/Acre", key: "expAcre", width: 14, style: { numFmt: CURRENCY_FMT } },
     { header: "Margin/Acre", key: "marginAcre", width: 14, style: { numFmt: CURRENCY_FMT } },
   ]);
-  for (const fp of await allFieldProfitability(opts.taxYear)) {
+  for (const fp of await repo.allFieldProfitability(opts.taxYear)) {
     fieldProfit.addRow({
       field: fp.fieldName, crop: fp.cropName, acres: fp.acres, income: fp.income, expense: fp.totalExpense,
       margin: fp.margin, incAcre: fp.incomePerAcre, expAcre: fp.expensePerAcre, marginAcre: fp.marginPerAcre,
@@ -169,9 +176,9 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   for (const t of yearTxns) {
     for (const s of t.splits) {
       if (!s.fieldId) continue;
-      const field = db.fields.find((f) => f.id === s.fieldId);
+      const field = fields.find((f) => f.id === s.fieldId);
       if (t.transactionType === "expense") {
-        fieldExpenses.addRow({ field: field?.name, date: dateCell(t.transactionDate), cat: farmCategoryLabel(t.farmCategoryId, db), desc: t.description, amount: s.allocatedAmount });
+        fieldExpenses.addRow({ field: field?.name, date: dateCell(t.transactionDate), cat: farmCategoryLabel(t.farmCategoryId, farmCategories), desc: t.description, amount: s.allocatedAmount });
       } else if (t.transactionType === "income") {
         fieldIncome.addRow({ field: field?.name, date: dateCell(t.transactionDate), desc: t.description, amount: s.allocatedAmount });
       }
@@ -184,8 +191,8 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Planted Acres", key: "acres", width: 14 }, { header: "Actual Yield", key: "yield", width: 14 },
     { header: "Yield Unit", key: "unit", width: 12 },
   ]);
-  for (const cy of db.cropYears.filter((c) => c.year === opts.taxYear)) {
-    const field = db.fields.find((f) => f.id === cy.fieldId);
+  for (const cy of cropYears.filter((c) => c.year === opts.taxYear)) {
+    const field = fields.find((f) => f.id === cy.fieldId);
     cropSummary.addRow({ field: field?.name, crop: cy.cropName, acres: cy.plantedAcres, yield: cy.actualYield, unit: cy.yieldUnit });
   }
 
@@ -199,10 +206,10 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Status", key: "status", width: 14 },
   ]);
   customWork.getColumn("date").numFmt = "mm/dd/yyyy";
-  for (const j of db.jobs) {
+  for (const j of jobs) {
     customWork.addRow({
       date: dateCell(j.completedDate ?? j.scheduledDate), customer: j.customerName, field: j.customerFieldName,
-      service: j.jobService, acres: j.acres, revenue: j.revenue, cost: j.directCost, margin: await jobMargin(j), status: j.status,
+      service: j.jobService, acres: j.acres, revenue: j.revenue, cost: j.directCost, margin: await repo.jobMargin(j), status: j.status,
     });
   }
 
@@ -216,7 +223,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   ]);
   invoicesSheet.getColumn("issue").numFmt = "mm/dd/yyyy";
   invoicesSheet.getColumn("due").numFmt = "mm/dd/yyyy";
-  for (const inv of db.invoices) {
+  for (const inv of invoices) {
     invoicesSheet.addRow({
       num: inv.invoiceNumber, customer: inv.customerName, issue: dateCell(inv.issueDate), due: dateCell(inv.dueDate),
       total: inv.total, paid: inv.amountPaid, balance: inv.total - inv.amountPaid, status: inv.status,
@@ -228,8 +235,8 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Amount", key: "amount", width: 14, style: { numFmt: CURRENCY_FMT } }, { header: "Method", key: "method", width: 18 },
   ]);
   paymentsSheet.getColumn("date").numFmt = "mm/dd/yyyy";
-  for (const p of db.payments) {
-    const customer = db.customers.find((c) => c.id === p.customerId);
+  for (const p of payments) {
+    const customer = customers.find((c) => c.id === p.customerId);
     paymentsSheet.addRow({ date: dateCell(p.paymentDate), customer: customer?.name, amount: p.amount, method: p.paymentMethod });
   }
 
@@ -241,7 +248,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   ]);
   assetSheet.getColumn("purchaseDate").numFmt = "mm/dd/yyyy";
   assetSheet.getColumn("pis").numFmt = "mm/dd/yyyy";
-  for (const a of db.assets) {
+  for (const a of assets) {
     assetSheet.addRow({ name: a.name, type: a.assetType, purchaseDate: dateCell(a.purchaseDate), price: a.purchasePrice, pis: dateCell(a.placedInServiceDate), use: a.businessUsePercent, status: a.status });
   }
 
@@ -250,8 +257,8 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Description", key: "desc", width: 32 }, { header: "Cost", key: "cost", width: 14, style: { numFmt: CURRENCY_FMT } },
   ]);
   repairsSheet.getColumn("date").numFmt = "mm/dd/yyyy";
-  for (const r of db.assetRepairs) {
-    const asset = db.assets.find((a) => a.id === r.assetId);
+  for (const r of assetRepairs) {
+    const asset = assets.find((a) => a.id === r.assetId);
     repairsSheet.addRow({ asset: asset?.name, date: dateCell(r.repairDate), desc: r.description, cost: r.cost });
   }
 
@@ -261,7 +268,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Miles", key: "miles", width: 10 }, { header: "Purpose", key: "purpose", width: 30 },
   ]);
   mileageSheet.getColumn("date").numFmt = "mm/dd/yyyy";
-  for (const m of db.mileageTrips) mileageSheet.addRow({ date: dateCell(m.tripDate), vehicle: m.vehicleName, miles: m.miles, purpose: m.purpose });
+  for (const m of mileageTrips) mileageSheet.addRow({ date: dateCell(m.tripDate), vehicle: m.vehicleName, miles: m.miles, purpose: m.purpose });
   mileageSheet.addRow({});
   mileageSheet.addRow({ purpose: "TOTAL MILES", miles: { formula: `SUM(C2:C${mileageSheet.rowCount - 1})` } });
 
@@ -272,8 +279,8 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Amount", key: "amount", width: 14, style: { numFmt: CURRENCY_FMT } }, { header: "Weight (lbs)", key: "weight", width: 12 },
   ]);
   livestockSheet.getColumn("date").numFmt = "mm/dd/yyyy";
-  for (const t of db.livestockTransactions) {
-    const g = db.livestockGroups.find((g) => g.id === t.livestockGroupId);
+  for (const t of livestockTransactions) {
+    const g = livestockGroups.find((g) => g.id === t.livestockGroupId);
     livestockSheet.addRow({ group: g?.name, date: dateCell(t.txnDate), type: t.txnType, head: t.headCount, amount: t.totalAmount, weight: t.weightLbs });
   }
 
@@ -284,7 +291,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Current Balance", key: "balance", width: 16, style: { numFmt: CURRENCY_FMT } },
   ]);
   loansSheet.getColumn("orig").numFmt = "mm/dd/yyyy";
-  for (const l of db.loans) loansSheet.addRow({ lender: l.lenderName, principal: l.originalPrincipal, rate: l.interestRate, orig: dateCell(l.originationDate), balance: l.currentBalance });
+  for (const l of loans) loansSheet.addRow({ lender: l.lenderName, principal: l.originalPrincipal, rate: l.interestRate, orig: dateCell(l.originationDate), balance: l.currentBalance });
 
   // --- Inventory Purchases ---
   const inventorySheet = addSheet(wb, "Inventory Purchases", [
@@ -292,7 +299,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "On Hand", key: "qty", width: 12 }, { header: "Unit", key: "unit", width: 10 },
     { header: "Avg Unit Cost", key: "cost", width: 14, style: { numFmt: CURRENCY_FMT } },
   ]);
-  for (const i of db.inventoryItems) inventorySheet.addRow({ product: i.productName, cat: i.category, qty: i.quantityOnHand, unit: i.unit, cost: i.averageUnitCost });
+  for (const i of inventoryItems) inventorySheet.addRow({ product: i.productName, cat: i.category, qty: i.quantityOnHand, unit: i.unit, cost: i.averageUnitCost });
 
   // --- Spray / Application Records ---
   const spraySheet = addSheet(wb, "Spray Records", [
@@ -302,7 +309,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Quantity Used", key: "qty", width: 14 }, { header: "Unit", key: "unit", width: 8 }, { header: "Applicator", key: "applicator", width: 18 },
   ]);
   spraySheet.getColumn("date").numFmt = "mm/dd/yyyy";
-  for (const a of db.activities.filter((a) => a.activityType === "spray")) {
+  for (const a of activities.filter((a) => a.activityType === "spray")) {
     for (const p of a.sprayProducts ?? []) {
       spraySheet.addRow({
         date: dateCell(a.activityDate), field: a.fieldName ?? a.customerFieldName, acres: a.acres,
@@ -317,7 +324,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Title", key: "title", width: 30 }, { header: "Description", key: "desc", width: 46 },
     { header: "Status", key: "status", width: 16 }, { header: "Info Missing", key: "missing", width: 40 },
   ]);
-  for (const o of db.taxOpportunities.filter((o) => o.taxYear === opts.taxYear)) {
+  for (const o of taxOpportunities.filter((o) => o.taxYear === opts.taxYear)) {
     opportunitiesSheet.addRow({ title: o.ruleTitle, desc: o.ruleDescription, status: o.status, missing: o.infoMissing.join("; ") });
   }
 
@@ -325,7 +332,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Question", key: "q", width: 50 }, { header: "Raised By", key: "by", width: 16 },
     { header: "Status", key: "status", width: 14 }, { header: "CPA Response", key: "resp", width: 40 },
   ]);
-  for (const q of db.taxQuestions) questionsSheet.addRow({ q: q.question, by: q.raisedByName, status: q.status, resp: q.cpaResponse });
+  for (const q of taxQuestions) questionsSheet.addRow({ q: q.question, by: q.raisedByName, status: q.status, resp: q.cpaResponse });
 
   const missingDocsSheet = addSheet(wb, "Missing Documentation", [
     { header: "Date", key: "date", width: 14 }, { header: "Description", key: "desc", width: 32 }, { header: "Amount", key: "amount", width: 14, style: { numFmt: CURRENCY_FMT } },
@@ -348,8 +355,8 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     for (const s of t.splits) {
       detailSheet.addRow({
         date: dateCell(t.transactionDate), type: t.transactionType, vendor: t.vendorName, desc: t.description,
-        farmCat: farmCategoryLabel(t.farmCategoryId, db), taxCat: taxCategoryLabel(t.taxCategoryCode),
-        target: splitTargetLabel(s, db), amount: s.allocatedAmount, status: t.status, doc: t.receiptId ? "On file" : "Missing",
+        farmCat: farmCategoryLabel(t.farmCategoryId, farmCategories), taxCat: taxCategoryLabel(t.taxCategoryCode),
+        target: splitTargetLabel(s, fields, jobs), amount: s.allocatedAmount, status: t.status, doc: t.receiptId ? "On file" : "Missing",
       });
     }
   }
@@ -366,14 +373,14 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   return wb.xlsx.writeBuffer();
 }
 
-function fieldNamesForTxn(t: { splits: { fieldId?: string }[] }, db: ReturnType<typeof getDB>) {
-  return t.splits.map((s) => s.fieldId && db.fields.find((f) => f.id === s.fieldId)?.name).filter(Boolean).join(", ");
+function fieldNamesForTxn(t: { splits: { fieldId?: string }[] }, fields: Field[]) {
+  return t.splits.map((s) => s.fieldId && fields.find((f) => f.id === s.fieldId)?.name).filter(Boolean).join(", ");
 }
-function farmCategoryLabel(id: string | undefined, db: ReturnType<typeof getDB>) {
-  return db.farmCategories.find((c) => c.id === id)?.name ?? "Uncategorized";
+function farmCategoryLabel(id: string | undefined, farmCategories: FarmCategory[]) {
+  return farmCategories.find((c) => c.id === id)?.name ?? "Uncategorized";
 }
-function splitTargetLabel(s: { targetType: string; fieldId?: string; jobId?: string }, db: ReturnType<typeof getDB>) {
-  if (s.targetType === "field") return db.fields.find((f) => f.id === s.fieldId)?.name ?? "Field";
-  if (s.targetType === "customer_job") return db.jobs.find((j) => j.id === s.jobId)?.customerName ?? "Custom Job";
+function splitTargetLabel(s: { targetType: string; fieldId?: string; jobId?: string }, fields: Field[], jobs: Job[]) {
+  if (s.targetType === "field") return fields.find((f) => f.id === s.fieldId)?.name ?? "Field";
+  if (s.targetType === "customer_job") return jobs.find((j) => j.id === s.jobId)?.customerName ?? "Custom Job";
   return "General Overhead";
 }

@@ -429,6 +429,35 @@ export async function createInvoiceFromJob(jobId: string): Promise<Invoice | nul
   return invoices.find((i) => i.id === invoice.id) ?? null;
 }
 
+export async function createInvoice(input: {
+  customerId: string; dueDate?: string;
+  lines: { description: string; quantity: number; unitRate: number }[];
+}): Promise<Invoice> {
+  const { supabase, farm } = await ctx();
+  const { count } = await supabase.from("invoice").select("id", { count: "exact", head: true }).eq("farm_business_id", farm.id);
+  const invoiceNumber = String(1000 + (count ?? 0) + 1);
+  const subtotal = input.lines.reduce((s, l) => s + l.quantity * l.unitRate, 0);
+
+  const { data: invoice, error } = await supabase.from("invoice").insert({
+    farm_business_id: farm.id, customer_id: input.customerId, invoice_number: invoiceNumber, status: "draft",
+    issue_date: new Date().toISOString().slice(0, 10), due_date: input.dueDate ?? null,
+    subtotal, additional_charges: 0, total: subtotal, amount_paid: 0,
+  }).select("id").single();
+  if (error || !invoice) throw new Error(error?.message ?? "Could not create invoice");
+
+  if (input.lines.length > 0) {
+    await supabase.from("invoice_line").insert(input.lines.map((l, i) => ({
+      invoice_id: invoice.id, description: l.description, quantity: l.quantity, unit_rate: l.unitRate,
+      amount: l.quantity * l.unitRate, sort_order: i,
+    })));
+  }
+
+  const invoices = await listInvoices();
+  const created = invoices.find((i) => i.id === invoice.id);
+  if (!created) throw new Error("Invoice created but could not be re-fetched");
+  return created;
+}
+
 export async function recordPayment(input: Omit<Payment, "id">) {
   const { supabase, farm } = await ctx();
   const { data: payment, error } = await supabase.from("payment").insert({
@@ -499,6 +528,26 @@ export async function listLoans(): Promise<Loan[]> {
   const { supabase, farm } = await ctx();
   const { data } = await supabase.from("loan").select("*").eq("farm_business_id", farm.id);
   return (data ?? []).map((l: any): Loan => ({ id: l.id, farmBusinessId: l.farm_business_id, lenderName: l.lender_name, originalPrincipal: l.original_principal != null ? Number(l.original_principal) : undefined, originationDate: l.origination_date ?? undefined, interestRate: l.interest_rate != null ? Number(l.interest_rate) : undefined, termMonths: l.term_months ?? undefined, currentBalance: l.current_balance != null ? Number(l.current_balance) : undefined, notes: l.notes ?? undefined }));
+}
+
+export async function createLoan(input: Omit<Loan, "id" | "farmBusinessId">): Promise<Loan> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase.from("loan").insert({
+    farm_business_id: farm.id, lender_name: input.lenderName, original_principal: input.originalPrincipal ?? null,
+    origination_date: input.originationDate ?? null, interest_rate: input.interestRate ?? null,
+    term_months: input.termMonths ?? null, current_balance: input.currentBalance ?? null, notes: input.notes ?? null,
+  }).select("id").single();
+  if (error || !data) throw new Error(error?.message ?? "Could not create loan");
+  return { ...input, id: data.id, farmBusinessId: farm.id };
+}
+
+export async function listPayments(): Promise<Payment[]> {
+  const { supabase, farm } = await ctx();
+  const { data } = await supabase.from("payment").select("*").eq("farm_business_id", farm.id).order("payment_date", { ascending: false });
+  return (data ?? []).map((p: any): Payment => ({
+    id: p.id, farmBusinessId: p.farm_business_id, invoiceId: p.invoice_id ?? undefined, customerId: p.customer_id,
+    amount: Number(p.amount), paymentDate: p.payment_date, paymentMethod: p.payment_method ?? undefined, notes: p.notes ?? undefined,
+  }));
 }
 
 export async function listInventory(): Promise<InventoryItem[]> {

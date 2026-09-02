@@ -203,6 +203,14 @@ export function listInvoices() {
   return getDB().invoices;
 }
 
+export function listPayments() {
+  return getDB().payments;
+}
+
+export function listFarmCategories() {
+  return getDB().farmCategories;
+}
+
 export function createInvoiceFromJob(jobId: string): Invoice | null {
   return mutate((db) => {
     const job = db.jobs.find((j) => j.id === jobId);
@@ -272,6 +280,35 @@ export function listLivestockTransactions(groupId?: string) {
   return groupId ? rows.filter((t) => t.livestockGroupId === groupId) : rows;
 }
 export function listLoans() { return getDB().loans; }
+export function createLoan(input: Omit<import("@/types/domain").Loan, "id" | "farmBusinessId">) {
+  return mutate((db) => {
+    const loan: import("@/types/domain").Loan = { ...input, id: randomUUID(), farmBusinessId: FARM.id };
+    db.loans.push(loan);
+    return loan;
+  });
+}
+
+export function createInvoice(input: {
+  customerId: string; dueDate?: string;
+  lines: { description: string; quantity: number; unitRate: number }[];
+}): Invoice {
+  return mutate((db) => {
+    const customer = db.customers.find((c) => c.id === input.customerId);
+    const nextNumber = String(1000 + db.invoices.length + 1);
+    const lines = input.lines.map((l) => ({
+      id: randomUUID(), description: l.description, quantity: l.quantity, unitRate: l.unitRate, amount: l.quantity * l.unitRate,
+    }));
+    const subtotal = lines.reduce((s, l) => s + l.amount, 0);
+    const invoice: Invoice = {
+      id: randomUUID(), farmBusinessId: FARM.id, customerId: input.customerId,
+      customerName: customer?.name ?? "Customer", invoiceNumber: nextNumber,
+      status: "draft", issueDate: new Date().toISOString().slice(0, 10), dueDate: input.dueDate,
+      lines, subtotal, additionalCharges: 0, total: subtotal, amountPaid: 0,
+    };
+    db.invoices.push(invoice);
+    return invoice;
+  });
+}
 export function listInventory() { return getDB().inventoryItems; }
 export function listInventoryMovements(itemId?: string) {
   const rows = getDB().inventoryMovements;

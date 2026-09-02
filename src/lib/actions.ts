@@ -300,6 +300,38 @@ export async function createInvoiceAction(formData: FormData) {
   revalidatePath("/work/jobs");
 }
 
+/** Manually create an invoice not tied to a job — e.g. custom billing, a one-off charge. */
+export async function createManualInvoiceAction(formData: FormData) {
+  const customerId = str(formData, "customerId")!;
+  const dueDate = str(formData, "dueDate");
+  const descriptions = formData.getAll("lineDescription") as string[];
+  const quantities = formData.getAll("lineQuantity") as string[];
+  const rates = formData.getAll("lineRate") as string[];
+  const lines = descriptions
+    .map((description, i) => ({
+      description,
+      quantity: Number(quantities[i]) || 1,
+      unitRate: Number(rates[i]) || 0,
+    }))
+    .filter((l) => l.description.trim() !== "");
+
+  await repo.createInvoice({ customerId, dueDate: dueDate ?? undefined, lines });
+  revalidatePath("/work/invoices");
+}
+
+export async function createLoanAction(formData: FormData) {
+  await repo.createLoan({
+    lenderName: str(formData, "lenderName") ?? "Lender",
+    originalPrincipal: num(formData, "originalPrincipal"),
+    originationDate: str(formData, "originationDate"),
+    interestRate: num(formData, "interestRate"),
+    termMonths: num(formData, "termMonths"),
+    currentBalance: num(formData, "currentBalance"),
+    notes: str(formData, "notes"),
+  });
+  revalidatePath("/money/loans");
+}
+
 export async function recordPaymentAction(formData: FormData) {
   const farm = await getFarm();
   await repo.recordPayment({

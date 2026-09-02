@@ -121,6 +121,21 @@ export async function createInvoiceFromJob(jobId: string) {
   return demo.createInvoiceFromJob(jobId);
 }
 
+export async function createInvoice(input: Parameters<typeof demo.createInvoice>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createInvoice(input);
+  return demo.createInvoice(input);
+}
+
+export async function listPayments() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listPayments();
+  return demo.listPayments();
+}
+
+export async function listFarmCategories() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listFarmCategories();
+  return demo.listFarmCategories();
+}
+
 export async function recordPayment(input: Omit<Payment, "id">) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).recordPayment(input);
   return demo.recordPayment(input);
@@ -149,6 +164,10 @@ export async function listLivestockTransactions(groupId?: string) {
 export async function listLoans() {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listLoans();
   return demo.listLoans();
+}
+export async function createLoan(input: Parameters<typeof demo.createLoan>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createLoan(input);
+  return demo.createLoan(input);
 }
 export async function listInventory() {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listInventory();
