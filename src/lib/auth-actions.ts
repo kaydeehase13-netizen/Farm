@@ -65,15 +65,33 @@ export async function createFarmAction(formData: FormData) {
   const supabase = await createServerSupabaseClient();
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect("/login");
+  const user = userData.user;
 
   const name = str(formData, "name") || "My Farm";
   const operationType = str(formData, "operationType") || "row_crop";
   const state = str(formData, "state") || null;
   const currentTaxYear = new Date().getFullYear();
 
+  // app_user has no self-insert policy (and no auth.users trigger creates it
+  // automatically), so make sure the profile row exists before anything that
+  // references it by foreign key. The admin client bypasses RLS for this
+  // one bootstrap write.
+  const admin = createAdminClient();
+  const { error: profileError } = await admin.from("app_user").upsert(
+    {
+      id: user.id,
+      email: user.email ?? "",
+      full_name: (user.user_metadata?.full_name as string | undefined) ?? user.email ?? "Farm Owner",
+    },
+    { onConflict: "id" }
+  );
+  if (profileError) {
+    redirect(`/onboarding?error=${encodeURIComponent(profileError.message)}`);
+  }
+
   const { data: farm, error: farmError } = await supabase
     .from("farm_business")
-    .insert({ name, operation_type: operationType, state, current_tax_year: currentTaxYear })
+    .insert({ owner_user_id: user.id, name, operation_type: operationType, state, current_tax_year: currentTaxYear })
     .select("id")
     .single();
 
@@ -83,8 +101,12 @@ export async function createFarmAction(formData: FormData) {
 
   const { error: memberError } = await supabase.from("farm_membership").insert({
     farm_business_id: farm.id,
-    user_id: userData.user.id,
+    user_id: user.id,
     role: "owner_admin",
+    can_view_financials: true,
+    can_edit_financials: true,
+    can_view_tax_records: true,
+    can_edit_operational_records: true,
     accepted_at: new Date().toISOString(),
   });
 
@@ -113,11 +135,21 @@ export async function switchFarmAction(formData: FormData) {
  * Supabase Auth invite email, then pre-creates their farm_membership row
  * (accepted_at stays null until they accept the invite and sign in).
  */
+const ROLE_DEFAULT_PERMISSIONS: Record<string, { financials: boolean; editFinancials: boolean; tax: boolean }> = {
+  owner_admin: { financials: true, editFinancials: true, tax: true },
+  manager: { financials: true, editFinancials: true, tax: true },
+  bookkeeper: { financials: true, editFinancials: true, tax: false },
+  cpa: { financials: true, editFinancials: false, tax: true },
+  employee: { financials: false, editFinancials: false, tax: false },
+  equipment_operator: { financials: false, editFinancials: false, tax: false },
+  applicator: { financials: false, editFinancials: false, tax: false },
+};
+
 export async function inviteMemberAction(formData: FormData) {
   const { requireActiveFarm } = await import("@/lib/supabase/auth");
   const farm = await requireActiveFarm();
   const email = str(formData, "email");
-  const role = str(formData, "role") || "field_hand";
+  const role = str(formData, "role") || "employee";
   if (!email) redirect("/more/settings?error=missing-email");
 
   const admin = createAdminClient();
@@ -126,10 +158,25 @@ export async function inviteMemberAction(formData: FormData) {
     redirect(`/more/settings?error=${encodeURIComponent(inviteError?.message ?? "Invite failed")}`);
   }
 
+  // Same app_user bootstrap needed here as in createFarmAction — a brand
+  // new invited auth user has no app_user profile row yet, and
+  // farm_membership.user_id has a foreign key into app_user.
+  const { error: profileError } = await admin.from("app_user").upsert(
+    { id: invited!.user.id, email: invited!.user.email ?? email, full_name: invited!.user.email ?? email },
+    { onConflict: "id" }
+  );
+  if (profileError) {
+    redirect(`/more/settings?error=${encodeURIComponent(profileError.message)}`);
+  }
+
+  const perms = ROLE_DEFAULT_PERMISSIONS[role] ?? ROLE_DEFAULT_PERMISSIONS.employee;
   const { error: memberError } = await admin.from("farm_membership").insert({
     farm_business_id: farm.id,
-    user_id: invited.user.id,
+    user_id: invited!.user.id,
     role,
+    can_view_financials: perms.financials,
+    can_edit_financials: perms.editFinancials,
+    can_view_tax_records: perms.tax,
     accepted_at: null,
   });
   if (memberError) {

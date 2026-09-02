@@ -44,10 +44,10 @@ export default async function SettingsPage({
             {notice === "invited" && <div className="text-sm text-forest bg-wheat/30 rounded-lg px-3 py-2 mb-3">Invite sent.</div>}
             <form action={inviteMemberAction} className="flex flex-col sm:flex-row gap-2">
               <input type="email" name="email" placeholder="teammate@email.com" required className="input flex-1" />
-              <select name="role" className="input sm:w-56" defaultValue="field_hand">
+              <select name="role" className="input sm:w-56" defaultValue="employee">
                 <option value="owner_admin">Farm Owner/Admin</option>
                 <option value="manager">Farm Manager</option>
-                <option value="field_hand">Employee / Field Hand</option>
+                <option value="employee">Employee / Field Hand</option>
                 <option value="equipment_operator">Equipment Operator</option>
                 <option value="applicator">Applicator</option>
                 <option value="bookkeeper">Bookkeeper</option>

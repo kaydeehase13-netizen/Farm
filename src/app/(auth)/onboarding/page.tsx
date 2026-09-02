@@ -32,10 +32,13 @@ export default async function OnboardingPage({
         <form action={createFarmAction} className="space-y-3">
           <input name="name" placeholder="Farm name (e.g. Hase Family Farm)" className="input" required />
           <select name="operationType" className="input" defaultValue="row_crop">
+            <option value="grain">Grain</option>
             <option value="row_crop">Row Crop</option>
             <option value="livestock">Livestock</option>
+            <option value="dairy">Dairy</option>
+            <option value="custom_application">Custom Work / Ag Services</option>
+            <option value="hay_forage">Hay / Forage</option>
             <option value="mixed">Mixed / Diversified</option>
-            <option value="custom_work">Custom Work / Ag Services</option>
             <option value="other">Other</option>
           </select>
           <input name="state" placeholder="State (e.g. KS)" maxLength={2} className="input" />
