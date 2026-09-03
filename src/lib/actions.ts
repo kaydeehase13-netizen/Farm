@@ -637,6 +637,16 @@ export async function recategorizeTransactionAction(transactionId: string, farmC
   revalidatePath("/reports");
 }
 
+/** Edit a single transaction's date (used by the per-row date picker). Re-files it under the correct tax year if the date's year changes. */
+export async function updateTransactionDateAction(transactionId: string, transactionDate: string) {
+  await repo.updateTransaction(transactionId, { transactionDate });
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
+  revalidatePath("/fields");
+}
+
 /**
  * "Omit" = mark a transaction as personal / not a farm expense, excluding it
  * from income, expense, and tax-readiness totals without deleting it — the

@@ -6,7 +6,7 @@ import type { Transaction, FarmCategory, Field } from "@/types/domain";
 import { money } from "@/components/ui/stat-card";
 import {
   bulkAssignFieldAction, bulkUpdateCategoryAction, recategorizeTransactionAction,
-  setTransactionOmittedAction, deleteTransactionAction,
+  updateTransactionDateAction, setTransactionOmittedAction, deleteTransactionAction,
 } from "@/lib/actions";
 
 export function TransactionsTable({
@@ -50,6 +50,10 @@ export function TransactionsTable({
 
   function recategorize(id: string, farmCategoryId: string) {
     startTransition(() => recategorizeTransactionAction(id, farmCategoryId));
+  }
+  function changeDate(id: string, transactionDate: string) {
+    if (!transactionDate) return;
+    startTransition(() => updateTransactionDateAction(id, transactionDate));
   }
   function toggleOmitted(t: Transaction) {
     const nowOmitted = !t.isPersonalExcluded;
@@ -104,7 +108,15 @@ export function TransactionsTable({
             {transactions.map((t) => (
               <tr key={t.id} className={t.isPersonalExcluded ? "opacity-50" : ""}>
                 <td><input type="checkbox" checked={selected.has(t.id)} onChange={() => toggle(t.id)} /></td>
-                <td className="whitespace-nowrap">{t.transactionDate}</td>
+                <td className="whitespace-nowrap">
+                  <input
+                    type="date"
+                    className="border rounded px-1.5 py-1 bg-white text-sm"
+                    value={t.transactionDate}
+                    disabled={isPending}
+                    onChange={(e) => changeDate(t.id, e.target.value)}
+                  />
+                </td>
                 <td>
                   <div className="font-medium">{t.vendorName ?? t.customerId ?? "—"}</div>
                   <div className="text-charcoal/50 text-xs">{t.description}</div>
