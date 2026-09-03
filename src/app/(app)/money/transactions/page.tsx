@@ -1,4 +1,4 @@
-import { listTransactions, getFarm, getAppData } from "@/lib/data/repo";
+import { listTransactions, getAppData } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { TransactionsTable } from "@/components/money/transactions-table";
 import { getViewTaxYear } from "@/lib/tax-year";
@@ -9,16 +9,17 @@ export default async function TransactionsPage({
   searchParams: Promise<{ type?: string; status?: string; q?: string; fieldId?: string }>;
 }) {
   const params = await searchParams;
-  const farm = await getFarm();
   const taxYear = await getViewTaxYear();
-  const transactions = await listTransactions({
-    taxYear: taxYear,
-    type: params.type,
-    status: params.status,
-    fieldId: params.fieldId,
-    search: params.q,
-  });
-  const data = await getAppData(taxYear);
+  const [transactions, data] = await Promise.all([
+    listTransactions({
+      taxYear: taxYear,
+      type: params.type,
+      status: params.status,
+      fieldId: params.fieldId,
+      search: params.q,
+    }),
+    getAppData(taxYear),
+  ]);
 
   return (
     <div>

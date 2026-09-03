@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { createServerSupabaseClient, isSupabaseConfigured } from "./server";
 
 export { isSupabaseConfigured };
@@ -33,16 +33,30 @@ export async function getCurrentUser() {
  * which meant re-authenticating and re-fetching the farm list that many
  * times over for one page load. cache() dedupes repeated calls with the
  * same (no) arguments within one request, so this now runs once per page.
+ *
+ * Also skips the auth.getUser() network round trip entirely when
+ * proxy.ts's "x-verified-user-id" header is present: proxy.ts already
+ * validated this exact session a moment earlier, but middleware and the
+ * page render are separate execution contexts (cache() can't span them),
+ * so without this every full page load paid for that same validation
+ * twice. Falls back to a live check when the header is absent (API
+ * routes, which proxy.ts's matcher excludes from running at all).
  */
 export const getUserFarms = cache(async (): Promise<CurrentFarm[]> => {
   const supabase = await createServerSupabaseClient();
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) return [];
+
+  const hdrs = await headers();
+  let userId = hdrs.get("x-verified-user-id");
+  if (!userId) {
+    const { data: userData } = await supabase.auth.getUser();
+    userId = userData.user?.id ?? null;
+  }
+  if (!userId) return [];
 
   const { data, error } = await supabase
     .from("farm_membership")
     .select("role, farm_business:farm_business_id(id, name, operation_type, state, current_tax_year)")
-    .eq("user_id", userData.user.id)
+    .eq("user_id", userId)
     .not("accepted_at", "is", null);
 
   if (error || !data) return [];

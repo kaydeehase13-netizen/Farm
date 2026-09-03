@@ -1,10 +1,9 @@
 import Link from "next/link";
-import { allFieldProfitability, getFarm } from "@/lib/data/repo";
+import { allFieldProfitability } from "@/lib/data/repo";
 import { PageHeader, money, moneyPrecise } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function FieldsPage() {
-  const farm = await getFarm();
   const taxYear = await getViewTaxYear();
   const rows = await allFieldProfitability(taxYear);
   const totalAcres = rows.reduce((s, r) => s + r.acres, 0);

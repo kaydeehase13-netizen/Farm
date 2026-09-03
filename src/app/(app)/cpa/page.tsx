@@ -5,12 +5,14 @@ import { redirect } from "next/navigation";
 import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function CpaPortalPage() {
-  const farm = await getFarm();
-  const taxYear = await getViewTaxYear();
-  const summary = await dashboardSummary(taxYear);
-  const flagged = (await listTransactions({ taxYear: taxYear })).filter((t) => t.cpaFlag);
-  const questions = await listTaxQuestions();
-  const assets = await listAssets();
+  const [farm, taxYear] = await Promise.all([getFarm(), getViewTaxYear()]);
+  const [summary, allTxns, questions, assets] = await Promise.all([
+    dashboardSummary(taxYear),
+    listTransactions({ taxYear }),
+    listTaxQuestions(),
+    listAssets(),
+  ]);
+  const flagged = allTxns.filter((t) => t.cpaFlag);
 
   async function answer(formData: FormData) {
     "use server";

@@ -20,15 +20,14 @@ export default async function proxy(req: NextRequest) {
   }
 
   const path = req.nextUrl.pathname;
-  let response = NextResponse.next({ request: req });
+  let cookiesToApply: { name: string; value: string; options?: Record<string, unknown> }[] = [];
 
   const supabase = createServerClient(url, key, {
     cookies: {
       getAll: () => req.cookies.getAll(),
       setAll: (cookiesToSet) => {
         cookiesToSet.forEach(({ name, value }) => req.cookies.set(name, value));
-        response = NextResponse.next({ request: req });
-        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+        cookiesToApply = cookiesToSet;
       },
     },
   });
@@ -45,6 +44,23 @@ export default async function proxy(req: NextRequest) {
     return NextResponse.redirect(new URL("/home", req.url));
   }
 
+  // Forward the already-verified user id to Server Components via a request
+  // header. Middleware and the page render are separate execution contexts
+  // that can't share React's cache(), so without this every single page
+  // load was paying for a SECOND full network round trip to Supabase Auth
+  // (once here, once again in getUserFarms()) just to re-confirm the same
+  // session middleware already validated a moment earlier. Overwriting the
+  // header (rather than only setting it) also means a client can't spoof
+  // it — this always reflects what we just verified above.
+  const requestHeaders = new Headers(req.headers);
+  if (data.user) {
+    requestHeaders.set("x-verified-user-id", data.user.id);
+  } else {
+    requestHeaders.delete("x-verified-user-id");
+  }
+
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  cookiesToApply.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
   return response;
 }
 

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { dashboardSummary, getFarm, listInvoices, listLoans } from "@/lib/data/repo";
+import { dashboardSummary, listInvoices, listLoans } from "@/lib/data/repo";
 import { StatCard, PageHeader, money } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 
@@ -15,11 +15,12 @@ const TILES = [
 ];
 
 export default async function MoneyOverviewPage() {
-  const farm = await getFarm();
   const taxYear = await getViewTaxYear();
-  const summary = await dashboardSummary(taxYear);
-  const invoices = await listInvoices();
-  const loans = await listLoans();
+  const [summary, invoices, loans] = await Promise.all([
+    dashboardSummary(taxYear),
+    listInvoices(),
+    listLoans(),
+  ]);
   const outstanding = invoices.reduce((s, i) => s + (i.total - i.amountPaid), 0);
   const loanBalance = loans.reduce((s, l) => s + (l.currentBalance ?? 0), 0);
 

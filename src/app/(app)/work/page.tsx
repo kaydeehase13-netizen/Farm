@@ -3,9 +3,7 @@ import { listCustomers, listJobs, listInvoices } from "@/lib/data/repo";
 import { PageHeader, StatCard, money } from "@/components/ui/stat-card";
 
 export default async function WorkOverviewPage() {
-  const customers = await listCustomers();
-  const jobs = await listJobs();
-  const invoices = await listInvoices();
+  const [customers, jobs, invoices] = await Promise.all([listCustomers(), listJobs(), listInvoices()]);
   const outstanding = invoices.reduce((s, i) => s + (i.total - i.amountPaid), 0);
   const jobMargin = jobs.reduce((s, j) => s + (j.revenue - j.directCost), 0);
 

@@ -1,4 +1,4 @@
-import { dashboardSummary, listTaxOpportunities, listTaxQuestions, getFarm } from "@/lib/data/repo";
+import { dashboardSummary, listTaxOpportunities, listTaxQuestions } from "@/lib/data/repo";
 import { PageHeader, StatCard } from "@/components/ui/stat-card";
 import { createTaxQuestionAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
@@ -6,12 +6,13 @@ import { getViewTaxYear } from "@/lib/tax-year";
 import { ScanTaxOpportunitiesButton } from "@/components/tax/scan-tax-opportunities-button";
 
 export default async function TaxCenterPage() {
-  const farm = await getFarm();
   const taxYear = await getViewTaxYear();
-  const summary = await dashboardSummary(taxYear);
-  const allOpportunities = await listTaxOpportunities();
+  const [summary, allOpportunities, questions] = await Promise.all([
+    dashboardSummary(taxYear),
+    listTaxOpportunities(),
+    listTaxQuestions(),
+  ]);
   const opportunities = allOpportunities.filter((o) => o.taxYear === taxYear);
-  const questions = await listTaxQuestions();
 
   async function askQuestion(formData: FormData) {
     "use server";
