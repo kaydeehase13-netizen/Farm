@@ -87,20 +87,30 @@ export async function listCropYears(fieldId?: string): Promise<CropYear[]> {
     }));
 }
 
+// Both tax_year and vendor are unique on (farm_business_id, year|name), so a
+// single upsert (insert-or-merge) gets the row's id in ONE round trip instead
+// of the old select-then-maybe-insert (up to 2 round trips) — this runs on
+// every transaction/receipt save, so it's a real chunk of the "why does
+// saving a receipt take forever" latency.
 async function getOrCreateTaxYear(supabase: any, farmId: string, year: number) {
-  const { data: existing } = await supabase.from("tax_year").select("id").eq("farm_business_id", farmId).eq("year", year).maybeSingle();
-  if (existing) return existing.id;
-  const { data: created, error } = await supabase.from("tax_year").insert({ farm_business_id: farmId, year }).select("id").single();
+  const { data, error } = await supabase
+    .from("tax_year")
+    .upsert({ farm_business_id: farmId, year }, { onConflict: "farm_business_id,year" })
+    .select("id")
+    .single();
   if (error) throw error;
-  return created.id;
+  return data.id;
 }
 
 async function getOrCreateVendor(supabase: any, farmId: string, name?: string) {
   if (!name) return null;
-  const { data: existing } = await supabase.from("vendor").select("id").eq("farm_business_id", farmId).eq("name", name).maybeSingle();
-  if (existing) return existing.id;
-  const { data: created } = await supabase.from("vendor").insert({ farm_business_id: farmId, name }).select("id").single();
-  return created?.id ?? null;
+  const { data, error } = await supabase
+    .from("vendor")
+    .upsert({ farm_business_id: farmId, name }, { onConflict: "farm_business_id,name" })
+    .select("id")
+    .single();
+  if (error) return null;
+  return data?.id ?? null;
 }
 
 function mapTransaction(r: any, splits: TransactionSplit[]): Transaction {
@@ -166,8 +176,10 @@ function mapSplits(rows: any[], transactionId: string): TransactionSplit[] {
 
 export async function createTransaction(input: Omit<Transaction, "id" | "createdAt" | "splits"> & { splits?: Omit<TransactionSplit, "id" | "transactionId">[] }) {
   const { supabase, farm } = await ctx();
-  const taxYearId = await getOrCreateTaxYear(supabase, farm.id, input.taxYear);
-  const vendorId = input.vendorId ?? (await getOrCreateVendor(supabase, farm.id, input.vendorName));
+  const [taxYearId, vendorId] = await Promise.all([
+    getOrCreateTaxYear(supabase, farm.id, input.taxYear),
+    input.vendorId ? Promise.resolve(input.vendorId) : getOrCreateVendor(supabase, farm.id, input.vendorName),
+  ]);
 
   const { data: txn, error } = await supabase.from("transaction").insert({
     farm_business_id: farm.id, tax_year_id: taxYearId, transaction_type: input.transactionType,
@@ -286,14 +298,17 @@ export async function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {
     ocr_amount_guess: input.ocrAmountGuess ?? null, ocr_tax_guess: input.ocrTaxGuess ?? null,
     ocr_line_items: input.ocrLineItems ?? null, sync_status: "synced",
   };
+  // Only ask Postgres to hand back id/created_at — echoing the whole row
+  // (including the multi-hundred-KB base64 photo we just sent it) back over
+  // the wire is pure wasted latency on every single receipt save.
   let { data, error } = await supabase.from("receipt")
     .insert({ ...baseRow, file_data_url: input.fileDataUrl ?? null })
-    .select("*").single();
+    .select("id, created_at").single();
   if (error?.message?.includes("file_data_url")) {
     // Migration 0006 (adds the file_data_url column) hasn't been run yet on
     // this database — fall back to saving everything except the photo so
     // receipt entry still works, rather than hard-failing the whole save.
-    ({ data, error } = await supabase.from("receipt").insert(baseRow).select("*").single());
+    ({ data, error } = await supabase.from("receipt").insert(baseRow).select("id, created_at").single());
   }
   if (error || !data) throw error;
   return { ...input, id: data.id, createdAt: data.created_at };

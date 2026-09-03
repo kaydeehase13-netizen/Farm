@@ -395,26 +395,53 @@ export async function createPendingReceiptAction(input: {
 
 export async function saveReceiptAndCreateExpenseAction(formData: FormData) {
   const farm = await getFarm();
+  const vendorName = str(formData, "vendorName");
+  const date = str(formData, "date");
+  const amount = num(formData, "amount");
+  const salesTax = num(formData, "salesTax");
+  const farmCategoryId = str(formData, "farmCategoryId");
+  const fieldId = str(formData, "fieldId");
+
+  // Written straight to "confirmed" (this form IS the confirmation step) so we
+  // don't pay for a second network round trip just to flip the status right
+  // after creating the row — that extra UPDATE was a real chunk of why saving
+  // a receipt felt slow.
   const receipt = await repo.createReceipt({
     farmBusinessId: farm.id,
     fileName: str(formData, "fileName") ?? "receipt.jpg",
     fileDataUrl: str(formData, "fileDataUrl"),
     captureSource: (str(formData, "captureSource") as any) ?? "web_upload",
-    ocrStatus: "processed",
-    ocrVendorGuess: str(formData, "vendorName"),
-    ocrDateGuess: str(formData, "date"),
-    ocrAmountGuess: num(formData, "amount"),
-    ocrTaxGuess: num(formData, "salesTax"),
+    ocrStatus: "confirmed",
+    ocrVendorGuess: vendorName,
+    ocrDateGuess: date,
+    ocrAmountGuess: amount,
+    ocrTaxGuess: salesTax,
     syncStatus: "synced",
   });
-  await repo.confirmReceipt(receipt.id, {
-    ocrVendorGuess: str(formData, "vendorName"),
-    ocrDateGuess: str(formData, "date"),
-    ocrAmountGuess: num(formData, "amount"),
-    ocrTaxGuess: num(formData, "salesTax"),
-    createTransaction: true,
-    farmCategoryId: str(formData, "farmCategoryId"),
-    fieldId: str(formData, "fieldId"),
+
+  const transactionDate = date ?? new Date().toISOString().slice(0, 10);
+  await repo.createTransaction({
+    farmBusinessId: farm.id,
+    taxYear: Number(transactionDate.slice(0, 4)) || farm.currentTaxYear,
+    transactionType: "expense",
+    status: "categorized",
+    transactionDate,
+    vendorName,
+    description: `Receipt — ${vendorName ?? "upload"}`,
+    amount: amount ?? 0,
+    salesTax: salesTax ?? 0,
+    farmCategoryId,
+    receiptId: receipt.id,
+    isPersonalExcluded: false,
+    cpaFlag: false,
+    syncStatus: "synced",
+    splits: [{
+      targetType: fieldId ? "field" : "general_overhead",
+      fieldId,
+      allocationMethod: "manual",
+      allocatedAmount: amount ?? 0,
+      farmCategoryId,
+    }],
   });
   revalidatePath("/money/receipts");
   revalidatePath("/money/transactions");
