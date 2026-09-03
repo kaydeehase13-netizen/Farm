@@ -3,12 +3,14 @@ import { PageHeader, StatCard } from "@/components/ui/stat-card";
 import { createTaxQuestionAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
 import { getViewTaxYear } from "@/lib/tax-year";
+import { ScanTaxOpportunitiesButton } from "@/components/tax/scan-tax-opportunities-button";
 
 export default async function TaxCenterPage() {
   const farm = await getFarm();
   const taxYear = await getViewTaxYear();
   const summary = await dashboardSummary(taxYear);
-  const opportunities = await listTaxOpportunities();
+  const allOpportunities = await listTaxOpportunities();
+  const opportunities = allOpportunities.filter((o) => o.taxYear === taxYear);
   const questions = await listTaxQuestions();
 
   async function askQuestion(formData: FormData) {
@@ -33,8 +35,11 @@ export default async function TaxCenterPage() {
       </div>
 
       <div className="card p-5 mb-6">
-        <div className="text-sm font-semibold text-forest mb-1">Potential Tax Opportunities</div>
-        <p className="text-xs text-charcoal/50 mb-4">These flag transactions or assets that may deserve a closer look — not a determination of tax treatment.</p>
+        <div className="flex items-start justify-between gap-4 mb-1">
+          <div className="text-sm font-semibold text-forest">Potential Tax Opportunities</div>
+          <ScanTaxOpportunitiesButton taxYear={taxYear} />
+        </div>
+        <p className="text-xs text-charcoal/50 mb-4">These flag transactions or assets that may deserve a closer look — not a determination of tax treatment. Run a scan any time to check {taxYear}&apos;s records against common triggers (equipment purchases/sales, breeding-livestock sales, prepaid supplies, conservation and government-payment income, crop insurance, disaster/casualty).</p>
         <div className="space-y-3">
           {opportunities.map((o) => (
             <div key={o.id} className="border border-[--border-color] rounded-lg p-4">

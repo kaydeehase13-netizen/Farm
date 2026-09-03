@@ -217,6 +217,10 @@ export async function createTaxQuestion(question: string, raisedByName: string) 
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createTaxQuestion(question, raisedByName);
   return demo.createTaxQuestion(question, raisedByName);
 }
+export async function scanTaxOpportunities(taxYear: number) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).scanTaxOpportunities(taxYear);
+  return demo.scanTaxOpportunities(taxYear);
+}
 
 export async function fieldProfitability(fieldId: string, taxYear: number) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).fieldProfitability(fieldId, taxYear);

@@ -16,6 +16,8 @@ export interface TaxCategoryDef {
   label: string;
   scheduleReference: string | null;
   type: "income" | "expense";
+  /** Which return this category flows to. Omitted = "schedule_f" (the original, farm-only set below). */
+  scheduleType?: "schedule_f" | "schedule_c";
 }
 
 export const TAX_CATEGORIES: TaxCategoryDef[] = [
@@ -53,6 +55,34 @@ export const TAX_CATEGORIES: TaxCategoryDef[] = [
   { code: "exp_vet_breeding_medicine", label: "Veterinary, Breeding, and Medicine", scheduleReference: "Schedule F, Line 31", type: "expense" },
   { code: "exp_other", label: "Other Expenses (Specify)", scheduleReference: "Schedule F, Line 32", type: "expense" },
   { code: "personal_excluded", label: "Personal / Not a Farm Expense", scheduleReference: null, type: "expense" },
+
+  // --- Self-employment / non-farm business (Schedule C, Form 1040) ---
+  // Parallel to the Schedule F set above — use these for income or expenses
+  // from a side business that isn't the farm itself (e.g. custom work run
+  // as its own business, consulting, an Etsy shop). Mirrors
+  // supabase/migrations/0007_self_employment_categories.sql.
+  { code: "se_income_services", label: "Self-Employment Income — Services / Custom Work", scheduleReference: "Schedule C, Line 1", type: "income", scheduleType: "schedule_c" },
+  { code: "se_income_other", label: "Self-Employment Income — Other", scheduleReference: "Schedule C, Line 1", type: "income", scheduleType: "schedule_c" },
+  { code: "se_exp_advertising", label: "Advertising", scheduleReference: "Schedule C, Line 8", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_car_truck", label: "Car and Truck Expenses", scheduleReference: "Schedule C, Line 9", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_commissions_fees", label: "Commissions and Fees", scheduleReference: "Schedule C, Line 10", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_contract_labor", label: "Contract Labor", scheduleReference: "Schedule C, Line 11", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_depreciation", label: "Depreciation and Section 179 Expense", scheduleReference: "Schedule C, Line 13", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_insurance", label: "Insurance (Other Than Health)", scheduleReference: "Schedule C, Line 15", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_interest_mortgage", label: "Interest — Mortgage (Paid to Banks, Etc.)", scheduleReference: "Schedule C, Line 16a", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_interest_other", label: "Interest — Other", scheduleReference: "Schedule C, Line 16b", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_legal_professional", label: "Legal and Professional Services", scheduleReference: "Schedule C, Line 17", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_office", label: "Office Expense", scheduleReference: "Schedule C, Line 18", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_rent_equipment", label: "Rent/Lease — Vehicles, Machinery, Equipment", scheduleReference: "Schedule C, Line 20a", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_rent_other", label: "Rent/Lease — Other Business Property", scheduleReference: "Schedule C, Line 20b", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_repairs", label: "Repairs and Maintenance", scheduleReference: "Schedule C, Line 21", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_supplies", label: "Supplies", scheduleReference: "Schedule C, Line 22", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_taxes_licenses", label: "Taxes and Licenses", scheduleReference: "Schedule C, Line 23", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_travel", label: "Travel", scheduleReference: "Schedule C, Line 24a", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_meals", label: "Meals (50% Limit Generally Applies)", scheduleReference: "Schedule C, Line 24b", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_utilities", label: "Utilities", scheduleReference: "Schedule C, Line 25", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_wages", label: "Wages", scheduleReference: "Schedule C, Line 26", type: "expense", scheduleType: "schedule_c" },
+  { code: "se_exp_other", label: "Other Expenses (Specify)", scheduleReference: "Schedule C, Line 27a", type: "expense", scheduleType: "schedule_c" },
 ];
 
 export function taxCategoryMeta(code?: string): TaxCategoryDef | undefined {
@@ -61,9 +91,13 @@ export function taxCategoryMeta(code?: string): TaxCategoryDef | undefined {
 
 export function taxCategoryLabel(code?: string): string {
   if (!code) return "Uncategorized";
-  return taxCategoryMeta(code)?.label ?? code.replace(/^(exp|income)_/, "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return taxCategoryMeta(code)?.label ?? code.replace(/^(exp|income|se_exp|se_income)_/, "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function taxCategoryScheduleRef(code?: string): string {
   return taxCategoryMeta(code)?.scheduleReference ?? "";
+}
+
+export function taxCategoryScheduleType(code?: string): "schedule_f" | "schedule_c" {
+  return taxCategoryMeta(code)?.scheduleType ?? "schedule_f";
 }

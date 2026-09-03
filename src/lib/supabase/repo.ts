@@ -678,13 +678,165 @@ export async function createDocument(input: Omit<DocumentRecord, "id" | "created
 
 export async function listTaxOpportunities(): Promise<TaxOpportunity[]> {
   const { supabase, farm } = await ctx();
-  const { data } = await supabase.from("tax_opportunity").select("*, rule_version:tax_rule_version_id(summary, official_reference, tax_rule:tax_rule_id(title, description))").eq("farm_business_id", farm.id);
+  const { data } = await supabase
+    .from("tax_opportunity")
+    .select("*, tax_year:tax_year_id(year), rule_version:tax_rule_version_id(summary, official_reference, tax_rule:tax_rule_id(title, description))")
+    .eq("farm_business_id", farm.id);
   return (data ?? []).map((o: any): TaxOpportunity => ({
-    id: o.id, farmBusinessId: o.farm_business_id, taxYear: 0, ruleTitle: o.rule_version?.tax_rule?.title ?? "Potential Tax Opportunity",
+    id: o.id, farmBusinessId: o.farm_business_id, taxYear: o.tax_year?.year ?? 0, ruleTitle: o.rule_version?.tax_rule?.title ?? "Potential Tax Opportunity",
     ruleDescription: o.rule_version?.tax_rule?.description ?? "", officialReference: o.rule_version?.official_reference ?? undefined,
     sourceTransactionId: o.source_transaction_id ?? undefined, sourceAssetId: o.source_asset_id ?? undefined,
+    sourceLivestockTxnId: o.source_livestock_txn_id ?? undefined,
     status: o.status, infoMissing: o.info_missing ?? [], documentsCollectedCount: (o.documents_collected ?? []).length, createdAt: o.created_at,
   }));
+}
+
+// -----------------------------------------------------------------------
+// Tax-opportunity scanning. Runs the 8 seeded tax_rule trigger rules
+// against this farm's real data for one tax year and writes any new
+// matches into tax_opportunity (never asserting a tax treatment — just
+// flagging "this fact pattern might be worth asking your CPA about").
+// Re-running is safe: it skips any source it has already flagged for
+// the same rule.
+// -----------------------------------------------------------------------
+
+const DISASTER_KEYWORDS = ["disaster", "casualty", "hail", "flood", "drought", "fire loss", "storm damage", "tornado", "wind damage"];
+const PREPAID_FARM_CATEGORY_NAMES = new Set(["seed", "fertilizer", "chemical", "feed", "supplies"]);
+const PREPAID_THRESHOLD = 2500;
+
+export async function scanTaxOpportunities(taxYear: number): Promise<{ created: number; alreadyFlagged: number; checked: number }> {
+  const { supabase, farm } = await ctx();
+  const taxYearId = await getOrCreateTaxYear(supabase, farm.id, taxYear);
+  const yearStart = `${taxYear}-01-01`;
+  const yearEnd = `${taxYear + 1}-01-01`;
+
+  // Latest applicable tax_rule_version per rule key (effective_tax_year <= taxYear, else the earliest available).
+  const { data: versions } = await supabase
+    .from("tax_rule_version")
+    .select("id, effective_tax_year, tax_rule:tax_rule_id(key)")
+    .order("effective_tax_year", { ascending: false });
+  const versionsByKey = new Map<string, { id: string; effective_tax_year: number }[]>();
+  for (const v of (versions ?? []) as any[]) {
+    const key = v.tax_rule?.key;
+    if (!key) continue;
+    const arr = versionsByKey.get(key) ?? [];
+    arr.push({ id: v.id, effective_tax_year: v.effective_tax_year });
+    versionsByKey.set(key, arr);
+  }
+  function versionIdFor(key: string): string | undefined {
+    const arr = versionsByKey.get(key);
+    if (!arr || arr.length === 0) return undefined;
+    return (arr.find((v) => v.effective_tax_year <= taxYear) ?? arr[arr.length - 1]).id;
+  }
+
+  // What's already been flagged for this farm/year, so we never double-flag the same fact.
+  const { data: existing } = await supabase
+    .from("tax_opportunity")
+    .select("source_transaction_id, source_asset_id, source_livestock_txn_id, rule_version:tax_rule_version_id(tax_rule:tax_rule_id(key))")
+    .eq("farm_business_id", farm.id)
+    .eq("tax_year_id", taxYearId);
+  const existingKeys = new Set(
+    ((existing ?? []) as any[]).map((o) => `${o.rule_version?.tax_rule?.key}:${o.source_transaction_id ?? o.source_asset_id ?? o.source_livestock_txn_id ?? ""}`)
+  );
+
+  type Candidate = { ruleKey: string; sourceTransactionId?: string; sourceAssetId?: string; sourceLivestockTxnId?: string };
+  const candidates: Candidate[] = [];
+  let checked = 0;
+
+  // --- Assets: Section 179 (purchased this year) / trade-in basis review (sold this year) ---
+  const { data: assets } = await supabase
+    .from("asset")
+    .select("id, purchase_date, sold_date, status")
+    .eq("farm_business_id", farm.id)
+    .is("archived_at", null);
+  for (const a of (assets ?? []) as any[]) {
+    checked++;
+    if (a.purchase_date && a.purchase_date >= yearStart && a.purchase_date < yearEnd) {
+      candidates.push({ ruleKey: "section_179_equipment", sourceAssetId: a.id });
+    }
+    if (a.status === "sold" && a.sold_date && a.sold_date >= yearStart && a.sold_date < yearEnd) {
+      candidates.push({ ruleKey: "like_kind_no_longer_avail", sourceAssetId: a.id });
+    }
+  }
+
+  // --- Breeding livestock sold this year ---
+  const { data: breedingGroups } = await supabase
+    .from("livestock_group")
+    .select("id")
+    .eq("farm_business_id", farm.id)
+    .eq("purpose", "breeding");
+  const breedingGroupIds = (breedingGroups ?? []).map((g: any) => g.id);
+  if (breedingGroupIds.length > 0) {
+    const { data: sales } = await supabase
+      .from("livestock_transaction")
+      .select("id, txn_type, txn_date")
+      .in("livestock_group_id", breedingGroupIds)
+      .eq("txn_type", "sale")
+      .gte("txn_date", yearStart)
+      .lt("txn_date", yearEnd);
+    for (const s of (sales ?? []) as any[]) {
+      checked++;
+      candidates.push({ ruleKey: "breeding_livestock_capital", sourceLivestockTxnId: s.id });
+    }
+  }
+
+  // --- Transactions: prepaid supplies, conservation, government payments, crop insurance, disaster/casualty keywords ---
+  const { data: txns } = await supabase
+    .from("transaction")
+    .select("id, transaction_type, transaction_date, amount, description, tax_category:tax_category_id(code), farm_category:farm_category_id(name)")
+    .eq("farm_business_id", farm.id)
+    .eq("tax_year_id", taxYearId)
+    .eq("is_personal_excluded", false);
+  for (const t of (txns ?? []) as any[]) {
+    checked++;
+    const farmCatName = (t.farm_category?.name ?? "").toLowerCase();
+    const taxCode = t.tax_category?.code ?? "";
+    const desc = (t.description ?? "").toLowerCase();
+    const month = t.transaction_date ? Number(String(t.transaction_date).slice(5, 7)) : 0;
+
+    if (t.transaction_type === "expense" && month >= 11 && Number(t.amount) >= PREPAID_THRESHOLD &&
+        [...PREPAID_FARM_CATEGORY_NAMES].some((n) => farmCatName.includes(n))) {
+      candidates.push({ ruleKey: "prepaid_farm_supplies", sourceTransactionId: t.id });
+    }
+    if (taxCode === "exp_conservation") {
+      candidates.push({ ruleKey: "conservation_expense", sourceTransactionId: t.id });
+    }
+    if (taxCode === "income_govt_payments" || taxCode === "income_ccc_loans") {
+      candidates.push({ ruleKey: "government_payment_reporting", sourceTransactionId: t.id });
+    }
+    if (taxCode === "income_crop_insurance") {
+      candidates.push({ ruleKey: "crop_insurance_deferral", sourceTransactionId: t.id });
+    }
+    if (DISASTER_KEYWORDS.some((kw) => desc.includes(kw))) {
+      candidates.push({ ruleKey: "disaster_casualty", sourceTransactionId: t.id });
+    }
+  }
+
+  // --- Write new (non-duplicate) candidates ---
+  let created = 0;
+  let alreadyFlagged = 0;
+  for (const c of candidates) {
+    const sourceId = c.sourceTransactionId ?? c.sourceAssetId ?? c.sourceLivestockTxnId ?? "";
+    const dedupeKey = `${c.ruleKey}:${sourceId}`;
+    if (existingKeys.has(dedupeKey)) { alreadyFlagged++; continue; }
+    const versionId = versionIdFor(c.ruleKey);
+    if (!versionId) continue;
+    const { error } = await supabase.from("tax_opportunity").insert({
+      farm_business_id: farm.id,
+      tax_year_id: taxYearId,
+      tax_rule_version_id: versionId,
+      source_transaction_id: c.sourceTransactionId ?? null,
+      source_asset_id: c.sourceAssetId ?? null,
+      source_livestock_txn_id: c.sourceLivestockTxnId ?? null,
+      status: "open",
+    });
+    if (!error) {
+      created++;
+      existingKeys.add(dedupeKey);
+    }
+  }
+
+  return { created, alreadyFlagged, checked };
 }
 
 export async function listTaxQuestions(): Promise<TaxQuestion[]> {
@@ -745,9 +897,47 @@ export async function fieldProfitability(fieldId: string, taxYear: number): Prom
   return result;
 }
 
+// A field only shows up in a given year's list/breakdowns if it was
+// actually used that year — a crop planted, an activity logged, or money
+// allocated to it — so a field only ever touched in 2025 doesn't clutter
+// the 2026 view (and vice versa) just because it still exists.
+async function fieldIdsUsedInYear(taxYear: number): Promise<Set<string>> {
+  const { supabase, farm } = await ctx();
+  const yearStart = `${taxYear}-01-01`;
+  const yearEnd = `${taxYear + 1}-01-01`;
+  const used = new Set<string>();
+
+  const { data: cropYearRows } = await supabase
+    .from("crop_year")
+    .select("field_id, tax_year:tax_year_id(year, farm_business_id)");
+  for (const r of (cropYearRows ?? []) as any[]) {
+    if (r.tax_year?.farm_business_id === farm.id && r.tax_year?.year === taxYear) used.add(r.field_id);
+  }
+
+  const { data: activityRows } = await supabase
+    .from("activity")
+    .select("field_id")
+    .eq("farm_business_id", farm.id)
+    .not("field_id", "is", null)
+    .gte("activity_date", yearStart)
+    .lt("activity_date", yearEnd);
+  for (const r of (activityRows ?? []) as any[]) if (r.field_id) used.add(r.field_id);
+
+  const { data: splitRows } = await supabase
+    .from("transaction_split")
+    .select("field_id, allocated_amount, transaction:transaction_id!inner(farm_business_id, tax_year_id, tax_year:tax_year_id(year))")
+    .eq("transaction.farm_business_id", farm.id)
+    .not("field_id", "is", null);
+  for (const r of (splitRows ?? []) as any[]) {
+    if (r.field_id && r.transaction?.tax_year?.year === taxYear && Number(r.allocated_amount) !== 0) used.add(r.field_id);
+  }
+
+  return used;
+}
+
 export async function allFieldProfitability(taxYear: number) {
-  const fields = await listFields();
-  return Promise.all(fields.map((f) => fieldProfitability(f.id, taxYear)));
+  const [fields, usedIds] = await Promise.all([listFields(), fieldIdsUsedInYear(taxYear)]);
+  return Promise.all(fields.filter((f) => usedIds.has(f.id)).map((f) => fieldProfitability(f.id, taxYear)));
 }
 
 function round2(n: number) { return Math.round(n * 100) / 100; }

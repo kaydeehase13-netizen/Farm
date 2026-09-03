@@ -326,6 +326,21 @@ export async function fixMisfiledTaxYearsAction() {
   return result;
 }
 
+/**
+ * Runs the tax-opportunity scanner against one tax year's real data
+ * (equipment purchases/sales, breeding-livestock sales, prepaid supplies,
+ * conservation/government-payment/crop-insurance categorized transactions,
+ * disaster/casualty keyword matches) and flags any new matches for review.
+ * Never asserts a tax treatment — purely "this might be worth asking your
+ * CPA about." Safe to re-run; it skips anything already flagged.
+ */
+export async function scanTaxOpportunitiesAction(taxYear: number) {
+  const result = await repo.scanTaxOpportunities(taxYear);
+  revalidatePath("/tax");
+  revalidatePath("/cpa");
+  return result;
+}
+
 export async function confirmReceiptAction(formData: FormData) {
   const id = str(formData, "receiptId")!;
   await repo.confirmReceipt(id, {

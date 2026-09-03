@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import * as repo from "@/lib/data/repo";
-import { taxCategoryLabel, taxCategoryScheduleRef } from "@/lib/tax-categories";
+import { taxCategoryLabel, taxCategoryScheduleRef, taxCategoryScheduleType } from "@/lib/tax-categories";
 import type { Field, Job, FarmCategory } from "@/types/domain";
 
 // -----------------------------------------------------------------------
@@ -83,7 +83,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Field", key: "field", width: 18 },
     { header: "Documentation", key: "doc", width: 16 },
   ]);
-  for (const t of yearTxns.filter((t) => t.transactionType === "income" && !t.isPersonalExcluded)) {
+  for (const t of yearTxns.filter((t) => t.transactionType === "income" && !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
     incomeSheet.addRow({
       date: dateCell(t.transactionDate), source: t.vendorName ?? t.customerId ?? "—", description: t.description,
       taxCategory: taxCategoryLabel(t.taxCategoryCode), amount: t.amount,
@@ -108,7 +108,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Documentation", key: "doc", width: 16 },
     { header: "CPA Flag", key: "cpaFlag", width: 12 },
   ]);
-  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded)) {
+  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
     expenseSheet.addRow({
       date: dateCell(t.transactionDate), vendor: t.vendorName, description: t.description,
       farmCategory: farmCategoryLabel(t.farmCategoryId, farmCategories), taxCategory: taxCategoryLabel(t.taxCategoryCode),
@@ -127,7 +127,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Total", key: "total", width: 16, style: { numFmt: CURRENCY_FMT } },
   ]);
   const taxTotals = new Map<string, number>();
-  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded)) {
+  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
     const key = t.taxCategoryCode ?? "uncategorized";
     taxTotals.set(key, (taxTotals.get(key) ?? 0) + t.amount);
   }
@@ -138,11 +138,50 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Category", key: "cat", width: 28 }, { header: "Total", key: "total", width: 16, style: { numFmt: CURRENCY_FMT } },
   ]);
   const farmTotals = new Map<string, number>();
-  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded)) {
+  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
     const key = t.farmCategoryId ?? "uncategorized";
     farmTotals.set(key, (farmTotals.get(key) ?? 0) + t.amount);
   }
   for (const [id, total] of farmTotals) byFarm.addRow({ cat: farmCategoryLabel(id, farmCategories), total });
+
+  // --- Self-Employment (Schedule C) — income, expenses, and by-category totals ---
+  const seTxns = yearTxns.filter((t) => !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_c");
+  const seIncomeSheet = addSheet(wb, "SE Income (Sch C)", [
+    { header: "Date", key: "date", width: 14 }, { header: "Source", key: "source", width: 26 },
+    { header: "Description", key: "description", width: 36 }, { header: "Tax Category", key: "taxCategory", width: 30 },
+    { header: "Amount", key: "amount", width: 16, style: { numFmt: CURRENCY_FMT } }, { header: "Documentation", key: "doc", width: 16 },
+  ]);
+  for (const t of seTxns.filter((t) => t.transactionType === "income")) {
+    seIncomeSheet.addRow({
+      date: dateCell(t.transactionDate), source: t.vendorName ?? t.customerId ?? "—", description: t.description,
+      taxCategory: taxCategoryLabel(t.taxCategoryCode), amount: t.amount, doc: t.receiptId ? "On file" : "Missing",
+    });
+  }
+  seIncomeSheet.getColumn("date").numFmt = "mm/dd/yyyy";
+
+  const seExpenseSheet = addSheet(wb, "SE Expenses (Sch C)", [
+    { header: "Date", key: "date", width: 14 }, { header: "Vendor", key: "vendor", width: 26 },
+    { header: "Description", key: "description", width: 36 }, { header: "Tax Category", key: "taxCategory", width: 30 },
+    { header: "Amount", key: "amount", width: 16, style: { numFmt: CURRENCY_FMT } }, { header: "Documentation", key: "doc", width: 16 },
+  ]);
+  for (const t of seTxns.filter((t) => t.transactionType === "expense")) {
+    seExpenseSheet.addRow({
+      date: dateCell(t.transactionDate), vendor: t.vendorName, description: t.description,
+      taxCategory: taxCategoryLabel(t.taxCategoryCode), amount: t.amount, doc: t.receiptId ? "On file" : "Missing",
+    });
+  }
+  seExpenseSheet.getColumn("date").numFmt = "mm/dd/yyyy";
+
+  const seByTax = addSheet(wb, "SE Expenses by Category", [
+    { header: "Tax Category", key: "cat", width: 34 }, { header: "Schedule Reference", key: "ref", width: 24 },
+    { header: "Total", key: "total", width: 16, style: { numFmt: CURRENCY_FMT } },
+  ]);
+  const seTaxTotals = new Map<string, number>();
+  for (const t of seTxns.filter((t) => t.transactionType === "expense")) {
+    const key = t.taxCategoryCode ?? "uncategorized";
+    seTaxTotals.set(key, (seTaxTotals.get(key) ?? 0) + t.amount);
+  }
+  for (const [code, total] of seTaxTotals) seByTax.addRow({ cat: taxCategoryLabel(code), ref: taxCategoryScheduleRef(code), total });
 
   // --- Field Profitability ---
   const fieldProfit = addSheet(wb, "Field Profitability", [
@@ -345,6 +384,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   // --- Transaction Detail (everything, one row per split) ---
   const detailSheet = addSheet(wb, "Transaction Detail", [
     { header: "Date", key: "date", width: 14 }, { header: "Type", key: "type", width: 10 },
+    { header: "Schedule", key: "schedule", width: 12 },
     { header: "Vendor/Source", key: "vendor", width: 22 }, { header: "Description", key: "desc", width: 32 },
     { header: "Farm Category", key: "farmCat", width: 20 }, { header: "Tax Category", key: "taxCat", width: 30 },
     { header: "Split Target", key: "target", width: 20 }, { header: "Allocated Amount", key: "amount", width: 16, style: { numFmt: CURRENCY_FMT } },
@@ -354,7 +394,9 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   for (const t of yearTxns) {
     for (const s of t.splits) {
       detailSheet.addRow({
-        date: dateCell(t.transactionDate), type: t.transactionType, vendor: t.vendorName, desc: t.description,
+        date: dateCell(t.transactionDate), type: t.transactionType,
+        schedule: taxCategoryScheduleType(t.taxCategoryCode) === "schedule_c" ? "Schedule C" : "Schedule F",
+        vendor: t.vendorName, desc: t.description,
         farmCat: farmCategoryLabel(t.farmCategoryId, farmCategories), taxCat: taxCategoryLabel(t.taxCategoryCode),
         target: splitTargetLabel(s, fields, jobs), amount: s.allocatedAmount, status: t.status, doc: t.receiptId ? "On file" : "Missing",
       });
@@ -366,6 +408,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     const keep = new Set([
       "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Equipment & Assets",
       "Vehicles & Mileage", "Potential Tax Opportunities", "CPA Questions", "Missing Documentation", "Transaction Detail",
+      "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category",
     ]);
     [...wb.worksheets].forEach((ws) => { if (!keep.has(ws.name)) wb.removeWorksheet(ws.id); });
   }

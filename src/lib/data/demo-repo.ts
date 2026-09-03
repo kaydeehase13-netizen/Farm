@@ -372,6 +372,81 @@ export function createDocument(input: Omit<DocumentRecord, "id" | "createdAt">) 
   });
 }
 export function listTaxOpportunities() { return getDB().taxOpportunities; }
+
+const TAX_RULE_INFO: Record<string, { title: string; description: string }> = {
+  section_179_equipment: { title: "Section 179 / Bonus Depreciation Review", description: "A farm equipment purchase may be eligible for accelerated expensing. Elections and limits change by tax year." },
+  like_kind_no_longer_avail: { title: "Equipment Trade-In Basis Review", description: "Trading equipment changes how basis and gain/loss are computed. Review with a tax professional." },
+  prepaid_farm_supplies: { title: "Prepaid Farm Supplies Limit", description: "Large prepaid input purchases near year-end may be subject to deduction limits." },
+  breeding_livestock_capital: { title: "Breeding Livestock Capital Gain Treatment", description: "Sale of breeding livestock held for the required period may qualify for different tax treatment than resale stock." },
+  disaster_casualty: { title: "Disaster / Casualty Loss Documentation", description: "Losses from weather or disaster events may have special farm tax provisions and documentation requirements." },
+  conservation_expense: { title: "Soil & Water Conservation Expense Review", description: "Conservation-related expenditures (terraces, waterways, tree planting) may have specific deduction limits." },
+  government_payment_reporting: { title: "Government Program Payment Reporting", description: "Agricultural program payments are generally reported as farm income and may affect other calculations." },
+  crop_insurance_deferral: { title: "Crop Insurance Proceeds — Possible Deferral", description: "Crop insurance proceeds received for crop damage may, in limited situations, be eligible for one-year deferral." },
+};
+const DISASTER_KEYWORDS = ["disaster", "casualty", "hail", "flood", "drought", "fire loss", "storm damage", "tornado", "wind damage"];
+const PREPAID_FARM_CATEGORY_NAMES = new Set(["seed", "fertilizer", "chemical", "feed", "supplies"]);
+const PREPAID_THRESHOLD = 2500;
+
+export function scanTaxOpportunities(taxYear: number): { created: number; alreadyFlagged: number; checked: number } {
+  return mutate((db) => {
+    const existingKeys = new Set(
+      db.taxOpportunities
+        .filter((o) => o.taxYear === taxYear)
+        .map((o) => `${Object.keys(TAX_RULE_INFO).find((k) => TAX_RULE_INFO[k].title === o.ruleTitle) ?? o.ruleTitle}:${o.sourceTransactionId ?? o.sourceAssetId ?? (o as any).sourceLivestockTxnId ?? ""}`)
+    );
+    type Candidate = { ruleKey: string; sourceTransactionId?: string; sourceAssetId?: string; sourceLivestockTxnId?: string };
+    const candidates: Candidate[] = [];
+    let checked = 0;
+
+    for (const a of db.assets) {
+      checked++;
+      if (a.purchaseDate?.startsWith(String(taxYear))) candidates.push({ ruleKey: "section_179_equipment", sourceAssetId: a.id });
+      if (a.status === "sold" && a.soldDate?.startsWith(String(taxYear))) candidates.push({ ruleKey: "like_kind_no_longer_avail", sourceAssetId: a.id });
+    }
+
+    const breedingGroupIds = new Set(db.livestockGroups.filter((g) => g.purpose === "breeding").map((g) => g.id));
+    for (const t of db.livestockTransactions) {
+      if (!breedingGroupIds.has(t.livestockGroupId)) continue;
+      checked++;
+      if (t.txnType === "sale" && t.txnDate?.startsWith(String(taxYear))) candidates.push({ ruleKey: "breeding_livestock_capital", sourceLivestockTxnId: t.id });
+    }
+
+    for (const t of db.transactions.filter((t) => t.taxYear === taxYear && !t.isPersonalExcluded)) {
+      checked++;
+      const farmCat = db.farmCategories.find((c) => c.id === t.farmCategoryId);
+      const farmCatName = (farmCat?.name ?? "").toLowerCase();
+      const desc = (t.description ?? "").toLowerCase();
+      const month = t.transactionDate ? Number(t.transactionDate.slice(5, 7)) : 0;
+      if (t.transactionType === "expense" && month >= 11 && t.amount >= PREPAID_THRESHOLD && [...PREPAID_FARM_CATEGORY_NAMES].some((n) => farmCatName.includes(n))) {
+        candidates.push({ ruleKey: "prepaid_farm_supplies", sourceTransactionId: t.id });
+      }
+      if (t.taxCategoryCode === "exp_conservation") candidates.push({ ruleKey: "conservation_expense", sourceTransactionId: t.id });
+      if (t.taxCategoryCode === "income_govt_payments" || t.taxCategoryCode === "income_ccc_loans") candidates.push({ ruleKey: "government_payment_reporting", sourceTransactionId: t.id });
+      if (t.taxCategoryCode === "income_crop_insurance") candidates.push({ ruleKey: "crop_insurance_deferral", sourceTransactionId: t.id });
+      if (DISASTER_KEYWORDS.some((kw) => desc.includes(kw))) candidates.push({ ruleKey: "disaster_casualty", sourceTransactionId: t.id });
+    }
+
+    let created = 0;
+    let alreadyFlagged = 0;
+    for (const c of candidates) {
+      const sourceId = c.sourceTransactionId ?? c.sourceAssetId ?? c.sourceLivestockTxnId ?? "";
+      const dedupeKey = `${c.ruleKey}:${sourceId}`;
+      if (existingKeys.has(dedupeKey)) { alreadyFlagged++; continue; }
+      const info = TAX_RULE_INFO[c.ruleKey];
+      if (!info) continue;
+      db.taxOpportunities.push({
+        id: randomUUID(), farmBusinessId: FARM.id, taxYear, ruleTitle: info.title, ruleDescription: info.description,
+        officialReference: "https://www.irs.gov/forms-pubs/about-publication-225",
+        sourceTransactionId: c.sourceTransactionId, sourceAssetId: c.sourceAssetId, sourceLivestockTxnId: c.sourceLivestockTxnId,
+        status: "open", infoMissing: [], documentsCollectedCount: 0, createdAt: new Date().toISOString(),
+      } as any);
+      created++;
+      existingKeys.add(dedupeKey);
+    }
+
+    return { created, alreadyFlagged, checked };
+  });
+}
 export function listTaxQuestions() { return getDB().taxQuestions; }
 export function createTaxQuestion(question: string, raisedByName: string) {
   return mutate((db) => {
@@ -437,8 +512,27 @@ export function fieldProfitability(fieldId: string, taxYear: number): FieldProfi
   return result;
 }
 
+// A field only shows up in a given year's list/breakdowns if it was
+// actually used that year — a crop planted, an activity logged, or money
+// allocated to it — so a field only ever touched in 2025 doesn't clutter
+// the 2026 view (and vice versa) just because it still exists.
+function wasFieldUsedInYear(fieldId: string, taxYear: number): boolean {
+  const db = getDB();
+  if (db.cropYears.some((c) => c.fieldId === fieldId && c.year === taxYear)) return true;
+  if (db.activities.some((a) => a.fieldId === fieldId && a.activityDate?.startsWith(String(taxYear)))) return true;
+  if (
+    db.transactions.some(
+      (t) => t.taxYear === taxYear && t.splits.some((s) => s.fieldId === fieldId && s.allocatedAmount !== 0)
+    )
+  )
+    return true;
+  return false;
+}
+
 export function allFieldProfitability(taxYear: number) {
-  return listFields().map((f) => fieldProfitability(f.id, taxYear));
+  return listFields()
+    .filter((f) => wasFieldUsedInYear(f.id, taxYear))
+    .map((f) => fieldProfitability(f.id, taxYear));
 }
 
 function round2(n: number) {

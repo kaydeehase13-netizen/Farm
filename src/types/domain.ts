@@ -376,6 +376,7 @@ export interface TaxOpportunity {
   officialReference?: string;
   sourceTransactionId?: string;
   sourceAssetId?: string;
+  sourceLivestockTxnId?: string;
   status: "open" | "info_needed" | "ready_for_cpa" | "dismissed";
   infoMissing: string[];
   documentsCollectedCount: number;
