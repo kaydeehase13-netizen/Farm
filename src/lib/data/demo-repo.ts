@@ -110,7 +110,7 @@ export function fixMisfiledTaxYears() {
         fixed++;
       }
     }
-    return { checked: db.transactions.length, fixed };
+    return { checked: db.transactions.length, fixed, failed: 0, sample: [] as string[] };
   });
 }
 

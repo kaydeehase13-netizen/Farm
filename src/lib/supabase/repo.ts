@@ -195,20 +195,29 @@ export async function createTransaction(input: Omit<Transaction, "id" | "created
  * transaction_date (e.g. a receipt dated in 2025 filed under 2026). Walk
  * every transaction and re-point it at the tax_year row matching its date.
  */
-export async function fixMisfiledTaxYears(): Promise<{ checked: number; fixed: number }> {
+export async function fixMisfiledTaxYears(): Promise<{ checked: number; fixed: number; failed: number; sample: string[] }> {
   const { supabase, farm } = await ctx();
-  const { data } = await supabase.from("transaction").select("id, transaction_date, tax_year:tax_year_id(year)").eq("farm_business_id", farm.id);
+  const { data, error } = await supabase.from("transaction").select("id, transaction_date, tax_year_id, tax_year:tax_year_id(year)").eq("farm_business_id", farm.id);
+  if (error) throw new Error(`Couldn't read transactions: ${error.message}`);
   const rows = (data ?? []) as any[];
   let fixed = 0;
+  let failed = 0;
+  const sample: string[] = [];
   for (const r of rows) {
     const correctYear = Number(String(r.transaction_date).slice(0, 4));
     const currentYear = Array.isArray(r.tax_year) ? r.tax_year[0]?.year : r.tax_year?.year;
     if (!Number.isFinite(correctYear) || currentYear === correctYear) continue;
-    const correctTaxYearId = await getOrCreateTaxYear(supabase, farm.id, correctYear);
-    await supabase.from("transaction").update({ tax_year_id: correctTaxYearId }).eq("id", r.id);
-    fixed++;
+    try {
+      const correctTaxYearId = await getOrCreateTaxYear(supabase, farm.id, correctYear);
+      const { error: updateError } = await supabase.from("transaction").update({ tax_year_id: correctTaxYearId }).eq("id", r.id);
+      if (updateError) throw updateError;
+      fixed++;
+    } catch (e) {
+      failed++;
+      if (sample.length < 3) sample.push(e instanceof Error ? e.message : String(e));
+    }
   }
-  return { checked: rows.length, fixed };
+  return { checked: rows.length, fixed, failed, sample };
 }
 
 export async function updateTransaction(id: string, patch: Partial<Transaction>) {
