@@ -12,7 +12,7 @@ export default async function VehiclesPage() {
       <PageHeader
         title="Vehicles & Mileage"
         description={`${vehicles.length} vehicle${vehicles.length === 1 ? "" : "s"} · ${totalMiles} miles logged`}
-        action={<Link href="/more/vehicles/mileage/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Log Mileage</Link>}
+        action={<Link prefetch={false} href="/more/vehicles/mileage/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Log Mileage</Link>}
       />
       <div className="card overflow-x-auto">
         <table className="data-table">

@@ -12,12 +12,12 @@ export default async function DocumentsPage({ searchParams }: { searchParams: Pr
       <PageHeader
         title="Documents"
         description="Central searchable file library."
-        action={<Link href="/more/documents/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Upload Document</Link>}
+        action={<Link prefetch={false} href="/more/documents/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Upload Document</Link>}
       />
       <div className="flex flex-wrap gap-2 mb-4">
-        <Link href="/more/documents" className={`status-pill ${!params.category ? "status-blue" : "bg-cream-deep text-charcoal/60"}`}>All</Link>
+        <Link prefetch={false} href="/more/documents" className={`status-pill ${!params.category ? "status-blue" : "bg-cream-deep text-charcoal/60"}`}>All</Link>
         {CATEGORIES.map((c) => (
-          <Link key={c} href={`/more/documents?category=${c}`} className={`status-pill ${params.category === c ? "status-blue" : "bg-cream-deep text-charcoal/60"}`}>
+          <Link prefetch={false} key={c} href={`/more/documents?category=${c}`} className={`status-pill ${params.category === c ? "status-blue" : "bg-cream-deep text-charcoal/60"}`}>
             {c.replace("_", " ")}
           </Link>
         ))}

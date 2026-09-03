@@ -72,6 +72,7 @@ export default function GlobalAddMenu({ onClose }: { onClose: () => void }) {
                     key={item.label}
                     href={item.href}
                     onClick={onClose}
+                    prefetch={false}
                     className="card px-3 py-3 text-sm font-medium hover:border-forest hover:text-forest transition-colors"
                   >
                     {item.label}

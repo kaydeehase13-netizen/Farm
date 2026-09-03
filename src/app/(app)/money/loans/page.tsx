@@ -9,11 +9,11 @@ export default async function LoansPage() {
       <PageHeader
         title="Loans"
         description="Farm loans, balances, and interest."
-        action={<Link href="/money/loans/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Add Loan</Link>}
+        action={<Link prefetch={false} href="/money/loans/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Add Loan</Link>}
       />
       {loans.length === 0 ? (
         <div className="card p-8 text-center text-charcoal/55">
-          No loans yet. <Link href="/money/loans/new" className="text-forest font-medium hover:underline">Add your first loan</Link> to start tracking balances and interest.
+          No loans yet. <Link prefetch={false} href="/money/loans/new" className="text-forest font-medium hover:underline">Add your first loan</Link> to start tracking balances and interest.
         </div>
       ) : (
         <div className="card overflow-x-auto">

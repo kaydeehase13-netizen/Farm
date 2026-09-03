@@ -19,9 +19,9 @@ export default async function WorkOverviewPage() {
         <StatCard label="Job Margin" value={money(jobMargin)} tone="green" />
       </div>
       <div className="grid sm:grid-cols-3 gap-4">
-        <Link href="/work/customers" className="card p-5 hover:border-forest"><div className="font-semibold text-forest">Customers</div><p className="text-sm text-charcoal/55 mt-1">Customer list & balances</p></Link>
-        <Link href="/work/jobs" className="card p-5 hover:border-forest"><div className="font-semibold text-forest">Jobs</div><p className="text-sm text-charcoal/55 mt-1">Custom work jobs & margins</p></Link>
-        <Link href="/work/invoices" className="card p-5 hover:border-forest"><div className="font-semibold text-forest">Invoices & Payments</div><p className="text-sm text-charcoal/55 mt-1">Bill customers, record payments</p></Link>
+        <Link prefetch={false} href="/work/customers" className="card p-5 hover:border-forest"><div className="font-semibold text-forest">Customers</div><p className="text-sm text-charcoal/55 mt-1">Customer list & balances</p></Link>
+        <Link prefetch={false} href="/work/jobs" className="card p-5 hover:border-forest"><div className="font-semibold text-forest">Jobs</div><p className="text-sm text-charcoal/55 mt-1">Custom work jobs & margins</p></Link>
+        <Link prefetch={false} href="/work/invoices" className="card p-5 hover:border-forest"><div className="font-semibold text-forest">Invoices & Payments</div><p className="text-sm text-charcoal/55 mt-1">Bill customers, record payments</p></Link>
       </div>
     </div>
   );

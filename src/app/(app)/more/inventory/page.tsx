@@ -9,7 +9,7 @@ export default async function InventoryPage() {
       <PageHeader
         title="Inventory"
         description="Chemical, fertilizer, seed, feed, and fuel on hand."
-        action={<Link href="/more/inventory/adjust" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Inventory Adjustment</Link>}
+        action={<Link prefetch={false} href="/more/inventory/adjust" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Inventory Adjustment</Link>}
       />
       <div className="card overflow-x-auto">
         <table className="data-table">

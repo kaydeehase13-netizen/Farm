@@ -9,7 +9,7 @@ export default async function JobsPage() {
       <PageHeader
         title="Custom Work Jobs"
         description={`${jobs.length} job${jobs.length === 1 ? "" : "s"}`}
-        action={<Link href="/work/jobs/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ New Job</Link>}
+        action={<Link prefetch={false} href="/work/jobs/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ New Job</Link>}
       />
       <div className="card overflow-x-auto">
         <table className="data-table">

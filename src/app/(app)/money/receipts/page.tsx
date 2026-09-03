@@ -12,8 +12,8 @@ export default async function ReceiptsPage() {
         description={`${receipts.length} receipt${receipts.length === 1 ? "" : "s"} on file`}
         action={
           <div className="flex gap-2">
-            <Link href="/money/receipts/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Scan / Upload Receipt</Link>
-            <Link href="/money/receipts/batch" className="card px-4 py-2 text-sm font-medium hover:border-forest">Batch Upload</Link>
+            <Link prefetch={false} href="/money/receipts/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Scan / Upload Receipt</Link>
+            <Link prefetch={false} href="/money/receipts/batch" className="card px-4 py-2 text-sm font-medium hover:border-forest">Batch Upload</Link>
           </div>
         }
       />
@@ -34,7 +34,7 @@ export default async function ReceiptsPage() {
             <div className="text-sm text-charcoal/55">{r.ocrDateGuess ?? "—"} · {r.ocrAmountGuess ? `$${r.ocrAmountGuess.toFixed(2)}` : "—"}</div>
             {r.ocrStatus !== "confirmed" ? (
               <div className="mt-3 flex items-center justify-between">
-                <Link href={`/money/receipts/${r.id}/confirm`} className="text-sm font-medium text-forest hover:underline">
+                <Link prefetch={false} href={`/money/receipts/${r.id}/confirm`} className="text-sm font-medium text-forest hover:underline">
                   Review & confirm →
                 </Link>
                 <DeleteReceiptButton receiptId={r.id} hasTransaction={Boolean(r.linkedTransactionId)} />
@@ -43,7 +43,7 @@ export default async function ReceiptsPage() {
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="text-sm text-status-green">Linked to transaction</span>
                 <div className="flex items-center gap-3">
-                  <Link href={`/money/receipts/${r.id}/edit`} className="text-sm font-medium text-forest hover:underline">Edit →</Link>
+                  <Link prefetch={false} href={`/money/receipts/${r.id}/edit`} className="text-sm font-medium text-forest hover:underline">Edit →</Link>
                   <DeleteReceiptButton receiptId={r.id} hasTransaction={Boolean(r.linkedTransactionId)} />
                 </div>
               </div>

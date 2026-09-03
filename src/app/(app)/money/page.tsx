@@ -34,7 +34,7 @@ export default async function MoneyOverviewPage() {
       </div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {TILES.map((t) => (
-          <Link key={t.label} href={t.href} className="card p-5 hover:border-forest transition-colors">
+          <Link prefetch={false} key={t.label} href={t.href} className="card p-5 hover:border-forest transition-colors">
             <div className="font-semibold text-forest">{t.label}</div>
             <div className="text-sm text-charcoal/55 mt-1">{t.desc}</div>
           </Link>

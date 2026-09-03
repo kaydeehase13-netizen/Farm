@@ -62,6 +62,7 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
               <Link
                 key={item.href}
                 href={item.href}
+                prefetch={false}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   active ? "bg-forest-light text-white" : "text-sage-light/90 hover:bg-forest-light/60"
                 }`}
@@ -80,6 +81,7 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch={false}
                   className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                     active ? "bg-forest-light text-white" : "text-sage-light/80 hover:bg-forest-light/60"
                   }`}
@@ -119,7 +121,7 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
               )}
             </div>
           )}
-          <Link href="/more/settings" className="text-xs text-sage-light/70 hover:text-white block">
+          <Link href="/more/settings" prefetch={false} className="text-xs text-sage-light/70 hover:text-white block">
             {farmName} · {taxYear} · Settings
           </Link>
           {authenticated && (
@@ -141,6 +143,7 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
             <Link
               key={item.href}
               href={item.href}
+              prefetch={false}
               className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium ${
                 active ? "text-wheat" : "text-sage-light/80"
               }`}

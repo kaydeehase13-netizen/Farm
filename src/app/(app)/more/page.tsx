@@ -17,7 +17,7 @@ export default function MorePage() {
       <PageHeader title="More" description="Equipment, livestock, vehicles, inventory, documents and settings." />
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {TILES.map((t) => (
-          <Link key={t.href} href={t.href} className="card p-5 hover:border-forest transition-colors">
+          <Link prefetch={false} key={t.href} href={t.href} className="card p-5 hover:border-forest transition-colors">
             <t.icon className="text-forest mb-2" size={22} />
             <div className="font-semibold text-forest">{t.label}</div>
             <div className="text-sm text-charcoal/55 mt-1">{t.desc}</div>

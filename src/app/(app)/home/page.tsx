@@ -48,6 +48,7 @@ export default async function HomePage() {
               <Link
                 key={a.label}
                 href={a.href}
+                prefetch={false}
                 className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-status-amber-bg text-status-amber text-sm font-medium hover:opacity-80"
               >
                 <span className="flex items-center gap-2">
@@ -66,7 +67,7 @@ export default async function HomePage() {
           { label: "Spray a Field", href: "/fields/activities/new?type=spray" },
           { label: "Create Invoice", href: "/work/invoices/new" },
         ].map((q) => (
-          <Link key={q.label} href={q.href} className="card p-5 text-center font-medium text-forest hover:border-forest">
+          <Link key={q.label} href={q.href} prefetch={false} className="card p-5 text-center font-medium text-forest hover:border-forest">
             + {q.label}
           </Link>
         ))}
@@ -75,7 +76,7 @@ export default async function HomePage() {
       <div className="card p-5">
         <div className="flex items-center justify-between mb-3">
           <div className="text-sm font-semibold text-forest">Recent Activity</div>
-          <Link href="/money/transactions" className="text-sm text-forest hover:underline">View all</Link>
+          <Link href="/money/transactions" prefetch={false} className="text-sm text-forest hover:underline">View all</Link>
         </div>
         <div className="overflow-x-auto -mx-5">
           <table className="data-table">

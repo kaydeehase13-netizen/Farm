@@ -129,7 +129,7 @@ export function TransactionsTable({
                     t.status === "needs_review" ? "status-amber" : t.status === "excluded_personal" ? "status-red" : "status-green"
                   }`}>{t.status.replace("_", " ")}</span>
                 </td>
-                <td>{t.receiptId ? <span className="status-pill status-green">✓</span> : <Link href="/money/receipts/new" className="text-status-amber text-xs underline">missing</Link>}</td>
+                <td>{t.receiptId ? <span className="status-pill status-green">✓</span> : <Link prefetch={false} href="/money/receipts/new" className="text-status-amber text-xs underline">missing</Link>}</td>
                 <td className="whitespace-nowrap text-xs">
                   <button onClick={() => toggleOmitted(t)} disabled={isPending} className="text-charcoal/60 hover:underline mr-2">
                     {t.isPersonalExcluded ? "Un-omit" : "Omit"}

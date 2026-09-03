@@ -69,7 +69,7 @@ export function AllocateCostForm({
           ))}
         </div>
         <div className="flex gap-2 pt-2">
-          <Link href="/fields" className="bg-wheat text-forest font-semibold px-5 py-2.5 rounded-lg flex-1 text-center">Back to Fields</Link>
+          <Link prefetch={false} href="/fields" className="bg-wheat text-forest font-semibold px-5 py-2.5 rounded-lg flex-1 text-center">Back to Fields</Link>
           <button
             onClick={() => { setResult(null); setProductName(""); setTotalAmount(""); }}
             className="card px-5 py-2.5 text-sm font-medium hover:border-forest flex-1"

@@ -24,7 +24,7 @@ export default async function InvoicesPage() {
       <PageHeader
         title="Invoices & Payments"
         description={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"}`}
-        action={<Link href="/work/invoices/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ New Invoice</Link>}
+        action={<Link prefetch={false} href="/work/invoices/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ New Invoice</Link>}
       />
 
       <div className="card overflow-x-auto mb-8">

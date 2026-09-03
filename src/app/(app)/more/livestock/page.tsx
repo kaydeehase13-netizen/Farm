@@ -10,7 +10,7 @@ export default async function LivestockPage() {
       <PageHeader
         title="Livestock"
         description={`${groups.length} group${groups.length === 1 ? "" : "s"}`}
-        action={<Link href="/more/livestock/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Record Purchase/Sale/Loss</Link>}
+        action={<Link prefetch={false} href="/more/livestock/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Record Purchase/Sale/Loss</Link>}
       />
       <div className="grid lg:grid-cols-2 gap-6">
         {groups.map((g) => (
