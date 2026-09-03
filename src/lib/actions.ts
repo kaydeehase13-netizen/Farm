@@ -358,11 +358,13 @@ export async function createPendingReceiptAction(input: {
   salesTax?: number | null;
   lineItems?: { description: string; amount: number; suggestedCategory?: string }[] | null;
   failed?: boolean;
+  fileDataUrl?: string | null;
 }) {
   const farm = await getFarm();
   const receipt = await repo.createReceipt({
     farmBusinessId: farm.id,
     fileName: input.fileName,
+    fileDataUrl: input.fileDataUrl ?? undefined,
     captureSource: input.captureSource ?? "web_upload",
     ocrStatus: input.failed ? "failed" : "processed",
     ocrVendorGuess: input.vendor ?? undefined,

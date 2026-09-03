@@ -78,7 +78,7 @@ export function BatchReceiptScanner() {
         });
         const data = await res.json();
         if (data.error) {
-          await createPendingReceiptAction({ fileName: item.file.name, captureSource: "web_upload", failed: true });
+          await createPendingReceiptAction({ fileName: item.file.name, captureSource: "web_upload", failed: true, fileDataUrl: item.preview });
           setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: "failed", note: "Couldn't read automatically — you'll enter it by hand." } : it)));
         } else {
           await createPendingReceiptAction({
@@ -89,11 +89,12 @@ export function BatchReceiptScanner() {
             amount: data.amount ?? null,
             salesTax: data.salesTax ?? null,
             failed: !!data.stub,
+            fileDataUrl: item.preview,
           });
           setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: data.stub ? "failed" : "done", note: data.stub ? (data.note ?? "AI scanning isn't configured") : "Scanned" } : it)));
         }
       } catch {
-        await createPendingReceiptAction({ fileName: item.file.name, captureSource: "web_upload", failed: true });
+        await createPendingReceiptAction({ fileName: item.file.name, captureSource: "web_upload", failed: true, fileDataUrl: item.preview });
         setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: "failed", note: "Scan failed — you'll enter it by hand." } : it)));
       }
       setSavedCount((c) => c + 1);

@@ -270,6 +270,9 @@ export async function listReceipts(): Promise<Receipt[]> {
     captureSource: r.capture_source, ocrStatus: r.ocr_status, ocrVendorGuess: r.ocr_vendor_guess ?? undefined,
     ocrDateGuess: r.ocr_date_guess ?? undefined, ocrAmountGuess: r.ocr_amount_guess != null ? Number(r.ocr_amount_guess) : undefined,
     ocrTaxGuess: r.ocr_tax_guess != null ? Number(r.ocr_tax_guess) : undefined, ocrLineItems: r.ocr_line_items ?? undefined,
+    // file_data_url only exists once migration 0006 has been run — tolerate
+    // its absence rather than letting a missing column break the whole list.
+    fileDataUrl: r.file_data_url ?? undefined,
     confirmedAt: r.confirmed_at ?? undefined, linkedTransactionId: linked?.find((t: any) => t.receipt_id === r.id)?.id,
     syncStatus: r.sync_status, createdAt: r.created_at,
   }));
@@ -277,12 +280,21 @@ export async function listReceipts(): Promise<Receipt[]> {
 
 export async function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {
   const { supabase, farm } = await ctx();
-  const { data, error } = await supabase.from("receipt").insert({
+  const baseRow = {
     farm_business_id: farm.id, capture_source: input.captureSource, ocr_status: input.ocrStatus,
     ocr_vendor_guess: input.ocrVendorGuess ?? null, ocr_date_guess: input.ocrDateGuess ?? null,
     ocr_amount_guess: input.ocrAmountGuess ?? null, ocr_tax_guess: input.ocrTaxGuess ?? null,
     ocr_line_items: input.ocrLineItems ?? null, sync_status: "synced",
-  }).select("*").single();
+  };
+  let { data, error } = await supabase.from("receipt")
+    .insert({ ...baseRow, file_data_url: input.fileDataUrl ?? null })
+    .select("*").single();
+  if (error?.message?.includes("file_data_url")) {
+    // Migration 0006 (adds the file_data_url column) hasn't been run yet on
+    // this database — fall back to saving everything except the photo so
+    // receipt entry still works, rather than hard-failing the whole save.
+    ({ data, error } = await supabase.from("receipt").insert(baseRow).select("*").single());
+  }
   if (error || !data) throw error;
   return { ...input, id: data.id, createdAt: data.created_at };
 }

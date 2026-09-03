@@ -15,6 +15,12 @@ export default async function EditReceiptPage({ params }: { params: Promise<{ re
   return (
     <div className="max-w-lg">
       <PageHeader title="Edit Receipt" description="Fix the amount, date, vendor, or category — this updates the linked expense too." />
+      {receipt.fileDataUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={receipt.fileDataUrl} alt="Receipt" className="w-full max-h-72 object-contain bg-charcoal/5 rounded-xl mb-4 border border-[--border-color]" />
+      ) : (
+        <p className="text-xs text-charcoal/45 mb-4">No photo saved for this receipt — it was uploaded before photo storage was added, or storage isn&apos;t set up yet.</p>
+      )}
       <EditReceiptForm
         receiptId={receipt.id}
         hasTransaction={Boolean(txn)}
