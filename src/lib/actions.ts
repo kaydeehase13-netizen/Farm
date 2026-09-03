@@ -32,13 +32,18 @@ export async function createExpenseOrIncome(formData: FormData) {
   const fieldId = str(formData, "fieldId");
   const jobId = str(formData, "jobId");
   const amount = num(formData, "amount") ?? 0;
+  const transactionDate = str(formData, "transactionDate") ?? new Date().toISOString().slice(0, 10);
+  // File under the year the transaction actually happened, not whatever the
+  // farm's "current" onboarding year is — otherwise a 2025 receipt entered
+  // while the farm is set to 2026 would silently land in the wrong year.
+  const taxYear = Number(transactionDate.slice(0, 4)) || farm.currentTaxYear;
 
   await repo.createTransaction({
     farmBusinessId: farm.id,
-    taxYear: farm.currentTaxYear,
+    taxYear,
     transactionType: type,
     status: "categorized",
-    transactionDate: str(formData, "transactionDate") ?? new Date().toISOString().slice(0, 10),
+    transactionDate,
     vendorName: str(formData, "vendorName"),
     customerId: str(formData, "customerId"),
     description: str(formData, "description"),
@@ -560,4 +565,117 @@ export async function createDocumentAction(formData: FormData) {
     tags: (str(formData, "tags") ?? "").split(",").map((t) => t.trim()).filter(Boolean),
   });
   revalidatePath("/more/documents");
+}
+
+/**
+ * Take a single total dollar amount (what you actually paid for a product —
+ * fertilizer, seed, chemical — across the year) and split it across fields
+ * proportionally to how much of that product each field's logged activities
+ * (imported or hand-entered) actually used. This is how a lump-sum invoice
+ * becomes real per-field cost without having to do the math by hand.
+ */
+export async function allocateProductCostAction(input: {
+  year: number;
+  productName: string;
+  totalAmount: number;
+  farmCategoryId: string;
+  vendorName?: string;
+  transactionDate?: string;
+}) {
+  const farm = await getFarm();
+  const needle = input.productName.trim().toLowerCase();
+  if (!needle) throw new Error("Enter a product name to allocate.");
+  if (!(input.totalAmount > 0)) throw new Error("Enter the total amount you paid.");
+
+  const activities = await repo.listActivities({ year: input.year });
+
+  const usageByField = new Map<string, { fieldName: string; usage: number; unit?: string }>();
+  let unmatchedUnits = false;
+
+  function addUsage(fieldId: string | undefined, fieldName: string | undefined, amount: number, unit?: string) {
+    if (!fieldId || !(amount > 0)) return;
+    const existing = usageByField.get(fieldId);
+    if (existing) {
+      if (existing.unit && unit && existing.unit !== unit) unmatchedUnits = true;
+      existing.usage += amount;
+      existing.unit = existing.unit ?? unit;
+    } else {
+      usageByField.set(fieldId, { fieldName: fieldName ?? "Field", usage: amount, unit });
+    }
+  }
+
+  for (const a of activities) {
+    for (const p of a.sprayProducts ?? []) {
+      if (p.productName.trim().toLowerCase() === needle) addUsage(a.fieldId, a.fieldName, p.quantityUsed, p.quantityUnit);
+    }
+    for (const p of a.fertilizerProducts ?? []) {
+      if (p.productName.trim().toLowerCase() === needle) addUsage(a.fieldId, a.fieldName, p.quantityUsed, p.quantityUnit);
+    }
+    if (a.seedProductName && a.seedProductName.trim().toLowerCase() === needle) {
+      addUsage(a.fieldId, a.fieldName, (a.seedingRate ?? 0) * (a.acres ?? 0), "units");
+    }
+  }
+
+  const fieldsUsage = Array.from(usageByField.entries()).map(([fieldId, v]) => ({ fieldId, ...v }));
+  const totalUsage = fieldsUsage.reduce((s, f) => s + f.usage, 0);
+
+  if (fieldsUsage.length === 0 || totalUsage <= 0) {
+    return {
+      allocated: false as const,
+      message: `No logged activity in ${input.year} used a product matching "${input.productName}". Check the spelling against what's on the field activity history, or log/import the activity first.`,
+    };
+  }
+
+  const transactionDate = input.transactionDate || `${input.year}-12-31`;
+
+  // Proportional split, with any rounding remainder folded into the
+  // largest-usage field so the allocations add up to exactly what was paid.
+  fieldsUsage.sort((a, b) => b.usage - a.usage);
+  let allocatedSoFar = 0;
+  const allocations: { fieldId: string; fieldName: string; usage: number; unit?: string; amount: number }[] = [];
+  for (let i = 0; i < fieldsUsage.length; i++) {
+    const f = fieldsUsage[i];
+    const isLast = i === fieldsUsage.length - 1;
+    const amount = isLast
+      ? Math.round((input.totalAmount - allocatedSoFar) * 100) / 100
+      : Math.round(input.totalAmount * (f.usage / totalUsage) * 100) / 100;
+    allocatedSoFar += amount;
+    allocations.push({ fieldId: f.fieldId, fieldName: f.fieldName, usage: f.usage, unit: f.unit, amount });
+  }
+
+  for (const a of allocations) {
+    if (a.amount <= 0) continue;
+    await repo.createTransaction({
+      farmBusinessId: farm.id,
+      taxYear: input.year,
+      transactionType: "expense",
+      status: "categorized",
+      transactionDate,
+      vendorName: input.vendorName,
+      description: `${input.productName} — allocated by usage (${a.fieldName})`,
+      amount: a.amount,
+      farmCategoryId: input.farmCategoryId,
+      isPersonalExcluded: false,
+      cpaFlag: false,
+      syncStatus: "synced",
+      splits: [{
+        targetType: "field", fieldId: a.fieldId, allocationMethod: "quantity",
+        allocatedAmount: a.amount, farmCategoryId: input.farmCategoryId,
+        notes: a.unit ? `${a.usage} ${a.unit} used` : undefined,
+      }],
+    });
+  }
+
+  revalidatePath("/fields");
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+
+  return {
+    allocated: true as const,
+    productName: input.productName,
+    totalAmount: input.totalAmount,
+    year: input.year,
+    unmatchedUnits,
+    allocations,
+  };
 }

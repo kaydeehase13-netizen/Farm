@@ -112,13 +112,14 @@ export function confirmReceipt(id: string, patch: Partial<Receipt> & { createTra
     if (patch.createTransaction) {
       const txnId = randomUUID();
       const amount = receipt.ocrAmountGuess ?? 0;
+      const transactionDate = receipt.ocrDateGuess ?? new Date().toISOString().slice(0, 10);
       const txn: Transaction = {
         id: txnId,
         farmBusinessId: FARM.id,
-        taxYear: FARM.currentTaxYear,
+        taxYear: Number(transactionDate.slice(0, 4)) || FARM.currentTaxYear,
         transactionType: "expense",
         status: "categorized",
-        transactionDate: receipt.ocrDateGuess ?? new Date().toISOString().slice(0, 10),
+        transactionDate,
         vendorName: receipt.ocrVendorGuess,
         description: `Receipt — ${receipt.ocrVendorGuess ?? receipt.fileName}`,
         amount,
@@ -182,6 +183,10 @@ export function createActivity(input: Omit<Activity, "id" | "createdAt">) {
 
 export function listCustomers() {
   return getDB().customers;
+}
+
+export function listCustomerFields() {
+  return getDB().customerFields;
 }
 
 export function getCustomer(id: string) {
@@ -261,7 +266,7 @@ export function recordPayment(input: Omit<Payment, "id">) {
 
     // Recording payment automatically creates associated farm income.
     const txn: Transaction = {
-      id: randomUUID(), farmBusinessId: FARM.id, taxYear: FARM.currentTaxYear,
+      id: randomUUID(), farmBusinessId: FARM.id, taxYear: Number(input.paymentDate.slice(0, 4)) || FARM.currentTaxYear,
       transactionType: "income", status: "categorized",
       transactionDate: input.paymentDate, customerId: input.customerId,
       description: `Payment received${input.paymentMethod ? " — " + input.paymentMethod : ""}`,

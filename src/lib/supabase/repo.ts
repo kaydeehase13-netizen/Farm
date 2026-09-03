@@ -241,9 +241,11 @@ export async function confirmReceipt(id: string, patch: Partial<Receipt> & { cre
   }).eq("id", id);
 
   if (patch.createTransaction) {
+    const transactionDate = patch.ocrDateGuess ?? new Date().toISOString().slice(0, 10);
+    const taxYear = Number(transactionDate.slice(0, 4)) || farm.currentTaxYear;
     await createTransaction({
-      farmBusinessId: farm.id, taxYear: farm.currentTaxYear, transactionType: "expense", status: "categorized",
-      transactionDate: patch.ocrDateGuess ?? new Date().toISOString().slice(0, 10), vendorName: patch.ocrVendorGuess,
+      farmBusinessId: farm.id, taxYear, transactionType: "expense", status: "categorized",
+      transactionDate, vendorName: patch.ocrVendorGuess,
       description: `Receipt — ${patch.ocrVendorGuess ?? "upload"}`, amount: patch.ocrAmountGuess ?? 0,
       salesTax: patch.ocrTaxGuess ?? 0, farmCategoryId: patch.farmCategoryId, receiptId: id,
       isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced",
@@ -490,7 +492,7 @@ export async function recordPayment(input: Omit<Payment, "id">) {
   }
 
   await createTransaction({
-    farmBusinessId: farm.id, taxYear: farm.currentTaxYear, transactionType: "income", status: "categorized",
+    farmBusinessId: farm.id, taxYear: Number(input.paymentDate.slice(0, 4)) || farm.currentTaxYear, transactionType: "income", status: "categorized",
     transactionDate: input.paymentDate, customerId: input.customerId,
     description: `Payment received${input.paymentMethod ? " — " + input.paymentMethod : ""}`, amount: input.amount,
     isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced",

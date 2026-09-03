@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDB } from "@/lib/data/store";
-import { getFarm, allFieldProfitability, dashboardSummary, listInventory } from "@/lib/data/repo";
+import { getFarm, allFieldProfitability, dashboardSummary, listInventory, listCustomers, listTransactions } from "@/lib/data/repo";
 
 // AI farm assistant: answers questions against the farm's ACTUAL records.
 // Per spec: "Never invent financial values. If data is missing, clearly
@@ -12,22 +11,25 @@ export async function POST(req: NextRequest) {
   if (!question) return NextResponse.json({ error: "question is required" }, { status: 400 });
 
   const farm = await getFarm();
-  const db = getDB();
-  const summary = await dashboardSummary(farm.currentTaxYear);
-  const fieldProfit = await allFieldProfitability(farm.currentTaxYear);
-  const inventory = await listInventory();
+  const [summary, fieldProfit, inventory, customers, transactions] = await Promise.all([
+    dashboardSummary(farm.currentTaxYear),
+    allFieldProfitability(farm.currentTaxYear),
+    listInventory(),
+    listCustomers(),
+    listTransactions({ taxYear: farm.currentTaxYear }),
+  ]);
 
   const snapshot = {
     farm: farm.name, taxYear: farm.currentTaxYear,
     summary,
     fields: fieldProfit,
-    customers: db.customers,
+    customers,
     inventory,
-    transactionsSample: db.transactions.slice(0, 60).map((t) => ({
+    transactionsSample: transactions.slice(0, 60).map((t) => ({
       date: t.transactionDate, type: t.transactionType, vendor: t.vendorName, description: t.description,
       amount: t.amount, category: t.farmCategoryId, status: t.status, receiptOnFile: Boolean(t.receiptId),
     })),
-    missingReceiptTransactions: db.transactions.filter((t) => t.transactionType === "expense" && !t.receiptId)
+    missingReceiptTransactions: transactions.filter((t) => t.transactionType === "expense" && !t.receiptId)
       .map((t) => ({ date: t.transactionDate, vendor: t.vendorName, amount: t.amount })),
   };
 

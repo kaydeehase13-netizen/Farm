@@ -1,4 +1,4 @@
-import { getDB } from "@/lib/data/store";
+import { listFields } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { createFieldActivity } from "@/lib/actions";
 import { redirect } from "next/navigation";
@@ -14,7 +14,7 @@ export default async function NewActivityPage({
   searchParams,
 }: { searchParams: Promise<{ type?: string; fieldId?: string }> }) {
   const params = await searchParams;
-  const db = getDB();
+  const fields = await listFields();
   const type = params.type ?? "spray";
 
   async function action(formData: FormData) {
@@ -35,7 +35,7 @@ export default async function NewActivityPage({
         <Field label="Field">
           <select name="fieldId" defaultValue={params.fieldId} className="input" required>
             <option value="" disabled>Select a field…</option>
-            {db.fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            {fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
         </Field>
         <Field label="Date">

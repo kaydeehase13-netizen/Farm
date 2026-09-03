@@ -97,6 +97,11 @@ export async function listCustomers() {
   return demo.listCustomers();
 }
 
+export async function listCustomerFields() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listCustomerFields();
+  return demo.listCustomerFields();
+}
+
 export async function getCustomer(id: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).getCustomer(id);
   return demo.getCustomer(id);

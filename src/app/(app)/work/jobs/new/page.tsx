@@ -1,10 +1,10 @@
-import { getDB } from "@/lib/data/store";
+import { listCustomers, listCustomerFields } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { createJobAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
 
-export default function NewJobPage() {
-  const db = getDB();
+export default async function NewJobPage() {
+  const [customers, customerFields] = await Promise.all([listCustomers(), listCustomerFields()]);
 
   async function action(formData: FormData) {
     "use server";
@@ -18,13 +18,13 @@ export default function NewJobPage() {
       <form action={action} className="card p-6 space-y-4">
         <Field label="Customer">
           <select name="customerId" className="input" required>
-            {db.customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </Field>
         <Field label="Customer Field">
           <select name="customerFieldId" className="input">
             <option value="">— None —</option>
-            {db.customerFields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            {customerFields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
         </Field>
         <Field label="Service">

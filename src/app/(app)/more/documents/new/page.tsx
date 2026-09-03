@@ -1,12 +1,12 @@
-import { getDB } from "@/lib/data/store";
+import { listFields } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { createDocumentAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
 
 const CATEGORIES = ["receipt", "invoice", "tax", "equipment", "land", "insurance", "usda_fsa", "chemical_label", "sds", "income", "loan", "contract", "livestock", "other"];
 
-export default function NewDocumentPage() {
-  const db = getDB();
+export default async function NewDocumentPage() {
+  const fields = await listFields();
   async function action(formData: FormData) {
     "use server";
     await createDocumentAction(formData);
@@ -25,7 +25,7 @@ export default function NewDocumentPage() {
         <label className="block"><div className="text-sm font-medium mb-1">Related Field (optional)</div>
           <select name="relatedFieldId" className="input">
             <option value="">— None —</option>
-            {db.fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            {fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
         </label>
         <label className="block"><div className="text-sm font-medium mb-1">Tags (comma separated)</div>
