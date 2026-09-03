@@ -2,6 +2,7 @@ import Link from "next/link";
 import { listReceipts } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { DeleteReceiptButton } from "@/components/money/delete-receipt-button";
+import { ReceiptThumbnail } from "@/components/money/receipt-thumbnail";
 
 export default async function ReceiptsPage() {
   const receipts = await listReceipts();
@@ -20,10 +21,7 @@ export default async function ReceiptsPage() {
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {receipts.map((r) => (
           <div key={r.id} className="card p-4">
-            {r.fileDataUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={r.fileDataUrl} alt="" className="w-full h-32 object-cover rounded-lg bg-charcoal/5 mb-3" />
-            )}
+            <ReceiptThumbnail receiptId={r.id} className="w-full h-32 object-cover rounded-lg bg-charcoal/5 mb-3" />
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-charcoal/50">{r.captureSource.replace("_", " ")}</span>
               <span className={`status-pill ${r.ocrStatus === "confirmed" ? "status-green" : r.ocrStatus === "failed" ? "status-red" : "status-amber"}`}>

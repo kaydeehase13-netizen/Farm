@@ -290,21 +290,49 @@ export async function deleteReceipt(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// Every column EXCEPT file_data_url — that column holds the whole receipt
+// photo as base64 text (often several hundred KB, sometimes multi-MB), and
+// listReceipts() is called on nearly every page via dashboardSummary() just
+// to count unconfirmed/missing receipts. Pulling every photo, every time,
+// on every page load was the single biggest thing bloating this app —
+// see getReceipt() below for fetching one receipt's actual photo.
+const RECEIPT_LIST_COLUMNS =
+  "id, farm_business_id, file_name, document_id, capture_source, ocr_status, ocr_vendor_guess, " +
+  "ocr_date_guess, ocr_amount_guess, ocr_tax_guess, ocr_line_items, confirmed_at, sync_status, created_at";
+
 export async function listReceipts(): Promise<Receipt[]> {
   const { supabase, farm } = await ctx();
-  const { data } = await supabase.from("receipt").select("*").eq("farm_business_id", farm.id).order("created_at", { ascending: false });
+  const { data } = await supabase.from("receipt").select(RECEIPT_LIST_COLUMNS).eq("farm_business_id", farm.id).order("created_at", { ascending: false });
   const { data: linked } = await supabase.from("transaction").select("id, receipt_id").eq("farm_business_id", farm.id).not("receipt_id", "is", null);
   return (data ?? []).map((r: any): Receipt => ({
     id: r.id, farmBusinessId: r.farm_business_id, fileName: r.document_id ? r.file_name ?? "receipt" : r.file_name ?? "receipt",
     captureSource: r.capture_source, ocrStatus: r.ocr_status, ocrVendorGuess: r.ocr_vendor_guess ?? undefined,
     ocrDateGuess: r.ocr_date_guess ?? undefined, ocrAmountGuess: r.ocr_amount_guess != null ? Number(r.ocr_amount_guess) : undefined,
     ocrTaxGuess: r.ocr_tax_guess != null ? Number(r.ocr_tax_guess) : undefined, ocrLineItems: r.ocr_line_items ?? undefined,
-    // file_data_url only exists once migration 0006 has been run — tolerate
-    // its absence rather than letting a missing column break the whole list.
-    fileDataUrl: r.file_data_url ?? undefined,
+    // Deliberately NOT selected here — see getReceipt() for the photo itself.
+    fileDataUrl: undefined,
     confirmedAt: r.confirmed_at ?? undefined, linkedTransactionId: linked?.find((t: any) => t.receipt_id === r.id)?.id,
     syncStatus: r.sync_status, createdAt: r.created_at,
   }));
+}
+
+/** One receipt, INCLUDING its photo (file_data_url) — use this instead of
+ * listReceipts().find(...) whenever you need the actual image, so you're
+ * only ever paying for one photo's worth of data, not every receipt's. */
+export async function getReceipt(id: string): Promise<Receipt | null> {
+  const { supabase, farm } = await ctx();
+  const { data: r } = await supabase.from("receipt").select("*").eq("id", id).eq("farm_business_id", farm.id).maybeSingle();
+  if (!r) return null;
+  const { data: linkedTxn } = await supabase.from("transaction").select("id").eq("receipt_id", id).eq("farm_business_id", farm.id).maybeSingle();
+  return {
+    id: r.id, farmBusinessId: r.farm_business_id, fileName: r.file_name ?? "receipt",
+    captureSource: r.capture_source, ocrStatus: r.ocr_status, ocrVendorGuess: r.ocr_vendor_guess ?? undefined,
+    ocrDateGuess: r.ocr_date_guess ?? undefined, ocrAmountGuess: r.ocr_amount_guess != null ? Number(r.ocr_amount_guess) : undefined,
+    ocrTaxGuess: r.ocr_tax_guess != null ? Number(r.ocr_tax_guess) : undefined, ocrLineItems: r.ocr_line_items ?? undefined,
+    fileDataUrl: r.file_data_url ?? undefined,
+    confirmedAt: r.confirmed_at ?? undefined, linkedTransactionId: linkedTxn?.id,
+    syncStatus: r.sync_status, createdAt: r.created_at,
+  };
 }
 
 export async function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {

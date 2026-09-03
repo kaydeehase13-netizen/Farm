@@ -87,6 +87,11 @@ export async function listReceipts() {
   return demo.listReceipts();
 }
 
+export async function getReceipt(id: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).getReceipt(id);
+  return demo.getReceipt(id);
+}
+
 export async function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createReceipt(input);
   return demo.createReceipt(input);

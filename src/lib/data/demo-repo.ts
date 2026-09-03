@@ -125,6 +125,10 @@ export function listReceipts() {
   return [...getDB().receipts].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+export function getReceipt(id: string) {
+  return getDB().receipts.find((r) => r.id === id) ?? null;
+}
+
 export function deleteReceipt(id: string) {
   return mutate((db) => {
     // Unlink rather than delete any transaction that was created from this

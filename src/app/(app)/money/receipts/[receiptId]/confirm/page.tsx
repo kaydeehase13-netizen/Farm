@@ -1,14 +1,14 @@
 import { notFound } from "next/navigation";
-import { listReceipts, getAppData, getFarm } from "@/lib/data/repo";
+import { getReceipt, getAppData, getFarm } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { confirmReceiptAction } from "@/lib/actions";
 import { redirect } from "next/navigation";
+import { ReceiptThumbnail } from "@/components/money/receipt-thumbnail";
 
 export default async function ConfirmReceiptPage({ params }: { params: Promise<{ receiptId: string }> }) {
   const { receiptId } = await params;
-  const receipt = (await listReceipts()).find((r) => r.id === receiptId);
+  const [receipt, farm] = await Promise.all([getReceipt(receiptId), getFarm()]);
   if (!receipt) notFound();
-  const farm = await getFarm();
   const data = await getAppData(farm.currentTaxYear);
 
   async function action(formData: FormData) {
@@ -21,10 +21,7 @@ export default async function ConfirmReceiptPage({ params }: { params: Promise<{
   return (
     <div className="max-w-xl">
       <PageHeader title="Review & Confirm Receipt" description={receipt.fileName} />
-      {receipt.fileDataUrl && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={receipt.fileDataUrl} alt="Receipt" className="w-full max-h-80 object-contain bg-charcoal/5 rounded-xl mb-4 border border-[--border-color]" />
-      )}
+      <ReceiptThumbnail receiptId={receipt.id} className="w-full max-h-80 object-contain bg-charcoal/5 rounded-xl mb-4 border border-[--border-color]" />
       {receipt.ocrLineItems && receipt.ocrLineItems.length > 0 && (
         <div className="card p-4 mb-4">
           <div className="text-sm font-semibold mb-2">AI-detected line items</div>
