@@ -2,6 +2,8 @@ import { listActivities, listFarmCategories, listTaxYears } from "@/lib/data/rep
 import { PageHeader } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 import { AllocateCostForm } from "@/components/fields/allocate-cost-form";
+import { ExcelBulkImport } from "@/components/shared/excel-bulk-import";
+import { bulkImportAllocateCostAction } from "@/lib/actions";
 
 export default async function AllocateCostPage() {
   const [taxYear, years, farmCategories] = await Promise.all([
@@ -32,6 +34,14 @@ export default async function AllocateCostPage() {
         productNames={Array.from(productNames).sort()}
         farmCategories={farmCategories.map((c) => ({ id: c.id, name: c.name }))}
       />
+      <div className="mt-6">
+        <ExcelBulkImport
+          title="Bulk allocate from Excel"
+          description="Got several products to allocate at once? Download the template, fill in one row per product, and upload it here instead of doing them one at a time above."
+          templateUrl="/api/templates/allocate-cost"
+          action={bulkImportAllocateCostAction}
+        />
+      </div>
     </div>
   );
 }

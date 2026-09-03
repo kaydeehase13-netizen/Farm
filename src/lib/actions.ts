@@ -503,6 +503,24 @@ export async function createTaxQuestionAction(formData: FormData) {
   revalidatePath("/tax");
 }
 
+export async function createAssetAction(formData: FormData) {
+  await repo.createAsset({
+    assetType: (str(formData, "assetType") as import("@/types/domain").AssetType) ?? "equipment",
+    name: str(formData, "name") ?? "Untitled equipment",
+    make: str(formData, "make"),
+    model: str(formData, "model"),
+    year: num(formData, "year"),
+    purchaseDate: str(formData, "purchaseDate"),
+    purchasePrice: num(formData, "purchasePrice"),
+    placedInServiceDate: str(formData, "placedInServiceDate") || str(formData, "purchaseDate"),
+    businessUsePercent: num(formData, "businessUsePercent") ?? 100,
+    usefulLifeYears: num(formData, "usefulLifeYears"),
+    salvageValue: num(formData, "salvageValue") ?? 0,
+    notes: str(formData, "notes"),
+  });
+  revalidatePath("/more/equipment");
+}
+
 export async function createAssetRepairAction(formData: FormData) {
   const { mutate } = await import("@/lib/data/store");
   const { randomUUID } = await import("node:crypto");
@@ -806,4 +824,120 @@ export async function allocateProductCostAction(input: {
     unmatchedUnits,
     allocations,
   };
+}
+
+// -----------------------------------------------------------------------
+// Excel bulk import — one .xlsx download+upload flow each for allocating
+// product costs across fields, income, and expenses (the "receipts"
+// import: for expenses you want logged fast without a photo).
+// -----------------------------------------------------------------------
+
+export interface BulkImportRowResult { row: number; ok: boolean; message: string; }
+export interface BulkImportSummary { total: number; imported: number; failed: number; results: BulkImportRowResult[]; }
+
+async function matchCategoryId(name: string | undefined, categories: { id: string; name: string }[]): Promise<string | undefined> {
+  if (!name) return undefined;
+  const needle = name.trim().toLowerCase();
+  const exact = categories.find((c) => c.name.trim().toLowerCase() === needle);
+  return exact?.id;
+}
+
+export async function bulkImportAllocateCostAction(formData: FormData): Promise<BulkImportSummary> {
+  const { parseXlsxRows, toIsoDate, toNumber, toText } = await import("@/lib/xlsx-import");
+  const file = formData.get("file");
+  const farm = await getFarm();
+  const categories = await repo.listFarmCategories();
+  if (!(file instanceof File)) return { total: 0, imported: 0, failed: 0, results: [{ row: 0, ok: false, message: "No file uploaded." }] };
+
+  const rows = await parseXlsxRows(await file.arrayBuffer());
+  const results: BulkImportRowResult[] = [];
+  let imported = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const rowNum = i + 2; // account for header row
+    const productName = toText(r["Product Name"]);
+    const totalAmount = toNumber(r["Total Amount"]);
+    if (!productName || !totalAmount) { results.push({ row: rowNum, ok: false, message: "Skipped — missing Product Name or Total Amount." }); continue; }
+    const year = toNumber(r["Year"]) ?? farm.currentTaxYear;
+    const farmCategoryId = await matchCategoryId(toText(r["Category"]), categories);
+    if (toText(r["Category"]) && !farmCategoryId) { results.push({ row: rowNum, ok: false, message: `Category "${r["Category"]}" doesn't match any category name.` }); continue; }
+    if (!farmCategoryId) { results.push({ row: rowNum, ok: false, message: "Skipped — missing Category." }); continue; }
+
+    try {
+      const outcome = await allocateProductCostAction({
+        year, productName, totalAmount, farmCategoryId,
+        vendorName: toText(r["Vendor (optional)"]) ?? toText(r["Vendor"]),
+        transactionDate: toIsoDate(r["Date (optional, YYYY-MM-DD)"]) ?? toIsoDate(r["Date"]),
+      });
+      if (outcome.allocated) { imported++; results.push({ row: rowNum, ok: true, message: `Allocated ${outcome.allocations.length} field(s).` }); }
+      else results.push({ row: rowNum, ok: false, message: outcome.message });
+    } catch (e: any) {
+      results.push({ row: rowNum, ok: false, message: e?.message ?? "Failed to allocate." });
+    }
+  }
+
+  return { total: rows.length, imported, failed: rows.length - imported, results };
+}
+
+async function bulkImportTransactions(formData: FormData, transactionType: "income" | "expense"): Promise<BulkImportSummary> {
+  const { parseXlsxRows, toIsoDate, toNumber, toText } = await import("@/lib/xlsx-import");
+  const file = formData.get("file");
+  if (!(file instanceof File)) return { total: 0, imported: 0, failed: 0, results: [{ row: 0, ok: false, message: "No file uploaded." }] };
+
+  const farm = await getFarm();
+  const categories = await repo.listFarmCategories();
+  const rows = await parseXlsxRows(await file.arrayBuffer());
+  const results: BulkImportRowResult[] = [];
+  let imported = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const rowNum = i + 2;
+    const transactionDate = toIsoDate(r["Date (YYYY-MM-DD)"]) ?? toIsoDate(r["Date"]);
+    const amount = toNumber(r["Amount"]);
+    if (!transactionDate || !amount) { results.push({ row: rowNum, ok: false, message: "Skipped — missing Date or Amount." }); continue; }
+
+    const categoryName = toText(r["Category"]);
+    const farmCategoryId = await matchCategoryId(categoryName, categories);
+    const categoryWarning = categoryName && !farmCategoryId ? ` (Category "${categoryName}" didn't match — imported as Uncategorized.)` : "";
+
+    const description = toText(r["Description"]) ?? (transactionType === "income" ? toText(r["Customer (optional)"]) : undefined) ?? (transactionType === "income" ? "Income" : "Expense");
+    const vendorName = transactionType === "expense" ? toText(r["Vendor"]) : undefined;
+    const taxYear = Number(transactionDate.slice(0, 4)) || farm.currentTaxYear;
+
+    try {
+      await repo.createTransaction({
+        farmBusinessId: farm.id,
+        taxYear,
+        transactionType,
+        status: farmCategoryId ? "categorized" : "needs_review",
+        transactionDate,
+        vendorName,
+        description: transactionType === "income" && toText(r["Customer (optional)"]) ? `${description} — ${r["Customer (optional)"]}` : description,
+        amount,
+        farmCategoryId,
+        isPersonalExcluded: false,
+        cpaFlag: false,
+        syncStatus: "synced",
+        splits: [{ targetType: "general_overhead", allocationMethod: "manual", allocatedAmount: amount, farmCategoryId }],
+      });
+      imported++;
+      results.push({ row: rowNum, ok: true, message: `Imported.${categoryWarning}` });
+    } catch (e: any) {
+      results.push({ row: rowNum, ok: false, message: e?.message ?? "Failed to import." });
+    }
+  }
+
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  return { total: rows.length, imported, failed: rows.length - imported, results };
+}
+
+export async function bulkImportIncomeAction(formData: FormData): Promise<BulkImportSummary> {
+  return bulkImportTransactions(formData, "income");
+}
+
+export async function bulkImportExpenseAction(formData: FormData): Promise<BulkImportSummary> {
+  return bulkImportTransactions(formData, "expense");
 }

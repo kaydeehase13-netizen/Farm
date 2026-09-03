@@ -15,6 +15,7 @@ export default async function ReceiptsPage() {
           <div className="flex gap-2">
             <Link prefetch={false} href="/money/receipts/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Scan / Upload Receipt</Link>
             <Link prefetch={false} href="/money/receipts/batch" className="card px-4 py-2 text-sm font-medium hover:border-forest">Batch Upload</Link>
+            <Link prefetch={false} href="/money/transactions/import-excel" className="card px-4 py-2 text-sm font-medium hover:border-forest">Import from Excel</Link>
           </div>
         }
       />
