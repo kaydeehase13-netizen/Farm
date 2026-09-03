@@ -5,10 +5,13 @@ import { AlertTriangle, FileWarning, HelpCircle, Receipt, Boxes, WifiOff } from 
 import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function HomePage() {
-  const farm = await getFarm();
   const taxYear = await getViewTaxYear();
-  const summary = await dashboardSummary(taxYear);
-  const recent = (await listTransactions({ taxYear: taxYear })).slice(0, 6);
+  const [farm, summary, allTxns] = await Promise.all([
+    getFarm(),
+    dashboardSummary(taxYear),
+    listTransactions({ taxYear }),
+  ]);
+  const recent = allTxns.slice(0, 6);
 
   const attention = [
     { label: "Missing Receipts", count: summary.needsAttention.missingReceipts, href: "/money/receipts", icon: Receipt },

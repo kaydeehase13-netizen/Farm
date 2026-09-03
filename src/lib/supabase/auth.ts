@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { createServerSupabaseClient, isSupabaseConfigured } from "./server";
 
@@ -24,8 +25,16 @@ export async function getCurrentUser() {
  * Active farm is remembered in a cookie (`farmledger_active_farm`); falls
  * back to the first membership. Supports "add another farm" / farm
  * switching without changing accounts.
+ *
+ * Wrapped in React's cache() because ctx() in supabase/repo.ts calls
+ * requireActiveFarm() → getActiveFarm() → getUserFarms() (2 network round
+ * trips: auth.getUser() + a farm_membership join) at the top of EVERY repo
+ * function — 45+ call sites. A single page can easily call 8-10 of those,
+ * which meant re-authenticating and re-fetching the farm list that many
+ * times over for one page load. cache() dedupes repeated calls with the
+ * same (no) arguments within one request, so this now runs once per page.
  */
-export async function getUserFarms(): Promise<CurrentFarm[]> {
+export const getUserFarms = cache(async (): Promise<CurrentFarm[]> => {
   const supabase = await createServerSupabaseClient();
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) return [];
@@ -48,15 +57,15 @@ export async function getUserFarms(): Promise<CurrentFarm[]> {
       currentTaxYear: row.farm_business.current_tax_year,
       role: row.role,
     }));
-}
+});
 
-export async function getActiveFarm(): Promise<CurrentFarm | null> {
+export const getActiveFarm = cache(async (): Promise<CurrentFarm | null> => {
   const farms = await getUserFarms();
   if (farms.length === 0) return null;
   const cookieStore = await cookies();
   const activeId = cookieStore.get("farmledger_active_farm")?.value;
   return farms.find((f) => f.id === activeId) ?? farms[0];
-}
+});
 
 export async function requireActiveFarm(): Promise<CurrentFarm> {
   const farm = await getActiveFarm();

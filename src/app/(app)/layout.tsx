@@ -12,11 +12,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   let activeFarmId: string | undefined;
 
   if (configured) {
-    const farm = await getActiveFarm();
+    // getActiveFarm() and getUserFarms() are both React.cache()'d and
+    // getActiveFarm() calls getUserFarms() internally, so calling both here
+    // (even "again") costs nothing extra — it's the same cached result.
+    const [farm, allFarms] = await Promise.all([getActiveFarm(), getUserFarms()]);
     if (!farm) redirect("/onboarding");
     farmName = farm.name;
     activeFarmId = farm.id;
-    farms = (await getUserFarms()).map((f) => ({ id: f.id, name: f.name }));
+    farms = allFarms.map((f) => ({ id: f.id, name: f.name }));
   } else {
     const farm = await getDemoFarm();
     farmName = farm.name;

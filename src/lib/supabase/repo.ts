@@ -955,6 +955,14 @@ export async function createTaxQuestion(question: string, _raisedByName: string)
 
 export async function fieldProfitability(fieldId: string, taxYear: number): Promise<FieldProfitability> {
   const [field, txns, categories] = await Promise.all([getField(fieldId), listTransactions({ taxYear }), listFarmCategories()]);
+  return computeFieldProfitability(
+    field ?? ({ id: fieldId, name: "Unknown", acres: 0 } as Field),
+    txns,
+    bucketMapFromCategories(categories)
+  );
+}
+
+function bucketMapFromCategories(categories: FarmCategory[]): Record<string, string> {
   const bucketByCategory: Record<string, string> = {};
   for (const c of categories) {
     const name = c.name.toLowerCase();
@@ -967,16 +975,19 @@ export async function fieldProfitability(fieldId: string, taxYear: number): Prom
     else if (name.includes("custom")) bucketByCategory[c.id] = "expenseCustomWork";
     else if (name.includes("truck")) bucketByCategory[c.id] = "expenseTrucking";
   }
+  return bucketByCategory;
+}
 
+function computeFieldProfitability(field: Field, txns: Transaction[], bucketByCategory: Record<string, string>): FieldProfitability {
   const result: FieldProfitability = {
-    fieldId, fieldName: field?.name ?? "Unknown", acres: field?.acres ?? 0, cropName: undefined,
+    fieldId: field.id, fieldName: field.name, acres: field.acres, cropName: undefined,
     income: 0, expenseSeed: 0, expenseFertilizer: 0, expenseChemical: 0, expenseFuel: 0, expenseRent: 0,
     expenseInsurance: 0, expenseCustomWork: 0, expenseHarvest: 0, expenseDrying: 0, expenseTrucking: 0,
     expenseOther: 0, totalExpense: 0, margin: 0, incomePerAcre: 0, expensePerAcre: 0, marginPerAcre: 0,
   };
   for (const t of txns) {
     for (const s of t.splits) {
-      if (s.fieldId !== fieldId) continue;
+      if (s.fieldId !== field.id) continue;
       if (t.transactionType === "income") result.income += s.allocatedAmount;
       else if (t.transactionType === "expense") {
         const bucket = t.farmCategoryId ? bucketByCategory[t.farmCategoryId] : undefined;
@@ -996,47 +1007,41 @@ export async function fieldProfitability(fieldId: string, taxYear: number): Prom
   return result;
 }
 
-// A field only shows up in a given year's list/breakdowns if it was
-// actually used that year — a crop planted, an activity logged, or money
-// allocated to it — so a field only ever touched in 2025 doesn't clutter
-// the 2026 view (and vice versa) just because it still exists.
-async function fieldIdsUsedInYear(taxYear: number): Promise<Set<string>> {
+/**
+ * All fields' profitability for a year, in a fixed handful of round trips
+ * regardless of how many fields there are. The previous version called
+ * fieldProfitability() (3 of its own queries) once PER FIELD, plus 3 more
+ * queries just to figure out which fields were used that year — for 10
+ * fields that's ~33 sequential-ish round trips to render one page. This
+ * fetches transactions/categories/crop-years/activities ONCE and computes
+ * every field's numbers from that in memory.
+ */
+export async function allFieldProfitability(taxYear: number) {
   const { supabase, farm } = await ctx();
   const yearStart = `${taxYear}-01-01`;
   const yearEnd = `${taxYear + 1}-01-01`;
-  const used = new Set<string>();
 
-  const { data: cropYearRows } = await supabase
-    .from("crop_year")
-    .select("field_id, tax_year:tax_year_id(year, farm_business_id)");
-  for (const r of (cropYearRows ?? []) as any[]) {
-    if (r.tax_year?.farm_business_id === farm.id && r.tax_year?.year === taxYear) used.add(r.field_id);
+  const [fields, txns, categories, cropYearRes, activityRes] = await Promise.all([
+    listFields(),
+    listTransactions({ taxYear }),
+    listFarmCategories(),
+    supabase.from("crop_year").select("field_id, tax_year:tax_year_id(year, farm_business_id)"),
+    supabase.from("activity").select("field_id").eq("farm_business_id", farm.id)
+      .not("field_id", "is", null).gte("activity_date", yearStart).lt("activity_date", yearEnd),
+  ]);
+
+  // Which fields were actually used this year — a crop planted, an activity
+  // logged, or money allocated to it (that last part comes straight out of
+  // the transactions we already fetched, no extra query needed).
+  const usedIds = new Set<string>();
+  for (const r of (cropYearRes.data ?? []) as any[]) {
+    if (r.tax_year?.farm_business_id === farm.id && r.tax_year?.year === taxYear) usedIds.add(r.field_id);
   }
+  for (const r of (activityRes.data ?? []) as any[]) if (r.field_id) usedIds.add(r.field_id);
+  for (const t of txns) for (const s of t.splits) if (s.fieldId && s.allocatedAmount !== 0) usedIds.add(s.fieldId);
 
-  const { data: activityRows } = await supabase
-    .from("activity")
-    .select("field_id")
-    .eq("farm_business_id", farm.id)
-    .not("field_id", "is", null)
-    .gte("activity_date", yearStart)
-    .lt("activity_date", yearEnd);
-  for (const r of (activityRows ?? []) as any[]) if (r.field_id) used.add(r.field_id);
-
-  const { data: splitRows } = await supabase
-    .from("transaction_split")
-    .select("field_id, allocated_amount, transaction:transaction_id!inner(farm_business_id, tax_year_id, tax_year:tax_year_id(year))")
-    .eq("transaction.farm_business_id", farm.id)
-    .not("field_id", "is", null);
-  for (const r of (splitRows ?? []) as any[]) {
-    if (r.field_id && r.transaction?.tax_year?.year === taxYear && Number(r.allocated_amount) !== 0) used.add(r.field_id);
-  }
-
-  return used;
-}
-
-export async function allFieldProfitability(taxYear: number) {
-  const [fields, usedIds] = await Promise.all([listFields(), fieldIdsUsedInYear(taxYear)]);
-  return Promise.all(fields.filter((f) => usedIds.has(f.id)).map((f) => fieldProfitability(f.id, taxYear)));
+  const bucketByCategory = bucketMapFromCategories(categories);
+  return fields.filter((f) => usedIds.has(f.id)).map((f) => computeFieldProfitability(f, txns, bucketByCategory));
 }
 
 function round2(n: number) { return Math.round(n * 100) / 100; }
