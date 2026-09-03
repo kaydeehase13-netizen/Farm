@@ -494,6 +494,74 @@ export async function listActivities(filters: { fieldId?: string; activityType?:
   });
 }
 
+type ProductLineInput = { productId?: string; productName: string; rate: number; rateUnit: string; quantityUsed: number; quantityUnit: string };
+
+/**
+ * Writes the spray/fertilizer/seed product-line rows for an activity that
+ * already exists. Shared by createActivity (brand-new activity) and
+ * repairActivityProductDetails (an activity that got created — e.g. by a
+ * CSV import — without its product lines actually landing, because every
+ * step here used to be fire-and-forget with no error check: a failed
+ * `product` upsert (RLS, a bad unique-constraint match, whatever) meant
+ * `productId` came back undefined and the whole line was silently dropped,
+ * with the activity itself still showing up fine in the field's timeline.
+ * Every upsert here now throws on error instead of swallowing it.
+ */
+async function writeActivityProductDetails(
+  supabase: any, farm: { id: string }, activityId: string, jobId: string | undefined,
+  details: { sprayProducts?: ProductLineInput[]; fertilizerProducts?: ProductLineInput[]; seedProductName?: string; seedingRate?: number }
+) {
+  async function upsertProductLine(line: ProductLineInput, category: string, table: "spray_product_line" | "fertilizer_product_line") {
+    let productId = line.productId;
+    if (!productId || productId.startsWith("prod-")) {
+      const { data: prod, error: prodErr } = await supabase.from("product").upsert(
+        { farm_business_id: farm.id, category, name: line.productName, default_unit: line.quantityUnit },
+        { onConflict: "farm_business_id,name" }
+      ).select("id").maybeSingle();
+      if (prodErr) throw new Error(`Product "${line.productName}": ${prodErr.message}`);
+      productId = prod?.id;
+    }
+    if (!productId) throw new Error(`Product "${line.productName}" — could not resolve a product id.`);
+    const { data: item } = await supabase.from("inventory_item").select("id, quantity_on_hand, average_unit_cost")
+      .eq("farm_business_id", farm.id).eq("product_id", productId).eq("unit", line.quantityUnit).maybeSingle();
+    let inventoryItemId = item?.id;
+    if (!inventoryItemId) {
+      const { data: created, error: invErr } = await supabase.from("inventory_item").insert({ farm_business_id: farm.id, product_id: productId, unit: line.quantityUnit, quantity_on_hand: 0 }).select("id").single();
+      if (invErr) throw new Error(`Inventory item for "${line.productName}": ${invErr.message}`);
+      inventoryItemId = created?.id;
+    } else {
+      await supabase.from("inventory_item").update({ quantity_on_hand: Math.max(0, Number(item?.quantity_on_hand ?? 0) - line.quantityUsed) }).eq("id", inventoryItemId);
+    }
+    const { error: lineErr } = await supabase.from(table).insert({ activity_id: activityId, product_id: productId, rate: line.rate, rate_unit: line.rateUnit, quantity_used: line.quantityUsed, quantity_unit: line.quantityUnit });
+    if (lineErr) throw new Error(`${table} for "${line.productName}": ${lineErr.message}`);
+    if (inventoryItemId) {
+      await supabase.from("inventory_movement").insert({ inventory_item_id: inventoryItemId, movement_type: jobId ? "use_customer_job" : "use_own_field", quantity: -line.quantityUsed, related_activity_id: activityId, related_job_id: jobId ?? null });
+    }
+  }
+
+  for (const line of details.sprayProducts ?? []) {
+    await upsertProductLine(line, "chemical", "spray_product_line");
+  }
+  for (const line of details.fertilizerProducts ?? []) {
+    await upsertProductLine({ ...line, productId: undefined }, "fertilizer", "fertilizer_product_line");
+  }
+
+  if (details.seedProductName || details.seedingRate != null) {
+    let seedProductId: string | undefined;
+    if (details.seedProductName) {
+      const { data: prod, error: seedErr } = await supabase.from("product").upsert(
+        { farm_business_id: farm.id, category: "seed", name: details.seedProductName, default_unit: "seeds" },
+        { onConflict: "farm_business_id,name" }
+      ).select("id").maybeSingle();
+      if (seedErr) throw new Error(`Seed product "${details.seedProductName}": ${seedErr.message}`);
+      seedProductId = prod?.id;
+    }
+    await supabase.from("planting_activity_detail").upsert({
+      activity_id: activityId, seed_product_id: seedProductId ?? null, seeding_rate: details.seedingRate ?? null,
+    }, { onConflict: "activity_id" });
+  }
+}
+
 export async function createActivity(input: Omit<Activity, "id" | "createdAt">) {
   const { supabase, farm } = await ctx();
   // The schema has no free-text "applicator name" column (only a FK to a
@@ -507,51 +575,7 @@ export async function createActivity(input: Omit<Activity, "id" | "createdAt">) 
   if (error || !activity) throw error;
   const activityId = activity.id;
 
-  async function upsertProductLine(line: { productId?: string; productName: string; rate: number; rateUnit: string; quantityUsed: number; quantityUnit: string }, category: string, table: "spray_product_line" | "fertilizer_product_line") {
-    let productId = line.productId;
-    if (!productId || productId.startsWith("prod-")) {
-      const { data: prod } = await supabase.from("product").upsert(
-        { farm_business_id: farm.id, category, name: line.productName, default_unit: line.quantityUnit },
-        { onConflict: "farm_business_id,name" }
-      ).select("id").maybeSingle();
-      productId = prod?.id;
-    }
-    if (!productId) return;
-    const { data: item } = await supabase.from("inventory_item").select("id, quantity_on_hand, average_unit_cost")
-      .eq("farm_business_id", farm.id).eq("product_id", productId).eq("unit", line.quantityUnit).maybeSingle();
-    let inventoryItemId = item?.id;
-    if (!inventoryItemId) {
-      const { data: created } = await supabase.from("inventory_item").insert({ farm_business_id: farm.id, product_id: productId, unit: line.quantityUnit, quantity_on_hand: 0 }).select("id").single();
-      inventoryItemId = created?.id;
-    } else {
-      await supabase.from("inventory_item").update({ quantity_on_hand: Math.max(0, Number(item?.quantity_on_hand ?? 0) - line.quantityUsed) }).eq("id", inventoryItemId);
-    }
-    await supabase.from(table).insert({ activity_id: activityId, product_id: productId, rate: line.rate, rate_unit: line.rateUnit, quantity_used: line.quantityUsed, quantity_unit: line.quantityUnit });
-    if (inventoryItemId) {
-      await supabase.from("inventory_movement").insert({ inventory_item_id: inventoryItemId, movement_type: input.jobId ? "use_customer_job" : "use_own_field", quantity: -line.quantityUsed, related_activity_id: activityId, related_job_id: input.jobId ?? null });
-    }
-  }
-
-  for (const line of input.sprayProducts ?? []) {
-    await upsertProductLine(line, "chemical", "spray_product_line");
-  }
-  for (const line of input.fertilizerProducts ?? []) {
-    await upsertProductLine({ ...line, productId: undefined }, "fertilizer", "fertilizer_product_line");
-  }
-
-  if (input.seedProductName || input.seedingRate != null) {
-    let seedProductId: string | undefined;
-    if (input.seedProductName) {
-      const { data: prod } = await supabase.from("product").upsert(
-        { farm_business_id: farm.id, category: "seed", name: input.seedProductName, default_unit: "seeds" },
-        { onConflict: "farm_business_id,name" }
-      ).select("id").maybeSingle();
-      seedProductId = prod?.id;
-    }
-    await supabase.from("planting_activity_detail").upsert({
-      activity_id: activityId, seed_product_id: seedProductId ?? null, seeding_rate: input.seedingRate ?? null,
-    }, { onConflict: "activity_id" });
-  }
+  await writeActivityProductDetails(supabase, farm, activityId, input.jobId, input);
 
   if (input.yieldAmount != null || input.moisturePct != null) {
     await supabase.from("harvest_activity_detail").upsert({
@@ -560,6 +584,19 @@ export async function createActivity(input: Omit<Activity, "id" | "createdAt">) 
   }
 
   return { ...input, id: activityId, createdAt: new Date().toISOString() };
+}
+
+/**
+ * Backfills the product-line details onto an activity that already exists
+ * (e.g. one a CSV import created before this file's error-swallowing bug
+ * was fixed, so its spray/fertilizer/seed line never actually landed).
+ * Used by the "re-run the same import" repair path in importActivitiesAction.
+ */
+export async function repairActivityProductDetails(activityId: string, details: {
+  sprayProducts?: ProductLineInput[]; fertilizerProducts?: ProductLineInput[]; seedProductName?: string; seedingRate?: number;
+}) {
+  const { supabase, farm } = await ctx();
+  await writeActivityProductDetails(supabase, farm, activityId, undefined, details);
 }
 
 export async function listCustomers(): Promise<Customer[]> {

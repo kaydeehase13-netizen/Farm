@@ -269,6 +269,20 @@ export function createActivity(input: Omit<Activity, "id" | "createdAt">) {
   });
 }
 
+export function repairActivityProductDetails(activityId: string, details: {
+  sprayProducts?: Activity["sprayProducts"]; fertilizerProducts?: Activity["fertilizerProducts"];
+  seedProductName?: string; seedingRate?: number;
+}) {
+  return mutate((db) => {
+    const activity = db.activities.find((a) => a.id === activityId);
+    if (!activity) return;
+    if (details.sprayProducts) activity.sprayProducts = details.sprayProducts;
+    if (details.fertilizerProducts) activity.fertilizerProducts = details.fertilizerProducts;
+    if (details.seedProductName) activity.seedProductName = details.seedProductName;
+    if (details.seedingRate != null) activity.seedingRate = details.seedingRate;
+  });
+}
+
 export function listCustomers() {
   return getDB().customers;
 }

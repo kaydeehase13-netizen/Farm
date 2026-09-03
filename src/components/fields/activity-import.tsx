@@ -97,7 +97,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
   const [fieldValueMap, setFieldValueMap] = useState<Record<string, string>>({});
   const [typeValueMap, setTypeValueMap] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<{ imported: number; failed: number; errors: string[]; createdFieldNames: string[]; skippedDuplicates?: number } | null>(null);
+  const [result, setResult] = useState<{ imported: number; repaired?: number; failed: number; errors: string[]; createdFieldNames: string[]; skippedDuplicates?: number } | null>(null);
 
   function handleFile(file: File) {
     setFileName(file.name);
@@ -351,6 +351,11 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
     <div className="card p-6 text-center space-y-3">
       <div className="text-3xl">✅</div>
       <div className="font-medium text-forest">Imported {result?.imported ?? 0} activities</div>
+      {result && !!result.repaired && (
+        <div className="text-left text-sm bg-wheat/30 border border-wheat rounded-lg p-3 text-charcoal/70">
+          Filled in the missing product/rate/quantity details on {result.repaired} activity{result.repaired === 1 ? "" : "ies"} that were already on file but were missing them — this is what's used to allocate product cost by field, so those fields' allocations should work now.
+        </div>
+      )}
       {result && !!result.skippedDuplicates && (
         <div className="text-left text-sm bg-sage/20 border border-sage/40 rounded-lg p-3 text-charcoal/70">
           Skipped {result.skippedDuplicates} row{result.skippedDuplicates === 1 ? "" : "s"} that matched an activity already on file (same field, date, type, acreage, and product) — nothing was duplicated.

@@ -122,6 +122,11 @@ export async function createActivity(input: Omit<Activity, "id" | "createdAt">) 
   return demo.createActivity(input);
 }
 
+export async function repairActivityProductDetails(activityId: string, details: Parameters<typeof demo.repairActivityProductDetails>[1]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).repairActivityProductDetails(activityId, details);
+  return demo.repairActivityProductDetails(activityId, details);
+}
+
 export async function listCustomers() {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listCustomers();
   return demo.listCustomers();

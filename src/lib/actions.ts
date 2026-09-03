@@ -176,6 +176,7 @@ export async function importActivitiesAction(rows: {
 }[]) {
   const farm = await getFarm();
   let imported = 0;
+  let repaired = 0;
   let skippedDuplicates = 0;
   const errors: string[] = [];
 
@@ -183,42 +184,61 @@ export async function importActivitiesAction(rows: {
   // build a signature for every activity already on each field, then skip
   // any incoming row that matches one already there (checked against both
   // what's already saved AND what this same import has already inserted).
-  const existingByField = new Map<string, Set<string>>();
+  // A signature also remembers the matching activity's id and whether it
+  // actually has its product-line details — an earlier bug could create the
+  // activity but silently fail to attach its spray/fertilizer/seed product,
+  // so re-running the same import now backfills those instead of just
+  // skipping the row as "already imported."
+  type Seen = { activityId: string; hasProductInfo: boolean };
+  const existingByField = new Map<string, Map<string, Seen>>();
   function signature(row: { activityDate: string; activityType: string; acres?: number | null; productName?: string | null; yieldAmount?: number | null }) {
     const acres = row.acres != null ? Math.round(row.acres * 1000) / 1000 : "";
     const yieldAmount = row.yieldAmount != null ? Math.round(row.yieldAmount * 1000) / 1000 : "";
     return [row.activityDate, row.activityType, acres, (row.productName ?? "").trim().toLowerCase(), yieldAmount].join("|");
   }
   async function seenForField(fieldId: string) {
-    let set = existingByField.get(fieldId);
-    if (!set) {
+    let map = existingByField.get(fieldId);
+    if (!map) {
       const existing = await repo.listActivities({ fieldId });
-      set = new Set(existing.map((a) =>
+      map = new Map(existing.map((a) => [
         signature({
           activityDate: a.activityDate,
           activityType: a.activityType,
           acres: a.acres ?? null,
           productName: a.sprayProducts?.[0]?.productName ?? a.seedProductName ?? null,
           yieldAmount: a.yieldAmount ?? null,
-        })
-      ));
-      existingByField.set(fieldId, set);
+        }),
+        { activityId: a.id, hasProductInfo: Boolean(a.sprayProducts?.length || a.fertilizerProducts?.length || a.seedProductName) },
+      ]));
+      existingByField.set(fieldId, map);
     }
-    return set;
+    return map;
   }
 
   for (const row of rows) {
     try {
       const seen = await seenForField(row.fieldId);
       const sig = signature(row);
-      if (seen.has(sig)) {
-        skippedDuplicates++;
+      const existing = seen.get(sig);
+      const isSpray = row.activityType === "spray" || row.activityType === "fertilize";
+      if (existing) {
+        if (!existing.hasProductInfo && row.productName) {
+          await repo.repairActivityProductDetails(existing.activityId, {
+            sprayProducts: isSpray ? [{
+              productId: "prod-imported", productName: row.productName,
+              rate: row.rate ?? 0, rateUnit: row.rateUnit ?? "", quantityUsed: row.quantity ?? 0, quantityUnit: row.quantityUnit ?? "",
+            }] : undefined,
+            seedProductName: row.activityType === "plant" ? row.productName : undefined,
+            seedingRate: row.activityType === "plant" ? (row.rate ?? undefined) : undefined,
+          });
+          existing.hasProductInfo = true;
+          repaired++;
+        } else {
+          skippedDuplicates++;
+        }
         continue;
       }
-      seen.add(sig);
-
-      const isSpray = row.activityType === "spray" || row.activityType === "fertilize";
-      await repo.createActivity({
+      const created = await repo.createActivity({
         farmBusinessId: farm.id,
         activityType: row.activityType as any,
         fieldId: row.fieldId,
@@ -242,6 +262,7 @@ export async function importActivitiesAction(rows: {
         notes: row.notes ?? undefined,
         syncStatus: "synced",
       });
+      seen.set(sig, { activityId: created.id, hasProductInfo: Boolean(row.productName) });
       imported++;
     } catch (e) {
       errors.push(`${row.activityDate} — ${row.fieldName ?? row.fieldId}: ${e instanceof Error ? e.message : "failed"}`);
@@ -249,8 +270,9 @@ export async function importActivitiesAction(rows: {
   }
 
   revalidatePath("/fields");
+  revalidatePath("/fields/allocate-cost");
   revalidatePath("/home");
-  return { imported, failed: errors.length, errors, skippedDuplicates };
+  return { imported, repaired, failed: errors.length, errors, skippedDuplicates };
 }
 
 export async function createReceiptAction(formData: FormData) {
