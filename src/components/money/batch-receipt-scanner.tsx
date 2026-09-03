@@ -27,10 +27,36 @@ export function BatchReceiptScanner() {
     });
   }
 
+  // Downscale photos before turning them into data URLs — phone camera
+  // photos are several MB each and this is often 10+ of them at once.
+  function downscaleImage(file: File, maxDimension = 1800, quality = 0.82): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        const scale = Math.min(1, maxDimension / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { reject(new Error("no canvas context")); return; }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("image failed to load")); };
+      img.src = objectUrl;
+    });
+  }
+
   async function addFiles(files: FileList | File[]) {
     const arr = Array.from(files).filter((f) => f.type.startsWith("image/") || f.type === "application/pdf");
     const withPreviews = await Promise.all(
-      arr.map(async (file) => ({ file, preview: await readAsDataUrl(file), status: "waiting" as const }))
+      arr.map(async (file) => ({
+        file,
+        preview: file.type.startsWith("image/") ? await downscaleImage(file).catch(() => readAsDataUrl(file)) : await readAsDataUrl(file),
+        status: "waiting" as const,
+      }))
     );
     setItems((prev) => [...prev, ...withPreviews]);
   }

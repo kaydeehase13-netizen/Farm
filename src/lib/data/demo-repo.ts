@@ -41,6 +41,7 @@ export function listCropYears(fieldId?: string) {
 export function listTaxYears() {
   const years = new Set(getDB().transactions.map((t) => t.taxYear));
   years.add(FARM.currentTaxYear);
+  years.add(FARM.currentTaxYear - 1);
   return Array.from(years).sort((a, b) => b - a);
 }
 

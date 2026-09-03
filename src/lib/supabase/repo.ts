@@ -120,7 +120,13 @@ export async function listTaxYears(): Promise<number[]> {
   const { supabase, farm } = await ctx();
   const { data } = await supabase.from("tax_year").select("year").eq("farm_business_id", farm.id);
   const years = new Set((data ?? []).map((r: any) => r.year));
+  // Always offer the current year and the year before it, even before any
+  // data exists for them — the switcher should show 2025/2026 out of the
+  // gate, not only appear once a transaction happens to get entered. Any
+  // later year (2027, ...) shows up automatically once something is
+  // recorded for it, since that creates a tax_year row.
   years.add(farm.currentTaxYear);
+  years.add(farm.currentTaxYear - 1);
   return Array.from(years).sort((a, b) => b - a);
 }
 

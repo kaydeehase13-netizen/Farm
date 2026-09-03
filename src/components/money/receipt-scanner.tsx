@@ -5,6 +5,32 @@ import { useRouter } from "next/navigation";
 import type { FarmCategory, Field } from "@/types/domain";
 import { saveReceiptAndCreateExpenseAction } from "@/lib/actions";
 
+/**
+ * Modern phone cameras produce photos that are several MB — plenty to make a
+ * base64 data URL blow past a reasonable request size and either error out
+ * or, worse, appear to hang. Downscale to a size that's still plenty sharp
+ * for OCR/human review before we ever turn it into a data URL.
+ */
+function downscaleImage(file: File, maxDimension = 1800, quality = 0.82): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const scale = Math.min(1, maxDimension / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { reject(new Error("no canvas context")); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("image failed to load")); };
+    img.src = objectUrl;
+  });
+}
+
 export function ReceiptScanner({ categories, fields }: { categories: FarmCategory[]; fields: Field[] }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -14,10 +40,20 @@ export function ReceiptScanner({ categories, fields }: { categories: FarmCategor
   const [fields2, setFields2] = useState({ vendor: "", date: new Date().toISOString().slice(0, 10), amount: "", salesTax: "", category: "" });
   const [fieldId, setFieldId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const router = useRouter();
 
   async function handleFile(file: File) {
     setFileName(file.name);
+    setSaveError(null);
+    if (file.type.startsWith("image/")) {
+      try {
+        setPreview(await downscaleImage(file));
+        return;
+      } catch {
+        // fall through to the raw file if downscaling fails for any reason
+      }
+    }
     const reader = new FileReader();
     reader.onload = () => setPreview(reader.result as string);
     reader.readAsDataURL(file);
@@ -63,8 +99,18 @@ export function ReceiptScanner({ categories, fields }: { categories: FarmCategor
     if (preview) formData.set("fileDataUrl", preview);
     formData.set("captureSource", "web_upload");
     setSaving(true);
-    await saveReceiptAndCreateExpenseAction(formData);
-    router.push("/money/receipts");
+    setSaveError(null);
+    try {
+      await saveReceiptAndCreateExpenseAction(formData);
+      router.push("/money/receipts");
+    } catch (e) {
+      setSaveError(
+        e instanceof Error && /body|payload|exceed/i.test(e.message)
+          ? "That photo is too large to save. Try retaking it with a smaller/lower-resolution setting, or crop it closer to the receipt."
+          : "Something went wrong saving this receipt. Please try again."
+      );
+      setSaving(false);
+    }
   }
 
   return (
@@ -133,6 +179,7 @@ export function ReceiptScanner({ categories, fields }: { categories: FarmCategor
             {fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
         </label>
+        {saveError && <p className="text-sm text-status-red">{saveError}</p>}
         <button disabled={saving} className="bg-wheat text-forest font-semibold px-5 py-2.5 rounded-lg w-full disabled:opacity-50">
           {saving ? "Saving…" : "Save Receipt & Create Expense"}
         </button>
