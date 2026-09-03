@@ -39,7 +39,7 @@ export default async function TaxCenterPage() {
           <div className="text-sm font-semibold text-forest">Potential Tax Opportunities</div>
           <ScanTaxOpportunitiesButton taxYear={taxYear} />
         </div>
-        <p className="text-xs text-charcoal/50 mb-4">These flag transactions or assets that may deserve a closer look — not a determination of tax treatment. Run a scan any time to check {taxYear}&apos;s records against common triggers (equipment purchases/sales, breeding-livestock sales, prepaid supplies, conservation and government-payment income, crop insurance, disaster/casualty).</p>
+        <p className="text-xs text-charcoal/50 mb-4">These flag transactions or assets that may deserve a closer look — not a determination of tax treatment. Run a scan any time to check {taxYear}&apos;s records against common triggers on both the farm (Schedule F) side — equipment purchases/sales, breeding-livestock sales, prepaid supplies, conservation and government-payment income, crop insurance, disaster/casualty — and the self-employment (Schedule C) side — whether net self-employment income crossed the threshold where self-employment tax generally applies.</p>
         <div className="space-y-3">
           {opportunities.map((o) => (
             <div key={o.id} className="border border-[--border-color] rounded-lg p-4">

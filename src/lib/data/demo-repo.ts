@@ -382,6 +382,7 @@ const TAX_RULE_INFO: Record<string, { title: string; description: string }> = {
   conservation_expense: { title: "Soil & Water Conservation Expense Review", description: "Conservation-related expenditures (terraces, waterways, tree planting) may have specific deduction limits." },
   government_payment_reporting: { title: "Government Program Payment Reporting", description: "Agricultural program payments are generally reported as farm income and may affect other calculations." },
   crop_insurance_deferral: { title: "Crop Insurance Proceeds — Possible Deferral", description: "Crop insurance proceeds received for crop damage may, in limited situations, be eligible for one-year deferral." },
+  self_employment_tax_review: { title: "Self-Employment Tax (Schedule SE) Review", description: "Net self-employment earnings for the year may be at or above the $400 threshold where self-employment tax (Social Security and Medicare, via Schedule SE) generally applies, separate from ordinary income tax." },
 };
 const DISASTER_KEYWORDS = ["disaster", "casualty", "hail", "flood", "drought", "fire loss", "storm damage", "tornado", "wind damage"];
 const PREPAID_FARM_CATEGORY_NAMES = new Set(["seed", "fertilizer", "chemical", "feed", "supplies"]);
@@ -411,20 +412,31 @@ export function scanTaxOpportunities(taxYear: number): { created: number; alread
       if (t.txnType === "sale" && t.txnDate?.startsWith(String(taxYear))) candidates.push({ ruleKey: "breeding_livestock_capital", sourceLivestockTxnId: t.id });
     }
 
+    // Net Schedule C (self-employment) income for the year, tracked alongside the
+    // per-transaction rule checks below so the scan isn't only looking at farm data.
+    let seNetIncome = 0;
+
     for (const t of db.transactions.filter((t) => t.taxYear === taxYear && !t.isPersonalExcluded)) {
       checked++;
       const farmCat = db.farmCategories.find((c) => c.id === t.farmCategoryId);
       const farmCatName = (farmCat?.name ?? "").toLowerCase();
       const desc = (t.description ?? "").toLowerCase();
       const month = t.transactionDate ? Number(t.transactionDate.slice(5, 7)) : 0;
+      const taxCode = t.taxCategoryCode ?? "";
       if (t.transactionType === "expense" && month >= 11 && t.amount >= PREPAID_THRESHOLD && [...PREPAID_FARM_CATEGORY_NAMES].some((n) => farmCatName.includes(n))) {
         candidates.push({ ruleKey: "prepaid_farm_supplies", sourceTransactionId: t.id });
       }
-      if (t.taxCategoryCode === "exp_conservation") candidates.push({ ruleKey: "conservation_expense", sourceTransactionId: t.id });
-      if (t.taxCategoryCode === "income_govt_payments" || t.taxCategoryCode === "income_ccc_loans") candidates.push({ ruleKey: "government_payment_reporting", sourceTransactionId: t.id });
-      if (t.taxCategoryCode === "income_crop_insurance") candidates.push({ ruleKey: "crop_insurance_deferral", sourceTransactionId: t.id });
+      if (taxCode === "exp_conservation") candidates.push({ ruleKey: "conservation_expense", sourceTransactionId: t.id });
+      if (taxCode === "income_govt_payments" || taxCode === "income_ccc_loans") candidates.push({ ruleKey: "government_payment_reporting", sourceTransactionId: t.id });
+      if (taxCode === "income_crop_insurance") candidates.push({ ruleKey: "crop_insurance_deferral", sourceTransactionId: t.id });
       if (DISASTER_KEYWORDS.some((kw) => desc.includes(kw))) candidates.push({ ruleKey: "disaster_casualty", sourceTransactionId: t.id });
+      if (taxCode.startsWith("se_income")) seNetIncome += t.amount;
+      else if (taxCode.startsWith("se_exp")) seNetIncome -= t.amount;
     }
+
+    // Self-employment tax (Schedule SE) generally applies once net SE earnings hit $400 —
+    // flag it once per year (no single transaction "causes" it) rather than per transaction.
+    if (seNetIncome >= 400) candidates.push({ ruleKey: "self_employment_tax_review" });
 
     let created = 0;
     let alreadyFlagged = 0;

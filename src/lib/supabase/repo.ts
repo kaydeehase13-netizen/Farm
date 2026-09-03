@@ -787,6 +787,10 @@ export async function scanTaxOpportunities(taxYear: number): Promise<{ created: 
     .eq("farm_business_id", farm.id)
     .eq("tax_year_id", taxYearId)
     .eq("is_personal_excluded", false);
+  // Net Schedule C (self-employment) income for the year, tracked alongside the
+  // per-transaction rule checks below so the scan isn't only looking at farm data.
+  let seNetIncome = 0;
+
   for (const t of (txns ?? []) as any[]) {
     checked++;
     const farmCatName = (t.farm_category?.name ?? "").toLowerCase();
@@ -810,6 +814,14 @@ export async function scanTaxOpportunities(taxYear: number): Promise<{ created: 
     if (DISASTER_KEYWORDS.some((kw) => desc.includes(kw))) {
       candidates.push({ ruleKey: "disaster_casualty", sourceTransactionId: t.id });
     }
+    if (taxCode.startsWith("se_income")) seNetIncome += Number(t.amount);
+    else if (taxCode.startsWith("se_exp")) seNetIncome -= Number(t.amount);
+  }
+
+  // Self-employment tax (Schedule SE) generally applies once net SE earnings hit $400 —
+  // flag it once per year (no single transaction "causes" it) rather than per transaction.
+  if (seNetIncome >= 400) {
+    candidates.push({ ruleKey: "self_employment_tax_review" });
   }
 
   // --- Write new (non-duplicate) candidates ---
