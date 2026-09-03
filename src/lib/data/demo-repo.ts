@@ -99,6 +99,13 @@ export function updateTransaction(id: string, patch: Partial<Transaction>) {
   });
 }
 
+export function deleteTransaction(id: string) {
+  return mutate((db) => {
+    db.transactions = db.transactions.filter((t) => t.id !== id);
+    return { ok: true };
+  });
+}
+
 /** One-off repair: re-file every transaction under the tax year implied by its own date. */
 export function fixMisfiledTaxYears() {
   return mutate((db) => {
@@ -116,6 +123,16 @@ export function fixMisfiledTaxYears() {
 
 export function listReceipts() {
   return [...getDB().receipts].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function deleteReceipt(id: string) {
+  return mutate((db) => {
+    // Unlink rather than delete any transaction that was created from this
+    // receipt — removing the photo shouldn't silently delete the expense.
+    for (const t of db.transactions) if (t.receiptId === id) t.receiptId = undefined;
+    db.receipts = db.receipts.filter((r) => r.id !== id);
+    return { ok: true };
+  });
 }
 
 export function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {

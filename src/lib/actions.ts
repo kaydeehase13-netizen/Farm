@@ -628,6 +628,51 @@ export async function bulkAssignFieldAction(formData: FormData) {
   revalidatePath("/money/transactions");
 }
 
+/** Recategorize a single transaction (used by the per-row category picker). */
+export async function recategorizeTransactionAction(transactionId: string, farmCategoryId: string) {
+  await repo.updateTransaction(transactionId, { farmCategoryId, status: "categorized" });
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
+}
+
+/**
+ * "Omit" = mark a transaction as personal / not a farm expense, excluding it
+ * from income, expense, and tax-readiness totals without deleting it — the
+ * record stays for reference, it just stops counting. Un-omitting puts it
+ * back to "needs review" so it gets a real category again.
+ */
+export async function setTransactionOmittedAction(transactionId: string, omitted: boolean) {
+  await repo.updateTransaction(transactionId, {
+    isPersonalExcluded: omitted,
+    status: omitted ? "excluded_personal" : "needs_review",
+  });
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
+  revalidatePath("/fields");
+}
+
+/** Permanently deletes a transaction. Use setTransactionOmittedAction to keep the record but exclude it instead. */
+export async function deleteTransactionAction(transactionId: string) {
+  await repo.deleteTransaction(transactionId);
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
+  revalidatePath("/fields");
+}
+
+/** Deletes a receipt. Any transaction it was linked to stays — it just loses its "documentation on file" flag. */
+export async function deleteReceiptAction(receiptId: string) {
+  await repo.deleteReceipt(receiptId);
+  revalidatePath("/money/receipts");
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+}
+
 export async function createDocumentAction(formData: FormData) {
   const farm = await getFarm();
   await repo.createDocument({

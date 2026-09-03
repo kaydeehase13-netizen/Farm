@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { listReceipts } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
+import { DeleteReceiptButton } from "@/components/money/delete-receipt-button";
 
 export default async function ReceiptsPage() {
   const receipts = await listReceipts();
@@ -32,13 +33,19 @@ export default async function ReceiptsPage() {
             <div className="font-medium">{r.ocrVendorGuess ?? "Vendor unknown"}</div>
             <div className="text-sm text-charcoal/55">{r.ocrDateGuess ?? "—"} · {r.ocrAmountGuess ? `$${r.ocrAmountGuess.toFixed(2)}` : "—"}</div>
             {r.ocrStatus !== "confirmed" ? (
-              <Link href={`/money/receipts/${r.id}/confirm`} className="mt-3 inline-block text-sm font-medium text-forest hover:underline">
-                Review & confirm →
-              </Link>
-            ) : (
               <div className="mt-3 flex items-center justify-between">
+                <Link href={`/money/receipts/${r.id}/confirm`} className="text-sm font-medium text-forest hover:underline">
+                  Review & confirm →
+                </Link>
+                <DeleteReceiptButton receiptId={r.id} hasTransaction={Boolean(r.linkedTransactionId)} />
+              </div>
+            ) : (
+              <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="text-sm text-status-green">Linked to transaction</span>
-                <Link href={`/money/receipts/${r.id}/edit`} className="text-sm font-medium text-forest hover:underline">Edit →</Link>
+                <div className="flex items-center gap-3">
+                  <Link href={`/money/receipts/${r.id}/edit`} className="text-sm font-medium text-forest hover:underline">Edit →</Link>
+                  <DeleteReceiptButton receiptId={r.id} hasTransaction={Boolean(r.linkedTransactionId)} />
+                </div>
               </div>
             )}
           </div>

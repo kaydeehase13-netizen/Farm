@@ -72,6 +72,16 @@ export async function fixMisfiledTaxYears() {
   return demo.fixMisfiledTaxYears();
 }
 
+export async function deleteTransaction(id: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteTransaction(id);
+  return demo.deleteTransaction(id);
+}
+
+export async function deleteReceipt(id: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteReceipt(id);
+  return demo.deleteReceipt(id);
+}
+
 export async function listReceipts() {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listReceipts();
   return demo.listReceipts();

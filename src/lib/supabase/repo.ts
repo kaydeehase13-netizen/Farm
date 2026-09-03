@@ -237,6 +237,7 @@ export async function updateTransaction(id: string, patch: Partial<Transaction>)
   const update: Record<string, unknown> = {};
   if (patch.farmCategoryId !== undefined) update.farm_category_id = patch.farmCategoryId;
   if (patch.status !== undefined) update.status = patch.status;
+  if (patch.isPersonalExcluded !== undefined) update.is_personal_excluded = patch.isPersonalExcluded;
   if (patch.cpaFlag !== undefined) update.cpa_flag = patch.cpaFlag;
   if (patch.cpaNote !== undefined) update.cpa_note = patch.cpaNote;
   if (patch.amount !== undefined) update.amount = patch.amount;
@@ -271,6 +272,22 @@ export async function updateTransaction(id: string, patch: Partial<Transaction>)
     }
   }
   return null;
+}
+
+export async function deleteTransaction(id: string): Promise<void> {
+  const { supabase, farm } = await ctx();
+  // transaction_split rows cascade on delete (see schema), so this alone is enough.
+  const { error } = await supabase.from("transaction").delete().eq("id", id).eq("farm_business_id", farm.id);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteReceipt(id: string): Promise<void> {
+  const { supabase, farm } = await ctx();
+  // Unlink rather than delete any transaction created from this receipt —
+  // removing the photo/entry shouldn't silently delete the expense too.
+  await supabase.from("transaction").update({ receipt_id: null }).eq("receipt_id", id).eq("farm_business_id", farm.id);
+  const { error } = await supabase.from("receipt").delete().eq("id", id).eq("farm_business_id", farm.id);
+  if (error) throw new Error(error.message);
 }
 
 export async function listReceipts(): Promise<Receipt[]> {
