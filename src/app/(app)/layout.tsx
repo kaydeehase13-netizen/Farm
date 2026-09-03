@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { Sidebar, TopBar } from "@/components/nav/sidebar";
-import { AssistantPanel } from "@/components/assistant/assistant-panel";
 import { isSupabaseConfigured, getActiveFarm, getUserFarms } from "@/lib/supabase/auth";
 import { getFarm as getDemoFarm, listTaxYears } from "@/lib/data/repo";
 import { getViewTaxYear } from "@/lib/tax-year";
@@ -33,7 +32,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <TopBar farmName={farmName} taxYear={taxYear} years={years} />
         <main className="flex-1 px-4 md:px-8 py-6 max-w-[1400px] w-full mx-auto">{children}</main>
       </div>
-      <AssistantPanel />
     </div>
   );
 }
