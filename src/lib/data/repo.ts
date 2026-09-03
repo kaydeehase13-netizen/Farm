@@ -67,6 +67,11 @@ export async function updateTransaction(id: string, patch: Partial<Transaction>)
   return demo.updateTransaction(id, patch);
 }
 
+export async function fixMisfiledTaxYears() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).fixMisfiledTaxYears();
+  return demo.fixMisfiledTaxYears();
+}
+
 export async function listReceipts() {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listReceipts();
   return demo.listReceipts();
@@ -75,6 +80,11 @@ export async function listReceipts() {
 export async function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createReceipt(input);
   return demo.createReceipt(input);
+}
+
+export async function updateReceipt(id: string, patch: Partial<Receipt>) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).updateReceipt(id, patch);
+  return demo.updateReceipt(id, patch);
 }
 
 export async function confirmReceipt(id: string, patch: Parameters<typeof demo.confirmReceipt>[1]) {

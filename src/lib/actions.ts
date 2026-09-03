@@ -270,6 +270,62 @@ export async function createReceiptAction(formData: FormData) {
   return receipt.id;
 }
 
+/**
+ * Edit an already-confirmed receipt — vendor, date, amount, sales tax, and
+ * category. Updates both the receipt's own record and its linked expense
+ * transaction (if one exists) so the two stay consistent.
+ */
+export async function editReceiptAction(input: {
+  receiptId: string;
+  vendorName?: string;
+  date: string;
+  amount: number;
+  salesTax?: number;
+  farmCategoryId?: string;
+}) {
+  await repo.updateReceipt(input.receiptId, {
+    ocrVendorGuess: input.vendorName,
+    ocrDateGuess: input.date,
+    ocrAmountGuess: input.amount,
+    ocrTaxGuess: input.salesTax,
+  });
+
+  const transactions = await repo.listTransactions({});
+  const txn = transactions.find((t) => t.receiptId === input.receiptId);
+  if (txn) {
+    await repo.updateTransaction(txn.id, {
+      transactionDate: input.date,
+      amount: input.amount,
+      salesTax: input.salesTax,
+      vendorName: input.vendorName,
+      farmCategoryId: input.farmCategoryId,
+      description: `Receipt — ${input.vendorName ?? "upload"}`,
+    });
+  }
+
+  revalidatePath("/money/receipts");
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  revalidatePath("/fields");
+  return { ok: true, hasTransaction: Boolean(txn) };
+}
+
+/**
+ * One-off repair for transactions created before the tax-year-by-date fix:
+ * re-files every transaction under the year implied by its own date instead
+ * of whatever the farm's "current" year happened to be at the time.
+ */
+export async function fixMisfiledTaxYearsAction() {
+  const result = await repo.fixMisfiledTaxYears();
+  revalidatePath("/home");
+  revalidatePath("/money/transactions");
+  revalidatePath("/reports");
+  revalidatePath("/tax");
+  revalidatePath("/cpa");
+  revalidatePath("/fields");
+  return result;
+}
+
 export async function confirmReceiptAction(formData: FormData) {
   const id = str(formData, "receiptId")!;
   await repo.confirmReceipt(id, {

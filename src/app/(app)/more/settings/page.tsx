@@ -2,6 +2,7 @@ import { getFarm } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { inviteMemberAction } from "@/lib/auth-actions";
+import { FixTaxYearsButton } from "@/components/settings/fix-tax-years-button";
 
 export default async function SettingsPage({
   searchParams,
@@ -88,6 +89,15 @@ export default async function SettingsPage({
         <div className="text-sm font-semibold text-forest mb-2">Your Data</div>
         <p className="text-sm text-charcoal/55 mb-3">Download a complete export of your farm&apos;s records at any time.</p>
         <a href="/api/export/cpa-workbook?type=full" className="inline-block bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium">Download Full Account Export (.xlsx)</a>
+      </div>
+
+      <div className="card p-5">
+        <div className="text-sm font-semibold text-forest mb-2">Tax Year Repair</div>
+        <p className="text-sm text-charcoal/55 mb-3">
+          Transactions entered before the year switcher was added may be filed under the wrong tax year (e.g. a 2025 receipt showing up under 2026).
+          This checks every transaction and re-files it under the year its own date actually falls in — safe to run any time, and safe to run more than once.
+        </p>
+        <FixTaxYearsButton />
       </div>
     </div>
   );

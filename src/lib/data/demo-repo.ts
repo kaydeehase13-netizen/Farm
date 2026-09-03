@@ -85,8 +85,32 @@ export function updateTransaction(id: string, patch: Partial<Transaction>) {
   return mutate((db) => {
     const idx = db.transactions.findIndex((t) => t.id === id);
     if (idx === -1) return null;
-    db.transactions[idx] = { ...db.transactions[idx], ...patch };
+    const taxYear = patch.transactionDate ? Number(patch.transactionDate.slice(0, 4)) || db.transactions[idx].taxYear : undefined;
+    const updated = { ...db.transactions[idx], ...patch, ...(taxYear ? { taxYear } : {}) };
+    if (!patch.splits && updated.splits.length === 1 && (patch.amount !== undefined || patch.farmCategoryId !== undefined)) {
+      updated.splits = [{
+        ...updated.splits[0],
+        allocatedAmount: patch.amount ?? updated.splits[0].allocatedAmount,
+        farmCategoryId: patch.farmCategoryId ?? updated.splits[0].farmCategoryId,
+      }];
+    }
+    db.transactions[idx] = updated;
     return db.transactions[idx];
+  });
+}
+
+/** One-off repair: re-file every transaction under the tax year implied by its own date. */
+export function fixMisfiledTaxYears() {
+  return mutate((db) => {
+    let fixed = 0;
+    for (const t of db.transactions) {
+      const correctYear = Number(t.transactionDate.slice(0, 4));
+      if (Number.isFinite(correctYear) && t.taxYear !== correctYear) {
+        t.taxYear = correctYear;
+        fixed++;
+      }
+    }
+    return { checked: db.transactions.length, fixed };
   });
 }
 
@@ -99,6 +123,15 @@ export function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {
     const receipt: Receipt = { ...input, id: randomUUID(), createdAt: new Date().toISOString() };
     db.receipts.push(receipt);
     return receipt;
+  });
+}
+
+export function updateReceipt(id: string, patch: Partial<Receipt>) {
+  return mutate((db) => {
+    const idx = db.receipts.findIndex((r) => r.id === id);
+    if (idx === -1) return null;
+    db.receipts[idx] = { ...db.receipts[idx], ...patch };
+    return db.receipts[idx];
   });
 }
 

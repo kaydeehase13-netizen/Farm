@@ -189,18 +189,64 @@ export async function createTransaction(input: Omit<Transaction, "id" | "created
   return { ...input, id: txn.id, createdAt: new Date().toISOString(), splits: splits.map((s) => ({ ...s, id: randomUUID(), transactionId: txn.id })) };
 }
 
+/**
+ * One-off repair: transactions created before a fix to how the tax year was
+ * assigned can have a tax_year_id that doesn't match their actual
+ * transaction_date (e.g. a receipt dated in 2025 filed under 2026). Walk
+ * every transaction and re-point it at the tax_year row matching its date.
+ */
+export async function fixMisfiledTaxYears(): Promise<{ checked: number; fixed: number }> {
+  const { supabase, farm } = await ctx();
+  const { data } = await supabase.from("transaction").select("id, transaction_date, tax_year:tax_year_id(year)").eq("farm_business_id", farm.id);
+  const rows = (data ?? []) as any[];
+  let fixed = 0;
+  for (const r of rows) {
+    const correctYear = Number(String(r.transaction_date).slice(0, 4));
+    const currentYear = Array.isArray(r.tax_year) ? r.tax_year[0]?.year : r.tax_year?.year;
+    if (!Number.isFinite(correctYear) || currentYear === correctYear) continue;
+    const correctTaxYearId = await getOrCreateTaxYear(supabase, farm.id, correctYear);
+    await supabase.from("transaction").update({ tax_year_id: correctTaxYearId }).eq("id", r.id);
+    fixed++;
+  }
+  return { checked: rows.length, fixed };
+}
+
 export async function updateTransaction(id: string, patch: Partial<Transaction>) {
-  const { supabase } = await ctx();
+  const { supabase, farm } = await ctx();
   const update: Record<string, unknown> = {};
   if (patch.farmCategoryId !== undefined) update.farm_category_id = patch.farmCategoryId;
   if (patch.status !== undefined) update.status = patch.status;
   if (patch.cpaFlag !== undefined) update.cpa_flag = patch.cpaFlag;
   if (patch.cpaNote !== undefined) update.cpa_note = patch.cpaNote;
+  if (patch.amount !== undefined) update.amount = patch.amount;
+  if (patch.salesTax !== undefined) update.sales_tax = patch.salesTax;
+  if (patch.description !== undefined) update.description = patch.description;
+  if (patch.vendorName !== undefined) update.vendor_id = await getOrCreateVendor(supabase, farm.id, patch.vendorName);
+  if (patch.transactionDate !== undefined) {
+    update.transaction_date = patch.transactionDate;
+    update.tax_year_id = await getOrCreateTaxYear(supabase, farm.id, Number(patch.transactionDate.slice(0, 4)));
+  }
   if (Object.keys(update).length > 0) await supabase.from("transaction").update(update).eq("id", id);
 
   if (patch.splits) {
     for (const s of patch.splits) {
-      if (s.id) await supabase.from("transaction_split").update({ field_id: s.fieldId ?? null, target_type: s.targetType }).eq("id", s.id);
+      if (!s.id) continue;
+      const splitUpdate: Record<string, unknown> = { field_id: s.fieldId ?? null, target_type: s.targetType };
+      if (s.allocatedAmount !== undefined) splitUpdate.allocated_amount = s.allocatedAmount;
+      if (s.farmCategoryId !== undefined) splitUpdate.farm_category_id = s.farmCategoryId;
+      await supabase.from("transaction_split").update(splitUpdate).eq("id", s.id);
+    }
+  } else if (patch.amount !== undefined || patch.farmCategoryId !== undefined) {
+    // Keep a single-split transaction's allocated amount (and category) in
+    // sync with the edited total — most receipt/expense transactions have
+    // exactly one split. Transactions deliberately split across multiple
+    // targets are left alone; edit those from the transaction detail view.
+    const { data: splits } = await supabase.from("transaction_split").select("id").eq("transaction_id", id);
+    if (splits && splits.length === 1) {
+      const splitUpdate: Record<string, unknown> = {};
+      if (patch.amount !== undefined) splitUpdate.allocated_amount = patch.amount;
+      if (patch.farmCategoryId !== undefined) splitUpdate.farm_category_id = patch.farmCategoryId;
+      await supabase.from("transaction_split").update(splitUpdate).eq("id", splits[0].id);
     }
   }
   return null;
@@ -230,6 +276,16 @@ export async function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {
   }).select("*").single();
   if (error || !data) throw error;
   return { ...input, id: data.id, createdAt: data.created_at };
+}
+
+export async function updateReceipt(id: string, patch: Partial<Receipt>) {
+  const { supabase } = await ctx();
+  const update: Record<string, unknown> = {};
+  if (patch.ocrVendorGuess !== undefined) update.ocr_vendor_guess = patch.ocrVendorGuess;
+  if (patch.ocrDateGuess !== undefined) update.ocr_date_guess = patch.ocrDateGuess;
+  if (patch.ocrAmountGuess !== undefined) update.ocr_amount_guess = patch.ocrAmountGuess;
+  if (patch.ocrTaxGuess !== undefined) update.ocr_tax_guess = patch.ocrTaxGuess;
+  if (Object.keys(update).length > 0) await supabase.from("receipt").update(update).eq("id", id);
 }
 
 export async function confirmReceipt(id: string, patch: Partial<Receipt> & { createTransaction?: boolean; farmCategoryId?: string; fieldId?: string }) {

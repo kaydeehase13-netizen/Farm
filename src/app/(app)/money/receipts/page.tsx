@@ -32,7 +32,10 @@ export default async function ReceiptsPage() {
                 Review & confirm →
               </Link>
             ) : (
-              <div className="mt-3 text-sm text-status-green">Linked to transaction</div>
+              <div className="mt-3 flex items-center justify-between">
+                <span className="text-sm text-status-green">Linked to transaction</span>
+                <Link href={`/money/receipts/${r.id}/edit`} className="text-sm font-medium text-forest hover:underline">Edit →</Link>
+              </div>
             )}
           </div>
         ))}
