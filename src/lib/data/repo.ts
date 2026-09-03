@@ -92,6 +92,11 @@ export async function confirmReceipt(id: string, patch: Parameters<typeof demo.c
   return demo.confirmReceipt(id, patch);
 }
 
+export async function createReceiptAndExpense(input: Parameters<typeof demo.createReceiptAndExpense>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createReceiptAndExpense(input);
+  return demo.createReceiptAndExpense(input);
+}
+
 export async function listActivities(filters: Parameters<typeof demo.listActivities>[0] = {}) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listActivities(filters);
   return demo.listActivities(filters);

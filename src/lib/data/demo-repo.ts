@@ -126,6 +126,40 @@ export function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {
   });
 }
 
+export function createReceiptAndExpense(input: {
+  fileName: string; fileDataUrl?: string; captureSource: string;
+  vendorName?: string; transactionDate: string; amount: number; salesTax?: number;
+  farmCategoryId?: string; fieldId?: string;
+}): { receiptId: string; transactionId: string } {
+  return mutate((db) => {
+    const receipt: Receipt = {
+      id: randomUUID(), farmBusinessId: FARM.id, fileName: input.fileName, fileDataUrl: input.fileDataUrl,
+      captureSource: input.captureSource as any, ocrStatus: "confirmed", ocrVendorGuess: input.vendorName,
+      ocrDateGuess: input.transactionDate, ocrAmountGuess: input.amount, ocrTaxGuess: input.salesTax,
+      confirmedAt: new Date().toISOString(), syncStatus: "synced", createdAt: new Date().toISOString(),
+    } as Receipt;
+    db.receipts.push(receipt);
+
+    const txnId = randomUUID();
+    const splits: TransactionSplit[] = [{
+      id: randomUUID(), transactionId: txnId,
+      targetType: input.fieldId ? "field" : "general_overhead", fieldId: input.fieldId,
+      allocationMethod: "manual", allocatedAmount: input.amount, farmCategoryId: input.farmCategoryId,
+    }];
+    const txn: Transaction = {
+      id: txnId, farmBusinessId: FARM.id, taxYear: Number(input.transactionDate.slice(0, 4)) || FARM.currentTaxYear,
+      transactionType: "expense", status: "categorized", transactionDate: input.transactionDate,
+      vendorName: input.vendorName, description: `Receipt — ${input.vendorName ?? "upload"}`,
+      amount: input.amount, salesTax: input.salesTax ?? 0, farmCategoryId: input.farmCategoryId,
+      receiptId: receipt.id, isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced",
+      createdAt: new Date().toISOString(), splits,
+    };
+    db.transactions.push(txn);
+
+    return { receiptId: receipt.id, transactionId: txnId };
+  });
+}
+
 export function updateReceipt(id: string, patch: Partial<Receipt>) {
   return mutate((db) => {
     const idx = db.receipts.findIndex((r) => r.id === id);

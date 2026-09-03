@@ -314,6 +314,61 @@ export async function createReceipt(input: Omit<Receipt, "id" | "createdAt">) {
   return { ...input, id: data.id, createdAt: data.created_at };
 }
 
+/**
+ * Single-photo "save receipt & create expense" flow, collapsed into ONE
+ * network round trip via the create_receipt_and_expense() Postgres function
+ * (migration 0009) instead of the previous 4+ sequential calls (get/create
+ * tax year, get/create vendor, insert receipt, insert transaction, insert
+ * split). Falls back to the old multi-step path if that function hasn't
+ * been created yet on this database (migration not run) — slower, but the
+ * save still works.
+ */
+export async function createReceiptAndExpense(input: {
+  fileName: string; fileDataUrl?: string; captureSource: string;
+  vendorName?: string; transactionDate: string; amount: number; salesTax?: number;
+  farmCategoryId?: string; fieldId?: string;
+}): Promise<{ receiptId: string; transactionId: string }> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase.rpc("create_receipt_and_expense", {
+    p_farm_business_id: farm.id,
+    p_file_name: input.fileName,
+    p_file_data_url: input.fileDataUrl ?? null,
+    p_capture_source: input.captureSource,
+    p_vendor_name: input.vendorName ?? null,
+    p_transaction_date: input.transactionDate,
+    p_amount: input.amount,
+    p_sales_tax: input.salesTax ?? 0,
+    p_farm_category_id: input.farmCategoryId ?? null,
+    p_field_id: input.fieldId ?? null,
+  });
+  if (!error && data) {
+    const row = Array.isArray(data) ? data[0] : data;
+    if (row?.receipt_id && row?.transaction_id) return { receiptId: row.receipt_id, transactionId: row.transaction_id };
+  }
+
+  // Fallback: the create_receipt_and_expense() function isn't on this
+  // database yet (migration 0009 hasn't been run) — do it the slower,
+  // multi-round-trip way so saving still works.
+  const receipt = await createReceipt({
+    farmBusinessId: farm.id, fileName: input.fileName, fileDataUrl: input.fileDataUrl,
+    captureSource: input.captureSource as any, ocrStatus: "confirmed",
+    ocrVendorGuess: input.vendorName, ocrDateGuess: input.transactionDate,
+    ocrAmountGuess: input.amount, ocrTaxGuess: input.salesTax, syncStatus: "synced",
+  });
+  const txn = await createTransaction({
+    farmBusinessId: farm.id, taxYear: Number(input.transactionDate.slice(0, 4)) || farm.currentTaxYear,
+    transactionType: "expense", status: "categorized", transactionDate: input.transactionDate,
+    vendorName: input.vendorName, description: `Receipt — ${input.vendorName ?? "upload"}`,
+    amount: input.amount, salesTax: input.salesTax ?? 0, farmCategoryId: input.farmCategoryId,
+    receiptId: receipt.id, isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced",
+    splits: [{
+      targetType: input.fieldId ? "field" : "general_overhead", fieldId: input.fieldId,
+      allocationMethod: "manual", allocatedAmount: input.amount, farmCategoryId: input.farmCategoryId,
+    }],
+  });
+  return { receiptId: receipt.id, transactionId: txn.id };
+}
+
 export async function updateReceipt(id: string, patch: Partial<Receipt>) {
   const { supabase } = await ctx();
   const update: Record<string, unknown> = {};

@@ -394,7 +394,6 @@ export async function createPendingReceiptAction(input: {
 }
 
 export async function saveReceiptAndCreateExpenseAction(formData: FormData) {
-  const farm = await getFarm();
   const vendorName = str(formData, "vendorName");
   const date = str(formData, "date");
   const amount = num(formData, "amount");
@@ -402,46 +401,20 @@ export async function saveReceiptAndCreateExpenseAction(formData: FormData) {
   const farmCategoryId = str(formData, "farmCategoryId");
   const fieldId = str(formData, "fieldId");
 
-  // Written straight to "confirmed" (this form IS the confirmation step) so we
-  // don't pay for a second network round trip just to flip the status right
-  // after creating the row — that extra UPDATE was a real chunk of why saving
-  // a receipt felt slow.
-  const receipt = await repo.createReceipt({
-    farmBusinessId: farm.id,
+  // One call — the receipt insert, transaction insert, split insert, and the
+  // tax-year/vendor lookups all happen in a single Postgres round trip (see
+  // create_receipt_and_expense() / repo.createReceiptAndExpense) instead of
+  // 4+ sequential ones, which was the biggest chunk of "saving takes forever."
+  await repo.createReceiptAndExpense({
     fileName: str(formData, "fileName") ?? "receipt.jpg",
     fileDataUrl: str(formData, "fileDataUrl"),
     captureSource: (str(formData, "captureSource") as any) ?? "web_upload",
-    ocrStatus: "confirmed",
-    ocrVendorGuess: vendorName,
-    ocrDateGuess: date,
-    ocrAmountGuess: amount,
-    ocrTaxGuess: salesTax,
-    syncStatus: "synced",
-  });
-
-  const transactionDate = date ?? new Date().toISOString().slice(0, 10);
-  await repo.createTransaction({
-    farmBusinessId: farm.id,
-    taxYear: Number(transactionDate.slice(0, 4)) || farm.currentTaxYear,
-    transactionType: "expense",
-    status: "categorized",
-    transactionDate,
     vendorName,
-    description: `Receipt — ${vendorName ?? "upload"}`,
+    transactionDate: date ?? new Date().toISOString().slice(0, 10),
     amount: amount ?? 0,
     salesTax: salesTax ?? 0,
     farmCategoryId,
-    receiptId: receipt.id,
-    isPersonalExcluded: false,
-    cpaFlag: false,
-    syncStatus: "synced",
-    splits: [{
-      targetType: fieldId ? "field" : "general_overhead",
-      fieldId,
-      allocationMethod: "manual",
-      allocatedAmount: amount ?? 0,
-      farmCategoryId,
-    }],
+    fieldId,
   });
   revalidatePath("/money/receipts");
   revalidatePath("/money/transactions");
