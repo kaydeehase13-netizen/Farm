@@ -22,6 +22,14 @@ export async function buildXlsxTemplate(opts: {
   columns: TemplateColumn[];
   categoryNames?: string[];
   notes?: string[];
+  /**
+   * Real rows to prefill instead of one italic example — e.g. every
+   * product/year combo actually logged on field activities, so the
+   * template already lists exactly what needs a cost, not a placeholder.
+   * When provided, these are written as normal (non-italic) editable
+   * rows and the generic example row is skipped.
+   */
+  dataRows?: (string | number)[][];
 }): Promise<ExcelJS.Buffer> {
   const wb = new ExcelJS.Workbook();
   const sheet = wb.addWorksheet(opts.sheetName.slice(0, 31), { views: [{ state: "frozen", ySplit: 1 }] });
@@ -29,11 +37,18 @@ export async function buildXlsxTemplate(opts: {
   sheet.getRow(1).eachCell((cell) => { cell.fill = HEADER_FILL; cell.font = HEADER_FONT; });
   sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: opts.columns.length } };
 
-  const exampleRow = sheet.addRow(opts.columns.map((c) => c.example ?? ""));
-  opts.columns.forEach((c, i) => {
-    if (c.money) exampleRow.getCell(i + 1).numFmt = CURRENCY_FMT;
-  });
-  exampleRow.eachCell((cell) => { cell.font = { italic: true, color: { argb: "FF888888" } }; });
+  if (opts.dataRows?.length) {
+    for (const row of opts.dataRows) {
+      const r = sheet.addRow(row);
+      opts.columns.forEach((c, i) => { if (c.money) r.getCell(i + 1).numFmt = CURRENCY_FMT; });
+    }
+  } else {
+    const exampleRow = sheet.addRow(opts.columns.map((c) => c.example ?? ""));
+    opts.columns.forEach((c, i) => {
+      if (c.money) exampleRow.getCell(i + 1).numFmt = CURRENCY_FMT;
+    });
+    exampleRow.eachCell((cell) => { cell.font = { italic: true, color: { argb: "FF888888" } }; });
+  }
 
   // A few blank rows to fill in.
   for (let i = 0; i < 20; i++) sheet.addRow([]);

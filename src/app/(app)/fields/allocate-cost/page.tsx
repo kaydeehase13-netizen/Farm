@@ -4,6 +4,7 @@ import { getViewTaxYear } from "@/lib/tax-year";
 import { AllocateCostForm } from "@/components/fields/allocate-cost-form";
 import { ExcelBulkImport } from "@/components/shared/excel-bulk-import";
 import { bulkImportAllocateCostAction } from "@/lib/actions";
+import { distinctProductNames } from "@/lib/product-usage";
 
 export default async function AllocateCostPage() {
   const [taxYear, years, farmCategories] = await Promise.all([
@@ -15,12 +16,7 @@ export default async function AllocateCostPage() {
   // Pull every product name we can see across all years so the form can
   // suggest one as you type, no matter which year you're allocating to.
   const allActivities = await listActivities({});
-  const productNames = new Set<string>();
-  for (const a of allActivities) {
-    for (const p of a.sprayProducts ?? []) if (p.productName) productNames.add(p.productName);
-    for (const p of a.fertilizerProducts ?? []) if (p.productName) productNames.add(p.productName);
-    if (a.seedProductName) productNames.add(a.seedProductName);
-  }
+  const productNames = distinctProductNames(allActivities);
 
   return (
     <div className="max-w-2xl">
@@ -31,7 +27,7 @@ export default async function AllocateCostPage() {
       <AllocateCostForm
         years={years}
         defaultYear={taxYear}
-        productNames={Array.from(productNames).sort()}
+        productNames={productNames}
         farmCategories={farmCategories.map((c) => ({ id: c.id, name: c.name }))}
       />
       <div className="mt-6">
