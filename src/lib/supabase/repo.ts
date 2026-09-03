@@ -296,13 +296,24 @@ export async function deleteReceipt(id: string): Promise<void> {
 // to count unconfirmed/missing receipts. Pulling every photo, every time,
 // on every page load was the single biggest thing bloating this app —
 // see getReceipt() below for fetching one receipt's actual photo.
+// NOTE: "file_name" is deliberately NOT in this list — it isn't a real
+// column on the receipt table (see 0001_core_schema.sql), only document_id
+// is. Naming a column here that doesn't exist makes PostgREST reject the
+// whole query, and since callers below don't check `error`, that used to
+// come back as a silent EMPTY receipt list instead of a visible failure —
+// exactly what happened here once before. listReceipts() now falls back to
+// select("*") if this list ever drifts from the schema again, so a typo
+// here degrades to "slower" rather than "receipts vanish."
 const RECEIPT_LIST_COLUMNS =
-  "id, farm_business_id, file_name, document_id, capture_source, ocr_status, ocr_vendor_guess, " +
+  "id, farm_business_id, document_id, capture_source, ocr_status, ocr_vendor_guess, " +
   "ocr_date_guess, ocr_amount_guess, ocr_tax_guess, ocr_line_items, confirmed_at, sync_status, created_at";
 
 export async function listReceipts(): Promise<Receipt[]> {
   const { supabase, farm } = await ctx();
-  const { data } = await supabase.from("receipt").select(RECEIPT_LIST_COLUMNS).eq("farm_business_id", farm.id).order("created_at", { ascending: false });
+  let { data, error } = await supabase.from("receipt").select(RECEIPT_LIST_COLUMNS).eq("farm_business_id", farm.id).order("created_at", { ascending: false });
+  if (error) {
+    ({ data, error } = await supabase.from("receipt").select("*").eq("farm_business_id", farm.id).order("created_at", { ascending: false }));
+  }
   const { data: linked } = await supabase.from("transaction").select("id, receipt_id").eq("farm_business_id", farm.id).not("receipt_id", "is", null);
   return (data ?? []).map((r: any): Receipt => ({
     id: r.id, farmBusinessId: r.farm_business_id, fileName: r.document_id ? r.file_name ?? "receipt" : r.file_name ?? "receipt",
