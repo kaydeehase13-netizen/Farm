@@ -40,38 +40,44 @@ export async function createExpenseOrIncome(formData: FormData) {
   const description = str(formData, "description");
   const salesTax = num(formData, "salesTax") ?? 0;
 
-  // A single receipt/check can cover more than one category (e.g. oil and
-  // mineral royalties paid on the same check, or a co-op statement that
-  // mixes fuel and supplies) — those need to be booked as separate line
-  // items so each one lands under the right tax category, not blended into
-  // one. When the form's "split into multiple categories" toggle was used,
-  // splitLines carries the breakdown as JSON; create one transaction per
-  // line instead of one for the whole amount.
+  // A single receipt/check can cover more than one category, and not
+  // always the same transaction type — e.g. oil and mineral royalties paid
+  // on the same check (both income), or a royalty check that nets gross
+  // income minus a deducted expense (one income line, one expense line).
+  // Those need to be booked as separate line items, each with its own
+  // type, so they land under the right tax category instead of being
+  // blended into one. When the form's "split into multiple categories"
+  // toggle was used, splitLines carries the breakdown as JSON; create one
+  // transaction per line instead of one for the whole amount.
   const rawSplitLines = str(formData, "splitLines");
   const splitLines = rawSplitLines
-    ? (JSON.parse(rawSplitLines) as { farmCategoryId: string; amount: string }[])
-        .map((l) => ({ farmCategoryId: l.farmCategoryId, amount: Number(l.amount) || 0 }))
+    ? (JSON.parse(rawSplitLines) as { type?: string; farmCategoryId: string; amount: string }[])
+        .map((l) => ({
+          type: (l.type === "income" || l.type === "expense" ? l.type : type) as "income" | "expense",
+          farmCategoryId: l.farmCategoryId, amount: Number(l.amount) || 0,
+        }))
         .filter((l) => l.farmCategoryId && l.amount > 0)
     : [];
 
   if (splitLines.length >= 2) {
     const farmCategories = await repo.listFarmCategories();
     const nameById = new Map(farmCategories.map((c) => [c.id, c.name]));
+    // Sales tax on the original receipt/check isn't broken out per line —
+    // put the whole amount on the first expense-type line rather than
+    // guessing a split, so it doesn't get silently dropped or doubled.
+    const firstExpenseIdx = splitLines.findIndex((l) => l.type === "expense");
     for (const [i, line] of splitLines.entries()) {
       await repo.createTransaction({
         farmBusinessId: farm.id,
         taxYear,
-        transactionType: type,
+        transactionType: line.type,
         status: "categorized",
         transactionDate,
         vendorName: str(formData, "vendorName"),
         customerId: str(formData, "customerId"),
         description: `${description ?? ""} — ${nameById.get(line.farmCategoryId) ?? "Split"}`.trim(),
         amount: line.amount,
-        // Sales tax on the original receipt/check isn't broken out per
-        // category — keep the whole amount on the first line rather than
-        // guessing a split, so it doesn't get silently dropped or doubled.
-        salesTax: i === 0 ? salesTax : 0,
+        salesTax: i === firstExpenseIdx ? salesTax : 0,
         paymentMethod: str(formData, "paymentMethod"),
         farmCategoryId: line.farmCategoryId,
         isPersonalExcluded: str(formData, "isPersonalExcluded") === "on",

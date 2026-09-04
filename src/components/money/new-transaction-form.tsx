@@ -2,7 +2,8 @@
 
 import { useId, useMemo, useState } from "react";
 
-type SplitLine = { key: string; farmCategoryId: string; amount: string };
+type LineType = "income" | "expense";
+type SplitLine = { key: string; type: LineType; farmCategoryId: string; amount: string };
 
 export function NewTransactionForm({
   action, defaultType, farmCategories, fields,
@@ -18,15 +19,20 @@ export function NewTransactionForm({
   const [splitError, setSplitError] = useState<string | null>(null);
   const makeKey = useId();
   let keySeq = 0;
-  const newLine = (): SplitLine => ({ key: `${makeKey}-${keySeq++}`, farmCategoryId: farmCategories[0]?.id ?? "", amount: "" });
+  const newLine = (): SplitLine => ({ key: `${makeKey}-${keySeq++}`, type, farmCategoryId: farmCategories[0]?.id ?? "", amount: "" });
   const [splitLines, setSplitLines] = useState<SplitLine[]>(() => [newLine(), newLine()]);
 
-  const splitTotal = useMemo(
-    () => splitLines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0),
+  // Net total accounts for lines of different types — e.g. a royalty check
+  // that pays gross income minus a deducted expense nets out to less than
+  // the sum of the two amounts. When every line is the same type this is
+  // just their plain sum, same as before.
+  const splitNet = useMemo(
+    () => splitLines.reduce((sum, l) => sum + (l.type === "expense" ? -1 : 1) * (Number(l.amount) || 0), 0),
     [splitLines]
   );
+  const hasMixedTypes = new Set(splitLines.map((l) => l.type)).size > 1;
   const amountNum = Number(amount) || 0;
-  const splitMismatch = splitting && Math.abs(splitTotal - amountNum) > 0.005;
+  const splitMismatch = splitting && Math.abs(splitNet - amountNum) > 0.005;
 
   function updateLine(key: string, patch: Partial<SplitLine>) {
     setSplitLines((lines) => lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -40,14 +46,14 @@ export function NewTransactionForm({
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     if (!splitting) return;
-    if (Math.abs(splitTotal - amountNum) > 0.005) {
+    if (Math.abs(splitNet - amountNum) > 0.005) {
       e.preventDefault();
-      setSplitError(`Category amounts add up to ${splitTotal.toFixed(2)}, but the total above is ${amountNum.toFixed(2)}. Fix one so they match before saving.`);
+      setSplitError(`These lines net out to ${splitNet.toFixed(2)}, but the total above is ${amountNum.toFixed(2)}. Fix one so they match before saving.`);
       return;
     }
     if (splitLines.some((l) => !l.farmCategoryId || !l.amount)) {
       e.preventDefault();
-      setSplitError("Every category line needs a category and an amount.");
+      setSplitError("Every line needs a category and an amount.");
       return;
     }
     setSplitError(null);
@@ -67,6 +73,7 @@ export function NewTransactionForm({
             Expense
           </label>
         </div>
+        {splitting && <p className="text-xs text-charcoal/50 mt-1">Only used as the starting type for a new line below — each line in a split can be Income or Expense on its own.</p>}
       </div>
 
       <Field label="Date">
@@ -78,10 +85,10 @@ export function NewTransactionForm({
       <Field label="Description">
         <input name="description" placeholder="What was it?" className="input" required />
       </Field>
-      <Field label="Total Amount">
+      <Field label={splitting ? "Net Total (what the check/receipt actually totals)" : "Total Amount"}>
         <input type="number" step="0.01" name="amount" required className="input" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} />
       </Field>
-      {type === "expense" && (
+      {!splitting && type === "expense" && (
         <Field label="Sales Tax">
           <input type="number" step="0.01" name="salesTax" className="input" placeholder="0.00" />
         </Field>
@@ -93,7 +100,7 @@ export function NewTransactionForm({
           checked={splitting}
           onChange={(e) => { setSplitting(e.target.checked); setSplitError(null); }}
         />
-        This one receipt/check covers more than one category (e.g. oil &amp; mineral royalties together) — split it
+        This one receipt/check covers more than one category (e.g. oil &amp; mineral royalties together, or gross income minus a deducted expense) — split it
       </label>
 
       {!splitting && (
@@ -106,11 +113,30 @@ export function NewTransactionForm({
 
       {splitting && (
         <div className="space-y-2 border border-[--border-color] rounded-lg p-3">
-          <div className="text-sm font-medium text-charcoal/70">Category breakdown</div>
+          <div className="text-sm font-medium text-charcoal/70">Line-item breakdown</div>
+          <p className="text-xs text-charcoal/50">
+            Each line can be its own Income or Expense — useful for a check that pays gross royalty income minus a deducted expense, not just a receipt split across categories of the same type.
+          </p>
           {splitLines.map((line) => (
-            <div key={line.key} className="flex gap-2 items-center">
+            <div key={line.key} className="flex flex-wrap gap-2 items-center">
+              <div className="flex rounded-lg border border-[--border-color] overflow-hidden text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => updateLine(line.key, { type: "income" })}
+                  className={`px-2.5 py-2 ${line.type === "income" ? "bg-forest text-white" : "bg-transparent text-charcoal/60"}`}
+                >
+                  Income
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateLine(line.key, { type: "expense" })}
+                  className={`px-2.5 py-2 ${line.type === "expense" ? "bg-forest text-white" : "bg-transparent text-charcoal/60"}`}
+                >
+                  Expense
+                </button>
+              </div>
               <select
-                className="input flex-1"
+                className="input flex-1 min-w-[140px]"
                 value={line.farmCategoryId}
                 onChange={(e) => updateLine(line.key, { farmCategoryId: e.target.value })}
               >
@@ -130,13 +156,15 @@ export function NewTransactionForm({
             </div>
           ))}
           <button type="button" onClick={addLine} className="text-sm font-medium text-forest hover:underline">
-            + Add another category
+            + Add another line
           </button>
           <div className={`text-xs ${splitMismatch ? "text-status-red" : "text-charcoal/50"}`}>
-            Categories total {splitTotal.toFixed(2)} of {amountNum.toFixed(2)}
+            {hasMixedTypes
+              ? `Net of these lines: ${splitNet.toFixed(2)} (target ${amountNum.toFixed(2)})`
+              : `Lines total ${splitNet.toFixed(2)} of ${amountNum.toFixed(2)}`}
           </div>
           {splitError && <p className="text-sm text-status-red">{splitError}</p>}
-          <input type="hidden" name="splitLines" value={JSON.stringify(splitLines.map((l) => ({ farmCategoryId: l.farmCategoryId, amount: l.amount })))} />
+          <input type="hidden" name="splitLines" value={JSON.stringify(splitLines.map((l) => ({ type: l.type, farmCategoryId: l.farmCategoryId, amount: l.amount })))} />
         </div>
       )}
 
@@ -154,7 +182,7 @@ export function NewTransactionForm({
       </label>
 
       <button className="bg-forest text-white px-5 py-2.5 rounded-lg font-medium hover:bg-forest-light w-full">
-        Save {type === "income" ? "Income" : "Expense"}
+        {splitting ? "Save Split Transaction" : `Save ${type === "income" ? "Income" : "Expense"}`}
       </button>
     </form>
   );
