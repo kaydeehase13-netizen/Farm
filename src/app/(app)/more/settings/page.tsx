@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/ui/stat-card";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { inviteMemberAction } from "@/lib/auth-actions";
 import { FixTaxYearsButton } from "@/components/settings/fix-tax-years-button";
+import { FixTaxCategoriesButton } from "@/components/settings/fix-tax-categories-button";
 
 export default async function SettingsPage({
   searchParams,
@@ -98,6 +99,17 @@ export default async function SettingsPage({
           This checks every transaction and re-files it under the year its own date actually falls in — safe to run any time, and safe to run more than once.
         </p>
         <FixTaxYearsButton />
+      </div>
+
+      <div className="card p-5">
+        <div className="text-sm font-semibold text-forest mb-2">Tax Category Repair</div>
+        <p className="text-sm text-charcoal/55 mb-3">
+          Transactions save a Category (like &quot;Chemical&quot; or &quot;Custom Hire&quot;), but the underlying tax-schedule
+          placement (Schedule F, C, or E, and which line) is a separate field that can end up missing even when the
+          category itself is right. This fills in the missing tax category from each transaction&apos;s own category —
+          safe to run any time, and safe to run more than once.
+        </p>
+        <FixTaxCategoriesButton />
       </div>
     </div>
   );

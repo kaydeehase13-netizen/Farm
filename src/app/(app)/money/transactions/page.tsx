@@ -34,6 +34,9 @@ export default async function TransactionsPage({
             <a href="/money/transactions/import-excel" className="card px-4 py-2 text-sm font-medium hover:border-forest">
               Import Excel
             </a>
+            <a href="/money/transactions/category-audit" className="card px-4 py-2 text-sm font-medium hover:border-forest">
+              Category Audit
+            </a>
             <a href="/money/transactions/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">
               + Add Transaction
             </a>

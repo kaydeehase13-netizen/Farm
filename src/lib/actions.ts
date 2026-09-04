@@ -37,6 +37,59 @@ export async function createExpenseOrIncome(formData: FormData) {
   // farm's "current" onboarding year is — otherwise a 2025 receipt entered
   // while the farm is set to 2026 would silently land in the wrong year.
   const taxYear = Number(transactionDate.slice(0, 4)) || farm.currentTaxYear;
+  const description = str(formData, "description");
+  const salesTax = num(formData, "salesTax") ?? 0;
+
+  // A single receipt/check can cover more than one category (e.g. oil and
+  // mineral royalties paid on the same check, or a co-op statement that
+  // mixes fuel and supplies) — those need to be booked as separate line
+  // items so each one lands under the right tax category, not blended into
+  // one. When the form's "split into multiple categories" toggle was used,
+  // splitLines carries the breakdown as JSON; create one transaction per
+  // line instead of one for the whole amount.
+  const rawSplitLines = str(formData, "splitLines");
+  const splitLines = rawSplitLines
+    ? (JSON.parse(rawSplitLines) as { farmCategoryId: string; amount: string }[])
+        .map((l) => ({ farmCategoryId: l.farmCategoryId, amount: Number(l.amount) || 0 }))
+        .filter((l) => l.farmCategoryId && l.amount > 0)
+    : [];
+
+  if (splitLines.length >= 2) {
+    const farmCategories = await repo.listFarmCategories();
+    const nameById = new Map(farmCategories.map((c) => [c.id, c.name]));
+    for (const [i, line] of splitLines.entries()) {
+      await repo.createTransaction({
+        farmBusinessId: farm.id,
+        taxYear,
+        transactionType: type,
+        status: "categorized",
+        transactionDate,
+        vendorName: str(formData, "vendorName"),
+        customerId: str(formData, "customerId"),
+        description: `${description ?? ""} — ${nameById.get(line.farmCategoryId) ?? "Split"}`.trim(),
+        amount: line.amount,
+        // Sales tax on the original receipt/check isn't broken out per
+        // category — keep the whole amount on the first line rather than
+        // guessing a split, so it doesn't get silently dropped or doubled.
+        salesTax: i === 0 ? salesTax : 0,
+        paymentMethod: str(formData, "paymentMethod"),
+        farmCategoryId: line.farmCategoryId,
+        isPersonalExcluded: str(formData, "isPersonalExcluded") === "on",
+        cpaFlag: false,
+        syncStatus: "synced",
+        splits: [{
+          targetType: fieldId ? "field" : jobId ? "customer_job" : "general_overhead",
+          fieldId, jobId,
+          allocationMethod: "manual",
+          allocatedAmount: line.amount,
+          farmCategoryId: line.farmCategoryId,
+        }],
+      });
+    }
+    revalidatePath("/money/transactions");
+    revalidatePath("/home");
+    return;
+  }
 
   await repo.createTransaction({
     farmBusinessId: farm.id,
@@ -46,9 +99,9 @@ export async function createExpenseOrIncome(formData: FormData) {
     transactionDate,
     vendorName: str(formData, "vendorName"),
     customerId: str(formData, "customerId"),
-    description: str(formData, "description"),
+    description,
     amount,
-    salesTax: num(formData, "salesTax") ?? 0,
+    salesTax,
     paymentMethod: str(formData, "paymentMethod"),
     farmCategoryId: str(formData, "farmCategoryId"),
     isPersonalExcluded: str(formData, "isPersonalExcluded") === "on",
@@ -180,36 +233,43 @@ export async function importActivitiesAction(rows: {
   let skippedDuplicates = 0;
   const errors: string[] = [];
 
-  // Guard against re-importing the same CSV (or a file with repeated rows):
-  // build a signature for every activity already on each field, then skip
-  // any incoming row that matches one already there (checked against both
-  // what's already saved AND what this same import has already inserted).
-  // A signature also remembers the matching activity's id and whether it
-  // actually has its product-line details — an earlier bug could create the
-  // activity but silently fail to attach its spray/fertilizer/seed product,
-  // so re-running the same import now backfills those instead of just
-  // skipping the row as "already imported."
-  type Seen = { activityId: string; hasProductInfo: boolean };
-  const existingByField = new Map<string, Map<string, Seen>>();
-  function signature(row: { activityDate: string; activityType: string; acres?: number | null; productName?: string | null; yieldAmount?: number | null }) {
+  // Guard against re-importing the same CSV (or a file with repeated rows).
+  // The match key is deliberately just date+type+acres+yield — NOT product
+  // name — because an earlier bug could create an activity but silently
+  // fail to attach its spray/fertilizer/seed product, leaving that
+  // activity's stored product name blank. If product name were part of the
+  // match key, a row whose real product is "32/thio" would never match its
+  // own broken (blank-product) activity, and re-running the import would
+  // create a brand-new duplicate activity instead of repairing the
+  // existing one — doubling up the field's activity history. So: match on
+  // the core fields first, then decide by product name whether it's a
+  // true duplicate (skip), a broken one to backfill (repair), or a
+  // genuinely different activity that happens to share date/type/acres
+  // (create new, e.g. two different products applied the same day at the
+  // same acreage).
+  type Seen = { activityId: string; hasProductInfo: boolean; productName: string; claimed: boolean };
+  const existingByField = new Map<string, Map<string, Seen[]>>();
+  function coreSignature(row: { activityDate: string; activityType: string; acres?: number | null; yieldAmount?: number | null }) {
     const acres = row.acres != null ? Math.round(row.acres * 1000) / 1000 : "";
     const yieldAmount = row.yieldAmount != null ? Math.round(row.yieldAmount * 1000) / 1000 : "";
-    return [row.activityDate, row.activityType, acres, (row.productName ?? "").trim().toLowerCase(), yieldAmount].join("|");
+    return [row.activityDate, row.activityType, acres, yieldAmount].join("|");
   }
   async function seenForField(fieldId: string) {
     let map = existingByField.get(fieldId);
     if (!map) {
       const existing = await repo.listActivities({ fieldId });
-      map = new Map(existing.map((a) => [
-        signature({
-          activityDate: a.activityDate,
-          activityType: a.activityType,
-          acres: a.acres ?? null,
-          productName: a.sprayProducts?.[0]?.productName ?? a.seedProductName ?? null,
-          yieldAmount: a.yieldAmount ?? null,
-        }),
-        { activityId: a.id, hasProductInfo: Boolean(a.sprayProducts?.length || a.fertilizerProducts?.length || a.seedProductName) },
-      ]));
+      map = new Map<string, Seen[]>();
+      for (const a of existing) {
+        const key = coreSignature({ activityDate: a.activityDate, activityType: a.activityType, acres: a.acres ?? null, yieldAmount: a.yieldAmount ?? null });
+        const entry: Seen = {
+          activityId: a.id,
+          hasProductInfo: Boolean(a.sprayProducts?.length || a.fertilizerProducts?.length || a.seedProductName),
+          productName: (a.sprayProducts?.[0]?.productName ?? a.seedProductName ?? "").trim().toLowerCase(),
+          claimed: false,
+        };
+        const list = map.get(key);
+        if (list) list.push(entry); else map.set(key, [entry]);
+      }
       existingByField.set(fieldId, map);
     }
     return map;
@@ -218,24 +278,30 @@ export async function importActivitiesAction(rows: {
   for (const row of rows) {
     try {
       const seen = await seenForField(row.fieldId);
-      const sig = signature(row);
-      const existing = seen.get(sig);
+      const key = coreSignature(row);
+      const candidates = seen.get(key) ?? [];
+      const rowProduct = (row.productName ?? "").trim().toLowerCase();
+      const exactDuplicate = candidates.find((c) => c.hasProductInfo && c.productName === rowProduct);
+      const brokenCandidate = !exactDuplicate ? candidates.find((c) => !c.hasProductInfo && !c.claimed) : undefined;
       const isSpray = row.activityType === "spray" || row.activityType === "fertilize";
-      if (existing) {
-        if (!existing.hasProductInfo && row.productName) {
-          await repo.repairActivityProductDetails(existing.activityId, {
-            sprayProducts: isSpray ? [{
-              productId: "prod-imported", productName: row.productName,
-              rate: row.rate ?? 0, rateUnit: row.rateUnit ?? "", quantityUsed: row.quantity ?? 0, quantityUnit: row.quantityUnit ?? "",
-            }] : undefined,
-            seedProductName: row.activityType === "plant" ? row.productName : undefined,
-            seedingRate: row.activityType === "plant" ? (row.rate ?? undefined) : undefined,
-          });
-          existing.hasProductInfo = true;
-          repaired++;
-        } else {
-          skippedDuplicates++;
-        }
+
+      if (exactDuplicate) {
+        skippedDuplicates++;
+        continue;
+      }
+      if (brokenCandidate && row.productName) {
+        await repo.repairActivityProductDetails(brokenCandidate.activityId, {
+          sprayProducts: isSpray ? [{
+            productId: "prod-imported", productName: row.productName,
+            rate: row.rate ?? 0, rateUnit: row.rateUnit ?? "", quantityUsed: row.quantity ?? 0, quantityUnit: row.quantityUnit ?? "",
+          }] : undefined,
+          seedProductName: row.activityType === "plant" ? row.productName : undefined,
+          seedingRate: row.activityType === "plant" ? (row.rate ?? undefined) : undefined,
+        });
+        brokenCandidate.hasProductInfo = true;
+        brokenCandidate.productName = rowProduct;
+        brokenCandidate.claimed = true;
+        repaired++;
         continue;
       }
       const created = await repo.createActivity({
@@ -262,7 +328,8 @@ export async function importActivitiesAction(rows: {
         notes: row.notes ?? undefined,
         syncStatus: "synced",
       });
-      seen.set(sig, { activityId: created.id, hasProductInfo: Boolean(row.productName) });
+      const newEntry: Seen = { activityId: created.id, hasProductInfo: Boolean(row.productName), productName: rowProduct, claimed: true };
+      if (candidates.length) candidates.push(newEntry); else seen.set(key, [newEntry]);
       imported++;
     } catch (e) {
       errors.push(`${row.activityDate} — ${row.fieldName ?? row.fieldId}: ${e instanceof Error ? e.message : "failed"}`);
@@ -339,6 +406,24 @@ export async function editReceiptAction(input: {
  */
 export async function fixMisfiledTaxYearsAction() {
   const result = await repo.fixMisfiledTaxYears();
+  revalidatePath("/home");
+  revalidatePath("/money/transactions");
+  revalidatePath("/reports");
+  revalidatePath("/tax");
+  revalidatePath("/cpa");
+  revalidatePath("/fields");
+  return result;
+}
+
+/**
+ * One-off repair: no insert path used to write tax_category_id at all, only
+ * farm_category_id — every transaction's actual tax-schedule placement has
+ * silently been missing since day one. This fills it in from each
+ * transaction's own farm category's default tax category. Safe to run any
+ * time, and safe to run more than once.
+ */
+export async function backfillTaxCategoriesAction() {
+  const result = await repo.backfillTaxCategories();
   revalidatePath("/home");
   revalidatePath("/money/transactions");
   revalidatePath("/reports");

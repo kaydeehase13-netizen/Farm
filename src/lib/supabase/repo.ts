@@ -174,11 +174,38 @@ function mapSplits(rows: any[], transactionId: string): TransactionSplit[] {
   }));
 }
 
+/**
+ * A transaction's Schedule/tax-category placement (Sch F vs Sch C vs Sch E,
+ * and which line) always comes from `tax_category_id`, but nothing was ever
+ * writing that column — every insert path only ever set `farm_category_id`.
+ * The result: every transaction's tax category has silently been null this
+ * whole time, which is why "Expenses by Tax Category" was always empty and
+ * why the SE (Schedule C) / royalty (Schedule E) sheets never got anything
+ * even when the right farm category was picked. This resolves the real
+ * tax_category.id to write, from either an explicit code override or the
+ * chosen farm category's own default_tax_category_id.
+ */
+async function resolveTaxCategoryId(
+  supabase: any,
+  opts: { taxCategoryCode?: string | null; farmCategoryId?: string | null }
+): Promise<string | null> {
+  if (opts.taxCategoryCode) {
+    const { data } = await supabase.from("tax_category").select("id").eq("code", opts.taxCategoryCode).maybeSingle();
+    if (data?.id) return data.id;
+  }
+  if (opts.farmCategoryId) {
+    const { data } = await supabase.from("farm_category").select("default_tax_category_id").eq("id", opts.farmCategoryId).maybeSingle();
+    if (data?.default_tax_category_id) return data.default_tax_category_id;
+  }
+  return null;
+}
+
 export async function createTransaction(input: Omit<Transaction, "id" | "createdAt" | "splits"> & { splits?: Omit<TransactionSplit, "id" | "transactionId">[] }) {
   const { supabase, farm } = await ctx();
-  const [taxYearId, vendorId] = await Promise.all([
+  const [taxYearId, vendorId, taxCategoryId] = await Promise.all([
     getOrCreateTaxYear(supabase, farm.id, input.taxYear),
     input.vendorId ? Promise.resolve(input.vendorId) : getOrCreateVendor(supabase, farm.id, input.vendorName),
+    resolveTaxCategoryId(supabase, { taxCategoryCode: input.taxCategoryCode, farmCategoryId: input.farmCategoryId }),
   ]);
 
   const { data: txn, error } = await supabase.from("transaction").insert({
@@ -186,7 +213,7 @@ export async function createTransaction(input: Omit<Transaction, "id" | "created
     status: input.status, transaction_date: input.transactionDate, vendor_id: vendorId,
     customer_id: input.customerId ?? null, description: input.description ?? null, amount: input.amount,
     sales_tax: input.salesTax ?? 0, payment_method: input.paymentMethod ?? null,
-    farm_category_id: input.farmCategoryId ?? null, receipt_id: input.receiptId ?? null,
+    farm_category_id: input.farmCategoryId ?? null, tax_category_id: taxCategoryId, receipt_id: input.receiptId ?? null,
     is_personal_excluded: input.isPersonalExcluded, cpa_flag: input.cpaFlag ?? false, sync_status: "synced",
   }).select("id").single();
   if (error || !txn) throw error;
@@ -232,10 +259,46 @@ export async function fixMisfiledTaxYears(): Promise<{ checked: number; fixed: n
   return { checked: rows.length, fixed, failed, sample };
 }
 
+/**
+ * One-off repair, same idea as fixMisfiledTaxYears() above: every existing
+ * transaction that already has a farm_category_id but is still missing its
+ * tax_category_id (see resolveTaxCategoryId's comment) gets it filled in
+ * from that farm category's own default. Safe to run any time, and safe to
+ * run more than once — it only ever changes rows whose tax_category_id
+ * doesn't already match their farm category's default.
+ */
+export async function backfillTaxCategories(): Promise<{ checked: number; fixed: number }> {
+  const { supabase, farm } = await ctx();
+  const { data: txns, error } = await supabase
+    .from("transaction")
+    .select("id, farm_category_id, tax_category_id")
+    .eq("farm_business_id", farm.id)
+    .not("farm_category_id", "is", null);
+  if (error) throw new Error(error.message);
+  const rows = (txns ?? []) as { id: string; farm_category_id: string; tax_category_id: string | null }[];
+  if (rows.length === 0) return { checked: 0, fixed: 0 };
+
+  const farmCatIds = Array.from(new Set(rows.map((r) => r.farm_category_id)));
+  const { data: cats } = await supabase.from("farm_category").select("id, default_tax_category_id").in("id", farmCatIds);
+  const defaultByCat = new Map((cats ?? []).map((c: any) => [c.id, c.default_tax_category_id]));
+
+  let fixed = 0;
+  for (const r of rows) {
+    const correct = defaultByCat.get(r.farm_category_id) ?? null;
+    if (!correct || r.tax_category_id === correct) continue;
+    const { error: updErr } = await supabase.from("transaction").update({ tax_category_id: correct }).eq("id", r.id);
+    if (!updErr) fixed++;
+  }
+  return { checked: rows.length, fixed };
+}
+
 export async function updateTransaction(id: string, patch: Partial<Transaction>) {
   const { supabase, farm } = await ctx();
   const update: Record<string, unknown> = {};
   if (patch.farmCategoryId !== undefined) update.farm_category_id = patch.farmCategoryId;
+  if (patch.farmCategoryId !== undefined || patch.taxCategoryCode !== undefined) {
+    update.tax_category_id = await resolveTaxCategoryId(supabase, { taxCategoryCode: patch.taxCategoryCode, farmCategoryId: patch.farmCategoryId });
+  }
   if (patch.status !== undefined) update.status = patch.status;
   if (patch.isPersonalExcluded !== undefined) update.is_personal_excluded = patch.isPersonalExcluded;
   if (patch.cpaFlag !== undefined) update.cpa_flag = patch.cpaFlag;

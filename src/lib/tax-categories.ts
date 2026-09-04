@@ -17,7 +17,7 @@ export interface TaxCategoryDef {
   scheduleReference: string | null;
   type: "income" | "expense";
   /** Which return this category flows to. Omitted = "schedule_f" (the original, farm-only set below). */
-  scheduleType?: "schedule_f" | "schedule_c";
+  scheduleType?: "schedule_f" | "schedule_c" | "schedule_e";
 }
 
 export const TAX_CATEGORIES: TaxCategoryDef[] = [
@@ -83,6 +83,15 @@ export const TAX_CATEGORIES: TaxCategoryDef[] = [
   { code: "se_exp_utilities", label: "Utilities", scheduleReference: "Schedule C, Line 25", type: "expense", scheduleType: "schedule_c" },
   { code: "se_exp_wages", label: "Wages", scheduleReference: "Schedule C, Line 26", type: "expense", scheduleType: "schedule_c" },
   { code: "se_exp_other", label: "Other Expenses (Specify)", scheduleReference: "Schedule C, Line 27a", type: "expense", scheduleType: "schedule_c" },
+
+  // --- Oil & gas / mineral royalties (Schedule E, Part I) ---
+  // Royalty income generally does NOT belong on Schedule F with the rest
+  // of farm income — it flows to Schedule E instead. Mirrors
+  // supabase/migrations/0012_royalty_categories.sql.
+  { code: "income_oil_gas_royalty", label: "Oil & Gas Royalty Income", scheduleReference: "Schedule E, Part I", type: "income", scheduleType: "schedule_e" },
+  { code: "income_mineral_royalty", label: "Mineral Royalty Income (Non-Oil/Gas)", scheduleReference: "Schedule E, Part I", type: "income", scheduleType: "schedule_e" },
+  { code: "income_oil_gas_lease_bonus", label: "Oil & Gas Lease Bonus / Delay Rental", scheduleReference: "Schedule E, Part I", type: "income", scheduleType: "schedule_e" },
+  { code: "exp_royalty_related", label: "Royalty-Related Expenses (Legal, Admin — Ask Your CPA About Depletion)", scheduleReference: "Schedule E, Part I", type: "expense", scheduleType: "schedule_e" },
 ];
 
 export function taxCategoryMeta(code?: string): TaxCategoryDef | undefined {
@@ -98,6 +107,6 @@ export function taxCategoryScheduleRef(code?: string): string {
   return taxCategoryMeta(code)?.scheduleReference ?? "";
 }
 
-export function taxCategoryScheduleType(code?: string): "schedule_f" | "schedule_c" {
+export function taxCategoryScheduleType(code?: string): "schedule_f" | "schedule_c" | "schedule_e" {
   return taxCategoryMeta(code)?.scheduleType ?? "schedule_f";
 }

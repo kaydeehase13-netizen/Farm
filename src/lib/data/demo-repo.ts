@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getDB, mutate } from "./store";
+import { getDB, mutate, type DB } from "./store";
 import { FARM } from "./seed";
 import type {
   Transaction, TransactionSplit, FieldProfitability, Job, Invoice, Payment,
@@ -66,6 +66,15 @@ export function listTransactions(filters: {
   return [...rows].sort((a, b) => b.transactionDate.localeCompare(a.transactionDate));
 }
 
+// Same gap as the live Supabase repo's resolveTaxCategoryId(): a chosen
+// farm category should always carry its default tax category along with
+// it unless something more specific was given explicitly.
+function resolveDemoTaxCategoryCode(db: DB, opts: { taxCategoryCode?: string; farmCategoryId?: string }): string | undefined {
+  if (opts.taxCategoryCode) return opts.taxCategoryCode;
+  if (opts.farmCategoryId) return db.farmCategories.find((c) => c.id === opts.farmCategoryId)?.defaultTaxCategoryCode;
+  return undefined;
+}
+
 export function createTransaction(input: Omit<Transaction, "id" | "createdAt" | "splits"> & { splits?: Omit<TransactionSplit, "id" | "transactionId">[] }) {
   return mutate((db) => {
     const id = randomUUID();
@@ -75,7 +84,8 @@ export function createTransaction(input: Omit<Transaction, "id" | "createdAt" | 
       allocatedAmount: input.amount,
       farmCategoryId: input.farmCategoryId,
     }]).map((s) => ({ ...s, id: randomUUID(), transactionId: id }));
-    const txn: Transaction = { ...input, id, createdAt: new Date().toISOString(), splits };
+    const taxCategoryCode = resolveDemoTaxCategoryCode(db, { taxCategoryCode: input.taxCategoryCode, farmCategoryId: input.farmCategoryId });
+    const txn: Transaction = { ...input, taxCategoryCode, id, createdAt: new Date().toISOString(), splits };
     db.transactions.push(txn);
     return txn;
   });
@@ -86,7 +96,10 @@ export function updateTransaction(id: string, patch: Partial<Transaction>) {
     const idx = db.transactions.findIndex((t) => t.id === id);
     if (idx === -1) return null;
     const taxYear = patch.transactionDate ? Number(patch.transactionDate.slice(0, 4)) || db.transactions[idx].taxYear : undefined;
-    const updated = { ...db.transactions[idx], ...patch, ...(taxYear ? { taxYear } : {}) };
+    const taxCategoryCode = (patch.farmCategoryId !== undefined || patch.taxCategoryCode !== undefined)
+      ? resolveDemoTaxCategoryCode(db, { taxCategoryCode: patch.taxCategoryCode, farmCategoryId: patch.farmCategoryId ?? db.transactions[idx].farmCategoryId })
+      : undefined;
+    const updated = { ...db.transactions[idx], ...patch, ...(taxYear ? { taxYear } : {}), ...(taxCategoryCode !== undefined ? { taxCategoryCode } : {}) };
     if (!patch.splits && updated.splits.length === 1 && (patch.amount !== undefined || patch.farmCategoryId !== undefined)) {
       updated.splits = [{
         ...updated.splits[0],
@@ -118,6 +131,24 @@ export function fixMisfiledTaxYears() {
       }
     }
     return { checked: db.transactions.length, fixed, failed: 0, sample: [] as string[] };
+  });
+}
+
+/** One-off repair: fill in taxCategoryCode from farmCategoryId's default wherever it's missing. */
+export function backfillTaxCategories() {
+  return mutate((db) => {
+    let checked = 0;
+    let fixed = 0;
+    for (const t of db.transactions) {
+      if (!t.farmCategoryId) continue;
+      checked++;
+      const correct = db.farmCategories.find((c) => c.id === t.farmCategoryId)?.defaultTaxCategoryCode;
+      if (correct && t.taxCategoryCode !== correct) {
+        t.taxCategoryCode = correct;
+        fixed++;
+      }
+    }
+    return { checked, fixed };
   });
 }
 

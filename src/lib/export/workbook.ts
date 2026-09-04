@@ -56,11 +56,12 @@ const SECTION_SHEETS: Partial<Record<WorkbookScope, string[]>> = {
   cpa: [
     "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Equipment & Assets",
     "Vehicles & Mileage", "Potential Tax Opportunities", "CPA Questions", "Missing Documentation", "Transaction Detail",
-    "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category",
+    "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Royalty Income (Sch E)",
   ],
   income_expenses: [
     "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Expenses by Farm Category",
-    "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Missing Documentation", "Transaction Detail",
+    "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Royalty Income (Sch E)",
+    "Missing Documentation", "Transaction Detail",
   ],
   fields: ["Farm Summary", "Field Profitability", "Field Expenses", "Field Income", "Crop Summary", "Spray Records"],
   spray: ["Farm Summary", "Spray Records"],
@@ -216,6 +217,28 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     seTaxTotals.set(key, (seTaxTotals.get(key) ?? 0) + t.amount);
   }
   for (const [code, total] of seTaxTotals) seByTax.addRow({ cat: taxCategoryLabel(code), ref: taxCategoryScheduleRef(code), total });
+
+  // --- Oil/Gas/Mineral Royalties (Schedule E) — separate from Schedule F
+  // farm income on purpose; these don't belong mixed in with crop/livestock
+  // sales. Income and expenses share one sheet since Schedule E royalty
+  // volume is usually much lighter than Schedule F/C.
+  const royaltyTxns = yearTxns.filter((t) => !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_e");
+  const royaltySheet = addSheet(wb, "Royalty Income (Sch E)", [
+    { header: "Date", key: "date", width: 14 }, { header: "Type", key: "type", width: 10 },
+    { header: "Payer/Vendor", key: "who", width: 26 }, { header: "Description", key: "description", width: 36 },
+    { header: "Tax Category", key: "taxCategory", width: 34 },
+    { header: "Amount", key: "amount", width: 16, style: { numFmt: CURRENCY_FMT } }, { header: "Documentation", key: "doc", width: 16 },
+  ]);
+  for (const t of royaltyTxns) {
+    royaltySheet.addRow({
+      date: dateCell(t.transactionDate), type: t.transactionType, who: t.vendorName ?? "—", description: t.description,
+      taxCategory: taxCategoryLabel(t.taxCategoryCode), amount: t.amount, doc: t.receiptId ? "On file" : "Missing",
+    });
+  }
+  royaltySheet.getColumn("date").numFmt = "mm/dd/yyyy";
+  royaltySheet.addRow({});
+  const royaltyTotalRow = royaltySheet.addRow({ description: "NET TOTAL", amount: { formula: `SUMIF(B2:B${royaltySheet.rowCount - 1},"income",F2:F${royaltySheet.rowCount - 1})-SUMIF(B2:B${royaltySheet.rowCount - 1},"expense",F2:F${royaltySheet.rowCount - 1})` } });
+  royaltyTotalRow.font = { bold: true };
 
   // --- Field Profitability ---
   const fieldProfit = addSheet(wb, "Field Profitability", [
@@ -429,7 +452,8 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     for (const s of t.splits) {
       detailSheet.addRow({
         date: dateCell(t.transactionDate), type: t.transactionType,
-        schedule: taxCategoryScheduleType(t.taxCategoryCode) === "schedule_c" ? "Schedule C" : "Schedule F",
+        schedule: taxCategoryScheduleType(t.taxCategoryCode) === "schedule_c" ? "Schedule C"
+          : taxCategoryScheduleType(t.taxCategoryCode) === "schedule_e" ? "Schedule E" : "Schedule F",
         vendor: t.vendorName, desc: t.description,
         farmCat: farmCategoryLabel(t.farmCategoryId, farmCategories), taxCat: taxCategoryLabel(t.taxCategoryCode),
         target: splitTargetLabel(s, fields, jobs), amount: s.allocatedAmount, status: t.status, doc: t.receiptId ? "On file" : "Missing",
