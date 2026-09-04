@@ -99,6 +99,8 @@ export interface Transaction {
   farmCategoryId?: string;
   taxCategoryCode?: string;
   receiptId?: string;
+  /** Free-text product/variety this transaction is for — e.g. "DeKalb 63-91" or "Roundup PowerMax". Optional; when set together with a field and a Seed/Chemical/Fertilizer category, it's also used to auto-tag a matching field activity so it doesn't have to be entered twice. */
+  productName?: string;
   /** Set on every line created by splitting one receipt/transaction into multiple categories — shared across all lines from that same split, so they can be traced back to "one original total." Undefined for an ordinary, never-split transaction. */
   splitGroupId?: string;
   isPersonalExcluded: boolean;

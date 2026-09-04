@@ -104,6 +104,9 @@ export async function createExpenseOrIncome(formData: FormData) {
     return;
   }
 
+  const farmCategoryId = str(formData, "farmCategoryId");
+  const productName = str(formData, "productName");
+
   await repo.createTransaction({
     farmBusinessId: farm.id,
     taxYear,
@@ -116,7 +119,8 @@ export async function createExpenseOrIncome(formData: FormData) {
     amount,
     salesTax,
     paymentMethod: str(formData, "paymentMethod"),
-    farmCategoryId: str(formData, "farmCategoryId"),
+    farmCategoryId,
+    productName,
     isPersonalExcluded: str(formData, "isPersonalExcluded") === "on",
     cpaFlag: false,
     syncStatus: "synced",
@@ -125,12 +129,71 @@ export async function createExpenseOrIncome(formData: FormData) {
       fieldId, jobId,
       allocationMethod: "manual",
       allocatedAmount: amount,
-      farmCategoryId: str(formData, "farmCategoryId"),
+      farmCategoryId,
     }],
   });
 
+  if (fieldId && productName) {
+    await tagFieldActivityFromProduct({ fieldId, farmCategoryId, productName, activityDate: transactionDate });
+  }
+
   revalidatePath("/money/transactions");
   revalidatePath("/home");
+}
+
+/**
+ * "Enter a seed variety or chemical on the expense and have it show up on
+ * the field without re-typing it" — when a Seed/Chemical/Fertilizer expense
+ * names a field and a product, this creates the matching field activity
+ * (plant/spray/fertilize) tagged with that product, so it's already there
+ * in the field's activity history and Spray/Crop records instead of having
+ * to be logged separately. Matched by the farm category's NAME (the
+ * default categories are literally named "Seed", "Chemical", "Fertilizer")
+ * rather than a hard schema link, so it also works for any custom category
+ * containing one of those words.
+ *
+ * Chemical and Fertilizer application records require a real rate and
+ * quantity in the schema (for compliance/records purposes), which a
+ * financial transaction doesn't have — rather than writing in a fake 0/0,
+ * this puts the product name in the new activity's notes so it's visible on
+ * the field right away; the rate/EPA# detail can be filled in later by
+ * editing that activity if full structured Spray Records detail is wanted.
+ * Seed doesn't have that constraint, so seed variety is set as real
+ * structured data (seedProductName) immediately.
+ */
+async function tagFieldActivityFromProduct(opts: {
+  fieldId: string; farmCategoryId?: string; productName: string; activityDate: string;
+}) {
+  if (!opts.farmCategoryId) return;
+  const farmCategories = await repo.listFarmCategories();
+  const category = farmCategories.find((c) => c.id === opts.farmCategoryId);
+  const name = (category?.name ?? "").toLowerCase();
+  try {
+    if (name.includes("seed")) {
+      await repo.createActivity({
+        farmBusinessId: (await getFarm()).id, activityType: "plant", fieldId: opts.fieldId,
+        activityDate: opts.activityDate, seedProductName: opts.productName, syncStatus: "synced",
+      });
+    } else if (name.includes("chemical")) {
+      await repo.createActivity({
+        farmBusinessId: (await getFarm()).id, activityType: "spray", fieldId: opts.fieldId,
+        activityDate: opts.activityDate,
+        notes: `Product: ${opts.productName} (from expense entry — add rate/EPA# here for full Spray Records)`,
+        syncStatus: "synced",
+      });
+    } else if (name.includes("fertilizer")) {
+      await repo.createActivity({
+        farmBusinessId: (await getFarm()).id, activityType: "fertilize", fieldId: opts.fieldId,
+        activityDate: opts.activityDate,
+        notes: `Product: ${opts.productName} (from expense entry — add rate here for full fertilizer records)`,
+        syncStatus: "synced",
+      });
+    }
+  } catch {
+    // Never let the activity-tagging side-effect fail the transaction save
+    // itself — the money side is already recorded either way.
+  }
+  revalidatePath("/fields");
 }
 
 /**

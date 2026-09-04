@@ -266,7 +266,8 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   // --- Field Expenses (detail) & Field Income (detail) ---
   const fieldExpenses = addSheet(wb, "Field Expenses", [
     { header: "Field", key: "field", width: 18 }, { header: "Date", key: "date", width: 14 },
-    { header: "Category", key: "cat", width: 20 }, { header: "Description", key: "desc", width: 30 },
+    { header: "Category", key: "cat", width: 20 }, { header: "Product / Variety", key: "product", width: 22 },
+    { header: "Description", key: "desc", width: 30 },
     { header: "Allocated Amount", key: "amount", width: 16, style: { numFmt: CURRENCY_FMT } },
   ]);
   fieldExpenses.getColumn("date").numFmt = "mm/dd/yyyy";
@@ -280,7 +281,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
       if (!s.fieldId) continue;
       const field = fields.find((f) => f.id === s.fieldId);
       if (t.transactionType === "expense") {
-        fieldExpenses.addRow({ field: field?.name, date: dateCell(t.transactionDate), cat: farmCategoryLabel(t.farmCategoryId, farmCategories), desc: t.description, amount: s.allocatedAmount });
+        fieldExpenses.addRow({ field: field?.name, date: dateCell(t.transactionDate), cat: farmCategoryLabel(t.farmCategoryId, farmCategories), product: t.productName ?? "", desc: t.description, amount: s.allocatedAmount });
       } else if (t.transactionType === "income") {
         fieldIncome.addRow({ field: field?.name, date: dateCell(t.transactionDate), desc: t.description, amount: s.allocatedAmount });
       }

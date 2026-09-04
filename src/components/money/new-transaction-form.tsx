@@ -111,6 +111,18 @@ export function NewTransactionForm({
         </Field>
       )}
 
+      {!splitting && type === "expense" && (
+        <Field label="Product / Variety (optional)">
+          <input name="productName" placeholder="e.g. DeKalb 63-91, Roundup PowerMax" className="input" />
+        </Field>
+      )}
+      {!splitting && type === "expense" && (
+        <p className="text-xs text-charcoal/50 -mt-2">
+          For a Seed, Chemical, or Fertilizer expense: fill this in along with a field above and it&apos;s automatically tagged
+          into that field&apos;s activity record too — no need to enter it twice.
+        </p>
+      )}
+
       {splitting && (
         <div className="space-y-2 border border-[--border-color] rounded-lg p-3">
           <div className="text-sm font-medium text-charcoal/70">Line-item breakdown</div>

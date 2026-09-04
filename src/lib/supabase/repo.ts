@@ -121,7 +121,7 @@ function mapTransaction(r: any, splits: TransactionSplit[]): Transaction {
     description: r.description ?? undefined, amount: Number(r.amount), salesTax: r.sales_tax != null ? Number(r.sales_tax) : 0,
     paymentMethod: r.payment_method ?? undefined, farmCategoryId: r.farm_category_id ?? undefined,
     taxCategoryCode: r.tax_category?.code ?? undefined, receiptId: r.receipt_id ?? undefined,
-    splitGroupId: r.split_group_id ?? undefined,
+    splitGroupId: r.split_group_id ?? undefined, productName: r.product_name ?? undefined,
     isPersonalExcluded: r.is_personal_excluded, cpaFlag: r.cpa_flag, cpaNote: r.cpa_note ?? undefined,
     syncStatus: r.sync_status, splits, createdAt: r.created_at,
   };
@@ -223,7 +223,7 @@ export async function createTransaction(input: Omit<Transaction, "id" | "created
     customer_id: input.customerId ?? null, description: input.description ?? null, amount: input.amount,
     sales_tax: input.salesTax ?? 0, payment_method: input.paymentMethod ?? null,
     farm_category_id: input.farmCategoryId ?? null, tax_category_id: taxCategoryId, receipt_id: input.receiptId ?? null,
-    split_group_id: input.splitGroupId ?? null,
+    split_group_id: input.splitGroupId ?? null, product_name: input.productName ?? null,
     is_personal_excluded: input.isPersonalExcluded, cpa_flag: input.cpaFlag ?? false, sync_status: "synced",
   }).select("id").single();
   if (error || !txn) throw error;
@@ -312,6 +312,7 @@ export async function updateTransaction(id: string, patch: Partial<Transaction>)
   if (patch.status !== undefined) update.status = patch.status;
   if (patch.transactionType !== undefined) update.transaction_type = patch.transactionType;
   if (patch.splitGroupId !== undefined) update.split_group_id = patch.splitGroupId;
+  if (patch.productName !== undefined) update.product_name = patch.productName;
   if (patch.isPersonalExcluded !== undefined) update.is_personal_excluded = patch.isPersonalExcluded;
   if (patch.cpaFlag !== undefined) update.cpa_flag = patch.cpaFlag;
   if (patch.cpaNote !== undefined) update.cpa_note = patch.cpaNote;
