@@ -143,6 +143,9 @@ export function TransactionsTable({
                 </td>
                 <td>{t.receiptId ? <span className="status-pill status-green">✓</span> : <Link prefetch={false} href="/money/receipts/new" className="text-status-amber text-xs underline">missing</Link>}</td>
                 <td className="whitespace-nowrap text-xs">
+                  <Link prefetch={false} href={`/money/transactions/${t.id}/split`} className="text-forest hover:underline mr-2">
+                    Split
+                  </Link>
                   <button onClick={() => toggleOmitted(t)} disabled={isPending} className="text-charcoal/60 hover:underline mr-2">
                     {t.isPersonalExcluded ? "Un-omit" : "Omit"}
                   </button>

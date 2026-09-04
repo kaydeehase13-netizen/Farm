@@ -75,6 +75,10 @@ function resolveDemoTaxCategoryCode(db: DB, opts: { taxCategoryCode?: string; fa
   return undefined;
 }
 
+export function getTransaction(id: string) {
+  return getDB().transactions.find((t) => t.id === id) ?? null;
+}
+
 export function createTransaction(input: Omit<Transaction, "id" | "createdAt" | "splits"> & { splits?: Omit<TransactionSplit, "id" | "transactionId">[] }) {
   return mutate((db) => {
     const id = randomUUID();

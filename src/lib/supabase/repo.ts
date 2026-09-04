@@ -165,6 +165,14 @@ export async function listTransactions(filters: {
   return result;
 }
 
+export async function getTransaction(id: string): Promise<Transaction | null> {
+  const { supabase, farm } = await ctx();
+  const { data: r } = await supabase.from("transaction").select(TXN_SELECT).eq("id", id).eq("farm_business_id", farm.id).maybeSingle();
+  if (!r) return null;
+  const { data: splitRows } = await supabase.from("transaction_split").select("*").eq("transaction_id", id);
+  return mapTransaction(r, mapSplits(splitRows ?? [], id));
+}
+
 function mapSplits(rows: any[], transactionId: string): TransactionSplit[] {
   return rows.filter((s) => s.transaction_id === transactionId).map((s) => ({
     id: s.id, transactionId: s.transaction_id, targetType: s.target_type, fieldId: s.field_id ?? undefined,
@@ -300,6 +308,7 @@ export async function updateTransaction(id: string, patch: Partial<Transaction>)
     update.tax_category_id = await resolveTaxCategoryId(supabase, { taxCategoryCode: patch.taxCategoryCode, farmCategoryId: patch.farmCategoryId });
   }
   if (patch.status !== undefined) update.status = patch.status;
+  if (patch.transactionType !== undefined) update.transaction_type = patch.transactionType;
   if (patch.isPersonalExcluded !== undefined) update.is_personal_excluded = patch.isPersonalExcluded;
   if (patch.cpaFlag !== undefined) update.cpa_flag = patch.cpaFlag;
   if (patch.cpaNote !== undefined) update.cpa_note = patch.cpaNote;

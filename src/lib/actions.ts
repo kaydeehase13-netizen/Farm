@@ -126,6 +126,76 @@ export async function createExpenseOrIncome(formData: FormData) {
   revalidatePath("/home");
 }
 
+/**
+ * Splits an ALREADY-SAVED transaction into multiple category/type line
+ * items — the "back check what's already uploaded" counterpart to the
+ * split option on the new-transaction form. The original transaction is
+ * turned into the first line (so it keeps its id, receipt link, and
+ * created-at date) and the rest are created as new transactions dated and
+ * vendored the same as the original.
+ */
+export async function splitTransactionAction(transactionId: string, formData: FormData) {
+  const original = await repo.getTransaction(transactionId);
+  if (!original) throw new Error("That transaction couldn't be found — it may have already been deleted.");
+
+  const rawSplitLines = str(formData, "splitLines");
+  const parsed = (rawSplitLines ? JSON.parse(rawSplitLines) : []) as { type?: string; farmCategoryId: string; amount: string }[];
+  const lines = parsed
+    .map((l) => ({
+      type: (l.type === "income" || l.type === "expense" ? l.type : original.transactionType) as "income" | "expense",
+      farmCategoryId: l.farmCategoryId, amount: Number(l.amount) || 0,
+    }))
+    .filter((l) => l.farmCategoryId && l.amount > 0);
+
+  if (lines.length < 2) throw new Error("Add at least two category lines that each have an amount before splitting.");
+
+  const farmCategories = await repo.listFarmCategories();
+  const nameById = new Map(farmCategories.map((c) => [c.id, c.name]));
+  const baseDescription = (original.description ?? "").replace(/ — .+$/, ""); // strip a prior split suffix if re-splitting
+  const lineLabel = (farmCategoryId: string) => `${baseDescription} — ${nameById.get(farmCategoryId) ?? "Split"}`.trim();
+
+  const [first, ...rest] = lines;
+  await repo.updateTransaction(transactionId, {
+    transactionType: first.type,
+    farmCategoryId: first.farmCategoryId,
+    amount: first.amount,
+    description: lineLabel(first.farmCategoryId),
+  });
+
+  const originalSplit = original.splits[0];
+  for (const line of rest) {
+    await repo.createTransaction({
+      farmBusinessId: original.farmBusinessId,
+      taxYear: original.taxYear,
+      transactionType: line.type,
+      status: "categorized",
+      transactionDate: original.transactionDate,
+      vendorName: original.vendorName,
+      customerId: original.customerId,
+      description: lineLabel(line.farmCategoryId),
+      amount: line.amount,
+      salesTax: 0,
+      paymentMethod: original.paymentMethod,
+      farmCategoryId: line.farmCategoryId,
+      isPersonalExcluded: original.isPersonalExcluded,
+      cpaFlag: false,
+      syncStatus: "synced",
+      splits: [{
+        targetType: originalSplit?.targetType ?? "general_overhead",
+        fieldId: originalSplit?.fieldId,
+        jobId: originalSplit?.jobId,
+        allocationMethod: "manual",
+        allocatedAmount: line.amount,
+        farmCategoryId: line.farmCategoryId,
+      }],
+    });
+  }
+
+  revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
+  revalidatePath("/home");
+}
+
 export async function createFieldAction(formData: FormData) {
   await repo.createField({
     name: str(formData, "name") ?? "Untitled Field",

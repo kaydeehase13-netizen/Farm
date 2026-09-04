@@ -57,6 +57,11 @@ export async function listTransactions(filters: Parameters<typeof demo.listTrans
   return demo.listTransactions(filters);
 }
 
+export async function getTransaction(id: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).getTransaction(id);
+  return demo.getTransaction(id);
+}
+
 export async function createTransaction(input: Omit<Transaction, "id" | "createdAt" | "splits"> & { splits?: Omit<TransactionSplit, "id" | "transactionId">[] }) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createTransaction(input);
   return demo.createTransaction(input);
