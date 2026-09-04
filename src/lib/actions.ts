@@ -551,31 +551,61 @@ export async function rescanReceiptsForSplitsAction(cursor = 0): Promise<{
   nextCursor: number | null;
   totalCandidates: number;
 }> {
-  const MAX_PER_RUN = 15;
+  // Kept small and run IN PARALLEL on purpose: this runs as a Netlify
+  // function behind the same request/response timeout as any other server
+  // action (10-26s depending on plan). Scanning receipts one at a time
+  // through OpenAI vision easily blew past that on a batch of 15, which is
+  // what caused "An unexpected response was received from the server" —
+  // the function got killed mid-request and the client got back a
+  // truncated response instead of the action's real result. Running a
+  // small batch concurrently, each with its own hard timeout, keeps total
+  // wall-clock close to the SLOWEST single scan instead of the sum of all
+  // of them.
+  const MAX_PER_RUN = 4;
+  const PER_SCAN_TIMEOUT_MS = 20_000;
   const receipts = await repo.listReceipts();
   const candidates = receipts;
   const batch = candidates.slice(cursor, cursor + MAX_PER_RUN);
 
+  const results = await Promise.all(
+    batch.map(async (r) => {
+      try {
+        const full = await repo.getReceipt(r.id);
+        if (!full?.fileDataUrl) return null;
+        const match = /^data:(.*?);base64,([\s\S]*)$/.exec(full.fileDataUrl);
+        const mimeType = match?.[1] ?? "image/jpeg";
+        const base64 = match?.[2] ?? full.fileDataUrl;
+        const result = await Promise.race([
+          scanReceiptImage(base64, mimeType),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), PER_SCAN_TIMEOUT_MS)),
+        ]);
+        if (!result) return { scanned: true as const, flag: null };
+        if (result.multipleCategories && result.categoryBreakdown.length >= 2) {
+          return {
+            scanned: true as const,
+            flag: {
+              receiptId: r.id,
+              fileName: r.fileName,
+              vendorName: full.ocrVendorGuess,
+              transactionDate: full.ocrDateGuess,
+              linkedTransactionId: r.linkedTransactionId,
+              categoryBreakdown: result.categoryBreakdown,
+            } satisfies ReceiptRescanFlag,
+          };
+        }
+        return { scanned: true as const, flag: null };
+      } catch {
+        // One bad receipt (unreadable image, a hiccup mid-request) should
+        // never take the rest of the batch down with it.
+        return null;
+      }
+    })
+  );
+
+  const scanned = results.filter((r) => r?.scanned).length;
   const flagged: ReceiptRescanFlag[] = [];
-  let scanned = 0;
-  for (const r of batch) {
-    const full = await repo.getReceipt(r.id);
-    if (!full?.fileDataUrl) continue;
-    scanned++;
-    const match = /^data:(.*?);base64,([\s\S]*)$/.exec(full.fileDataUrl);
-    const mimeType = match?.[1] ?? "image/jpeg";
-    const base64 = match?.[2] ?? full.fileDataUrl;
-    const result = await scanReceiptImage(base64, mimeType);
-    if (result.multipleCategories && result.categoryBreakdown.length >= 2) {
-      flagged.push({
-        receiptId: r.id,
-        fileName: r.fileName,
-        vendorName: full.ocrVendorGuess,
-        transactionDate: full.ocrDateGuess,
-        linkedTransactionId: r.linkedTransactionId,
-        categoryBreakdown: result.categoryBreakdown,
-      });
-    }
+  for (const r of results) {
+    if (r?.flag) flagged.push(r.flag);
   }
 
   const nextCursor = cursor + MAX_PER_RUN < candidates.length ? cursor + MAX_PER_RUN : null;
