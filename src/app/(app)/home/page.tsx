@@ -14,7 +14,7 @@ export default async function HomePage() {
   const recent = allTxns.slice(0, 6);
 
   const attention = [
-    { label: "Missing Receipts", count: summary.needsAttention.missingReceipts, href: "/money/receipts", icon: Receipt },
+    { label: "Missing Receipts", count: summary.needsAttention.missingReceipts, href: "/money/transactions?missingReceipt=1", icon: Receipt },
     { label: "Transactions Needing Review", count: summary.needsAttention.transactionsNeedingReview, href: "/money/transactions?status=needs_review", icon: FileWarning },
     { label: "CPA Questions", count: summary.needsAttention.cpaQuestionsOpen, href: "/tax", icon: HelpCircle },
     { label: "Overdue Invoices", count: summary.needsAttention.overdueInvoices, href: "/work/invoices", icon: AlertTriangle },

@@ -11,7 +11,13 @@ export function DeleteReceiptButton({ receiptId, hasTransaction }: { receiptId: 
       ? "Delete this receipt? The expense it created will stay, it'll just show as missing documentation."
       : "Delete this receipt? This can't be undone.";
     if (!window.confirm(msg)) return;
-    startTransition(() => deleteReceiptAction(receiptId));
+    startTransition(async () => {
+      try {
+        await deleteReceiptAction(receiptId);
+      } catch (e) {
+        window.alert(e instanceof Error ? e.message : "That receipt couldn't be deleted.");
+      }
+    });
   }
 
   return (

@@ -6,11 +6,11 @@ import { getViewTaxYear } from "@/lib/tax-year";
 export default async function TransactionsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ type?: string; status?: string; q?: string; fieldId?: string }>;
+  searchParams: Promise<{ type?: string; status?: string; q?: string; fieldId?: string; missingReceipt?: string }>;
 }) {
   const params = await searchParams;
   const taxYear = await getViewTaxYear();
-  const [transactions, data] = await Promise.all([
+  const [allTransactions, data] = await Promise.all([
     listTransactions({
       taxYear: taxYear,
       type: params.type,
@@ -21,10 +21,20 @@ export default async function TransactionsPage({
     getAppData(taxYear),
   ]);
 
+  // "Missing Receipts" (linked from Home / Tax) needs the actual expense
+  // transactions that have no receipt on file, not the receipts list itself
+  // (which only ever shows receipts that DO exist — there's nothing to filter
+  // there for "missing"). Filtered here rather than in listTransactions so
+  // every existing caller/filter combination keeps working unchanged.
+  const missingReceiptOnly = params.missingReceipt === "1";
+  const transactions = missingReceiptOnly
+    ? allTransactions.filter((t) => t.transactionType === "expense" && !t.receiptId)
+    : allTransactions;
+
   return (
     <div>
       <PageHeader
-        title="Transactions"
+        title={missingReceiptOnly ? "Transactions Missing Receipts" : "Transactions"}
         description={`${transactions.length} transaction${transactions.length === 1 ? "" : "s"} · Tax year ${taxYear}`}
         action={
           <div className="flex gap-2">
@@ -61,7 +71,16 @@ export default async function TransactionsPage({
           <option value="">All fields</option>
           {data.fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
         </select>
+        <label className="card px-3 py-2 flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="missingReceipt" value="1" defaultChecked={missingReceiptOnly} />
+          Missing receipt only
+        </label>
         <button className="bg-cream-deep px-4 py-2 rounded-lg font-medium">Filter</button>
+        {missingReceiptOnly && (
+          <a href="/money/transactions" className="px-4 py-2 text-sm font-medium text-forest self-center hover:underline">
+            Clear filter
+          </a>
+        )}
       </form>
 
       <TransactionsTable transactions={transactions} categories={data.farmCategories} fields={data.fields} />

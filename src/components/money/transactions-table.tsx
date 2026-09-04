@@ -44,7 +44,17 @@ export function TransactionsTable({
   function bulkDelete() {
     if (!window.confirm(`Permanently delete ${selected.size} transaction${selected.size === 1 ? "" : "s"}? This can't be undone.`)) return;
     const ids = Array.from(selected);
-    startTransition(async () => { for (const id of ids) await deleteTransactionAction(id); });
+    startTransition(async () => {
+      const failures: string[] = [];
+      for (const id of ids) {
+        try {
+          await deleteTransactionAction(id);
+        } catch (e) {
+          failures.push(e instanceof Error ? e.message : "unknown error");
+        }
+      }
+      if (failures.length > 0) window.alert(`${failures.length} of ${ids.length} couldn't be deleted.`);
+    });
     setSelected(new Set());
   }
 
@@ -62,7 +72,13 @@ export function TransactionsTable({
   }
   function deleteOne(t: Transaction) {
     if (!window.confirm(`Permanently delete this ${t.transactionType}${t.vendorName ? ` (${t.vendorName})` : ""}? This can't be undone.`)) return;
-    startTransition(() => deleteTransactionAction(t.id));
+    startTransition(async () => {
+      try {
+        await deleteTransactionAction(t.id);
+      } catch (e) {
+        window.alert(e instanceof Error ? e.message : "That transaction couldn't be deleted.");
+      }
+    });
   }
 
   const categoryName = (id?: string) => categories.find((c) => c.id === id)?.name ?? "Uncategorized";

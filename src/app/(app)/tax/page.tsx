@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { dashboardSummary, listTaxOpportunities, listTaxQuestions } from "@/lib/data/repo";
 import { PageHeader, StatCard } from "@/components/ui/stat-card";
 import { createTaxQuestionAction } from "@/lib/actions";
@@ -30,7 +31,9 @@ export default async function TaxCenterPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <StatCard label="Tax Readiness" value={`${summary.taxReadinessPct}%`} tone={summary.taxReadinessPct >= 80 ? "green" : "amber"} />
-        <StatCard label="Missing Receipts" value={String(summary.needsAttention.missingReceipts)} tone={summary.needsAttention.missingReceipts > 0 ? "amber" : "green"} />
+        <Link href="/money/transactions?missingReceipt=1">
+          <StatCard label="Missing Receipts" value={String(summary.needsAttention.missingReceipts)} tone={summary.needsAttention.missingReceipts > 0 ? "amber" : "green"} />
+        </Link>
         <StatCard label="Transactions Needing Review" value={String(summary.needsAttention.transactionsNeedingReview)} tone={summary.needsAttention.transactionsNeedingReview > 0 ? "amber" : "green"} />
         <StatCard label="Open CPA Questions" value={String(summary.needsAttention.cpaQuestionsOpen)} tone={summary.needsAttention.cpaQuestionsOpen > 0 ? "blue" : "green"} />
       </div>

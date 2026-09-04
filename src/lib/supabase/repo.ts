@@ -353,8 +353,13 @@ export async function updateTransaction(id: string, patch: Partial<Transaction>)
 export async function deleteTransaction(id: string): Promise<void> {
   const { supabase, farm } = await ctx();
   // transaction_split rows cascade on delete (see schema), so this alone is enough.
-  const { error } = await supabase.from("transaction").delete().eq("id", id).eq("farm_business_id", farm.id);
+  // .select("id") after delete() so we get back the row(s) actually
+  // deleted — a Postgres RLS policy that blocks the delete doesn't error,
+  // it just matches 0 rows, which used to look like a successful delete
+  // that silently did nothing (see migration 0016).
+  const { data, error } = await supabase.from("transaction").delete().eq("id", id).eq("farm_business_id", farm.id).select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("That transaction couldn't be deleted — it may already be gone.");
 }
 
 export async function deleteReceipt(id: string): Promise<void> {
@@ -362,8 +367,12 @@ export async function deleteReceipt(id: string): Promise<void> {
   // Unlink rather than delete any transaction created from this receipt —
   // removing the photo/entry shouldn't silently delete the expense too.
   await supabase.from("transaction").update({ receipt_id: null }).eq("receipt_id", id).eq("farm_business_id", farm.id);
-  const { error } = await supabase.from("receipt").delete().eq("id", id).eq("farm_business_id", farm.id);
+  // .select("id") so a delete that RLS silently blocks (0 rows matched, no
+  // error — see migration 0016) surfaces as a real error instead of the
+  // receipt just staying in the list with no explanation.
+  const { data, error } = await supabase.from("receipt").delete().eq("id", id).eq("farm_business_id", farm.id).select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("That receipt couldn't be deleted — it may already be gone.");
 }
 
 // Every column EXCEPT file_data_url — that column holds the whole receipt
