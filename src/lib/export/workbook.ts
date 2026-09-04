@@ -43,7 +43,7 @@ export type WorkbookScope =
   // even queries) data it doesn't need, so it downloads much quicker than
   // the full package. "field_report" / "custom_work" / "spray" are kept as
   // aliases of the closest new section for any existing callers.
-  | "income_expenses" | "fields" | "work" | "equipment" | "other" | "tax_review"
+  | "income_expenses" | "fields" | "work" | "equipment" | "other" | "tax_review" | "receipts_full_total"
   | "field_report" | "custom_work" | "spray";
 
 export interface WorkbookOptions {
@@ -57,11 +57,12 @@ const SECTION_SHEETS: Partial<Record<WorkbookScope, string[]>> = {
     "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Equipment & Assets",
     "Vehicles & Mileage", "Potential Tax Opportunities", "CPA Questions", "Missing Documentation", "Transaction Detail",
     "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Royalty Income (Sch E)",
+    "Receipts - Full Total",
   ],
   income_expenses: [
     "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Expenses by Farm Category",
     "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Royalty Income (Sch E)",
-    "Missing Documentation", "Transaction Detail",
+    "Missing Documentation", "Transaction Detail", "Receipts - Full Total",
   ],
   fields: ["Farm Summary", "Field Profitability", "Field Expenses", "Field Income", "Crop Summary", "Spray Records"],
   spray: ["Farm Summary", "Spray Records"],
@@ -71,6 +72,11 @@ const SECTION_SHEETS: Partial<Record<WorkbookScope, string[]>> = {
   equipment: ["Farm Summary", "Equipment & Assets", "Equipment Repairs", "Vehicles & Mileage"],
   other: ["Farm Summary", "Livestock", "Loans & Interest", "Inventory Purchases"],
   tax_review: ["Farm Summary", "Potential Tax Opportunities", "CPA Questions"],
+  // A standalone download of just the reconstructed "one receipt = one row"
+  // totals — the companion to Transaction Detail's itemized breakdown, for
+  // whenever the itemized and full-total views need to be two separate files
+  // rather than two sheets in the same workbook.
+  receipts_full_total: ["Farm Summary", "Receipts - Full Total"],
 };
 
 export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buffer> {
@@ -460,6 +466,61 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
       });
     }
   }
+
+  // --- Receipts - Full Total ---
+  // A companion view to "Transaction Detail" above: that sheet shows the
+  // itemized breakdown (one row per category line), this one reconstructs
+  // what the original receipt/check actually totaled by grouping every line
+  // that shares a splitGroupId back into a single row. Anything that was
+  // never split just shows its own full amount, same as always — so this
+  // sheet always adds up to the same grand total as the itemized one.
+  const fullTotalSheet = addSheet(wb, "Receipts - Full Total", [
+    { header: "Date", key: "date", width: 14 }, { header: "Vendor/Source", key: "vendor", width: 24 },
+    { header: "Description", key: "desc", width: 34 }, { header: "Categories", key: "cats", width: 42 },
+    { header: "# Lines", key: "lines", width: 9 },
+    { header: "Total Amount", key: "amount", width: 16, style: { numFmt: CURRENCY_FMT } },
+    { header: "Documentation", key: "doc", width: 16 },
+  ]);
+  fullTotalSheet.getColumn("date").numFmt = "mm/dd/yyyy";
+  const splitGroups = new Map<string, typeof yearTxns>();
+  const unsplit: typeof yearTxns = [];
+  for (const t of yearTxns) {
+    if (t.isPersonalExcluded) continue;
+    if (t.splitGroupId) {
+      const arr = splitGroups.get(t.splitGroupId) ?? [];
+      arr.push(t);
+      splitGroups.set(t.splitGroupId, arr);
+    } else {
+      unsplit.push(t);
+    }
+  }
+  for (const lines of splitGroups.values()) {
+    const first = lines[0];
+    const sameType = lines.every((l) => l.transactionType === first.transactionType);
+    // Nearly every split receipt is all-expense or all-income — sum straight
+    // across. On the rare receipt split across both types (e.g. a check that
+    // covered a royalty payment AND a related expense), net them the same
+    // way the Royalty (Sch E) sheet nets income vs. expense.
+    const total = sameType
+      ? lines.reduce((sum, l) => sum + l.amount, 0)
+      : Math.abs(lines.reduce((sum, l) => sum + (l.transactionType === "expense" ? -l.amount : l.amount), 0));
+    const cats = [...new Set(lines.map((l) => farmCategoryLabel(l.farmCategoryId, farmCategories)))].join(", ");
+    fullTotalSheet.addRow({
+      date: dateCell(first.transactionDate), vendor: first.vendorName,
+      desc: (first.description ?? "").replace(/ — [^—]+$/, ""), cats, lines: lines.length,
+      amount: total, doc: lines.some((l) => l.receiptId) ? "On file" : "Missing",
+    });
+  }
+  for (const t of unsplit) {
+    fullTotalSheet.addRow({
+      date: dateCell(t.transactionDate), vendor: t.vendorName, desc: t.description,
+      cats: farmCategoryLabel(t.farmCategoryId, farmCategories), lines: 1,
+      amount: t.amount, doc: t.receiptId ? "On file" : "Missing",
+    });
+  }
+  fullTotalSheet.addRow({});
+  const fullTotalRow = fullTotalSheet.addRow({ desc: "TOTAL", amount: { formula: `SUM(F2:F${fullTotalSheet.rowCount - 1})` } });
+  fullTotalRow.font = { bold: true };
 
   // Trim to just the sheets this scope needs. "full" has no entry in
   // SECTION_SHEETS, so it keeps everything built above.

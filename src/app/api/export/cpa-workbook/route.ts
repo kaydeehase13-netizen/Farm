@@ -3,7 +3,7 @@ import { buildWorkbook, type WorkbookScope } from "@/lib/export/workbook";
 import { getFarm } from "@/lib/data/repo";
 
 const VALID_SCOPES: WorkbookScope[] = [
-  "full", "cpa", "income_expenses", "fields", "work", "equipment", "other", "tax_review",
+  "full", "cpa", "income_expenses", "fields", "work", "equipment", "other", "tax_review", "receipts_full_total",
   "field_report", "custom_work", "spray",
 ];
 
@@ -16,6 +16,7 @@ const FILE_LABEL: Record<WorkbookScope, string> = {
   equipment: "Equipment_and_Vehicles",
   other: "Other_Records",
   tax_review: "Tax_Review",
+  receipts_full_total: "Receipts_Full_Total",
   field_report: "Field_Records",
   custom_work: "Custom_Work",
   spray: "Spray_Records",

@@ -122,6 +122,11 @@ export async function createReceiptAndExpense(input: Parameters<typeof demo.crea
   return demo.createReceiptAndExpense(input);
 }
 
+export async function createReceiptAndSplitExpenses(input: Parameters<typeof demo.createReceiptAndSplitExpenses>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createReceiptAndSplitExpenses(input);
+  return demo.createReceiptAndSplitExpenses(input);
+}
+
 export async function listActivities(filters: Parameters<typeof demo.listActivities>[0] = {}) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listActivities(filters);
   return demo.listActivities(filters);

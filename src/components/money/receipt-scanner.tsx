@@ -1,9 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { FarmCategory, Field } from "@/types/domain";
 import { saveReceiptAndCreateExpenseAction } from "@/lib/actions";
+
+type LineType = "income" | "expense";
+type SplitLine = { key: string; type: LineType; farmCategoryId: string; amount: string };
 
 /**
  * Modern phone cameras produce photos that are several MB — plenty to make a
@@ -43,6 +46,45 @@ export function ReceiptScanner({ categories, fields }: { categories: FarmCategor
   const [saveError, setSaveError] = useState<string | null>(null);
   const router = useRouter();
 
+  // When the scan finds line items spanning 2+ categories, offer to split
+  // this receipt into separate transactions instead of forcing it all under
+  // one category.
+  const [multiCategoryHint, setMultiCategoryHint] = useState<{ category: string; amount: number }[] | null>(null);
+  const [splitting, setSplitting] = useState(false);
+  const [splitError, setSplitError] = useState<string | null>(null);
+  const makeKey = useId();
+  let keySeq = 0;
+  const newLine = (type: LineType = "expense", farmCategoryId = categories[0]?.id ?? ""): SplitLine =>
+    ({ key: `${makeKey}-${keySeq++}`, type, farmCategoryId, amount: "" });
+  const [splitLines, setSplitLines] = useState<SplitLine[]>(() => [newLine(), newLine()]);
+
+  const splitNet = useMemo(
+    () => splitLines.reduce((sum, l) => sum + (l.type === "expense" ? 1 : -1) * (Number(l.amount) || 0), 0),
+    [splitLines]
+  );
+  const amountNum = Number(fields2.amount) || 0;
+  const splitMismatch = splitting && Math.abs(splitNet - amountNum) > 0.005;
+
+  function updateLine(key: string, patch: Partial<SplitLine>) {
+    setSplitLines((lines) => lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  }
+  function addLine() {
+    setSplitLines((lines) => [...lines, newLine()]);
+  }
+  function removeLine(key: string) {
+    setSplitLines((lines) => (lines.length <= 2 ? lines : lines.filter((l) => l.key !== key)));
+  }
+  function enableSplit(prefill?: { category: string; amount: number }[]) {
+    if (prefill && prefill.length >= 2) {
+      setSplitLines(prefill.map((p) => {
+        const matched = categories.find((c) => c.name.toLowerCase() === p.category.toLowerCase());
+        return newLine("expense", matched?.id ?? categories[0]?.id ?? "") && { key: `${makeKey}-${keySeq++}`, type: "expense" as LineType, farmCategoryId: matched?.id ?? categories[0]?.id ?? "", amount: String(p.amount) };
+      }));
+    }
+    setSplitting(true);
+    setSplitError(null);
+  }
+
   async function handleFile(file: File) {
     setFileName(file.name);
     setSaveError(null);
@@ -63,6 +105,8 @@ export function ReceiptScanner({ categories, fields }: { categories: FarmCategor
     if (!preview) return;
     setScanning(true);
     setScanNote(null);
+    setMultiCategoryHint(null);
+    setSplitting(false);
     try {
       const [meta, base64] = preview.split(",");
       const mimeType = meta.match(/data:(.*);base64/)?.[1] ?? "image/jpeg";
@@ -85,7 +129,12 @@ export function ReceiptScanner({ categories, fields }: { categories: FarmCategor
         const matched = categories.find((c) => c.name.toLowerCase() === (data.suggestedCategory ?? "").toLowerCase());
         if (matched) setFields2((f) => ({ ...f, category: matched.id }));
         if (data.stub) setScanNote(data.note ?? "AI scanning isn't configured — enter details manually below.");
-        else setScanNote("Extracted from the photo — please double-check before saving.");
+        else if (data.multipleCategories) {
+          setMultiCategoryHint(data.categoryBreakdown ?? []);
+          setScanNote("Extracted from the photo — please double-check before saving.");
+        } else {
+          setScanNote("Extracted from the photo — please double-check before saving.");
+        }
       }
     } catch {
       setScanNote("Scan failed. Enter details manually below.");
@@ -94,10 +143,27 @@ export function ReceiptScanner({ categories, fields }: { categories: FarmCategor
     }
   }
 
+  function validateSplit(): boolean {
+    if (Math.abs(splitNet - amountNum) > 0.005) {
+      setSplitError(`These lines total ${splitNet.toFixed(2)}, but the receipt amount above is ${amountNum.toFixed(2)}. Fix one so they match.`);
+      return false;
+    }
+    if (splitLines.some((l) => !l.farmCategoryId || !l.amount)) {
+      setSplitError("Every line needs a category and an amount.");
+      return false;
+    }
+    setSplitError(null);
+    return true;
+  }
+
   async function save(formData: FormData) {
+    if (splitting && !validateSplit()) return;
     formData.set("fileName", fileName || "receipt.jpg");
     if (preview) formData.set("fileDataUrl", preview);
     formData.set("captureSource", "web_upload");
+    if (splitting) {
+      formData.set("splitLines", JSON.stringify(splitLines.map((l) => ({ type: l.type, farmCategoryId: l.farmCategoryId, amount: l.amount }))));
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -144,6 +210,16 @@ export function ReceiptScanner({ categories, fields }: { categories: FarmCategor
           {scanning ? "Scanning…" : "Scan with AI"}
         </button>
         {scanNote && <p className="text-xs text-status-amber mt-2">{scanNote}</p>}
+        {multiCategoryHint && multiCategoryHint.length >= 2 && !splitting && (
+          <div className="mt-3 text-sm bg-wheat/30 border border-wheat rounded-lg p-3">
+            <p className="text-charcoal/70">
+              This looks like it covers {multiCategoryHint.length} categories: {multiCategoryHint.map((c) => `${c.category} (${c.amount.toFixed(2)})`).join(", ")}.
+            </p>
+            <button type="button" onClick={() => enableSplit(multiCategoryHint)} className="text-forest font-medium hover:underline mt-1">
+              Split it into separate transactions →
+            </button>
+          </div>
+        )}
       </div>
 
       <form action={save} className="card p-6 space-y-4 h-fit">
@@ -158,20 +234,55 @@ export function ReceiptScanner({ categories, fields }: { categories: FarmCategor
           <input type="date" name="date" className="input" value={fields2.date} onChange={(e) => setFields2({ ...fields2, date: e.target.value })} required />
         </label>
         <label className="block">
-          <div className="text-sm font-medium text-charcoal/70 mb-1">Amount</div>
+          <div className="text-sm font-medium text-charcoal/70 mb-1">{splitting ? "Receipt Total" : "Amount"}</div>
           <input type="number" step="0.01" name="amount" className="input" value={fields2.amount} onChange={(e) => setFields2({ ...fields2, amount: e.target.value })} required />
         </label>
-        <label className="block">
-          <div className="text-sm font-medium text-charcoal/70 mb-1">Sales Tax</div>
-          <input type="number" step="0.01" name="salesTax" className="input" value={fields2.salesTax} onChange={(e) => setFields2({ ...fields2, salesTax: e.target.value })} />
+        {!splitting && (
+          <label className="block">
+            <div className="text-sm font-medium text-charcoal/70 mb-1">Sales Tax</div>
+            <input type="number" step="0.01" name="salesTax" className="input" value={fields2.salesTax} onChange={(e) => setFields2({ ...fields2, salesTax: e.target.value })} />
+          </label>
+        )}
+
+        <label className="flex items-center gap-2 text-sm bg-wheat/20 border border-wheat rounded-lg px-3 py-2">
+          <input type="checkbox" checked={splitting} onChange={(e) => (e.target.checked ? enableSplit() : setSplitting(false))} />
+          This receipt covers more than one category — split it
         </label>
-        <label className="block">
-          <div className="text-sm font-medium text-charcoal/70 mb-1">Category</div>
-          <select name="farmCategoryId" className="input" value={fields2.category} onChange={(e) => setFields2({ ...fields2, category: e.target.value })} required>
-            <option value="" disabled>Choose a category…</option>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </label>
+
+        {!splitting && (
+          <label className="block">
+            <div className="text-sm font-medium text-charcoal/70 mb-1">Category</div>
+            <select name="farmCategoryId" className="input" value={fields2.category} onChange={(e) => setFields2({ ...fields2, category: e.target.value })} required>
+              <option value="" disabled>Choose a category…</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+        )}
+
+        {splitting && (
+          <div className="space-y-2 border border-[--border-color] rounded-lg p-3">
+            <div className="text-sm font-medium text-charcoal/70">Line-item breakdown</div>
+            {splitLines.map((line) => (
+              <div key={line.key} className="flex flex-wrap gap-2 items-center">
+                <div className="flex rounded-lg border border-[--border-color] overflow-hidden text-xs font-medium">
+                  <button type="button" onClick={() => updateLine(line.key, { type: "expense" })} className={`px-2.5 py-2 ${line.type === "expense" ? "bg-forest text-white" : "bg-transparent text-charcoal/60"}`}>Expense</button>
+                  <button type="button" onClick={() => updateLine(line.key, { type: "income" })} className={`px-2.5 py-2 ${line.type === "income" ? "bg-forest text-white" : "bg-transparent text-charcoal/60"}`}>Income</button>
+                </div>
+                <select className="input flex-1 min-w-[140px]" value={line.farmCategoryId} onChange={(e) => updateLine(line.key, { farmCategoryId: e.target.value })}>
+                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <input type="number" step="0.01" placeholder="0.00" className="input w-28" value={line.amount} onChange={(e) => updateLine(line.key, { amount: e.target.value })} />
+                <button type="button" onClick={() => removeLine(line.key)} disabled={splitLines.length <= 2} className="text-charcoal/40 hover:text-status-red disabled:opacity-30 px-2" title="Remove line">✕</button>
+              </div>
+            ))}
+            <button type="button" onClick={addLine} className="text-sm font-medium text-forest hover:underline">+ Add another line</button>
+            <div className={`text-xs ${splitMismatch ? "text-status-red" : "text-charcoal/50"}`}>
+              Lines total {splitNet.toFixed(2)} of {amountNum.toFixed(2)}
+            </div>
+            {splitError && <p className="text-sm text-status-red">{splitError}</p>}
+          </div>
+        )}
+
         <label className="block">
           <div className="text-sm font-medium text-charcoal/70 mb-1">Assign to Field (optional)</div>
           <select name="fieldId" className="input" value={fieldId} onChange={(e) => setFieldId(e.target.value)}>
@@ -181,7 +292,7 @@ export function ReceiptScanner({ categories, fields }: { categories: FarmCategor
         </label>
         {saveError && <p className="text-sm text-status-red">{saveError}</p>}
         <button disabled={saving} className="bg-wheat text-forest font-semibold px-5 py-2.5 rounded-lg w-full disabled:opacity-50">
-          {saving ? "Saving…" : "Save Receipt & Create Expense"}
+          {saving ? "Saving…" : splitting ? "Save Split Receipt" : "Save Receipt & Create Expense"}
         </button>
       </form>
     </div>

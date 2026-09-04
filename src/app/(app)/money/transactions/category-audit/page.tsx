@@ -1,6 +1,7 @@
 import { listTransactions, listFarmCategories, listFields } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { TransactionsTable } from "@/components/money/transactions-table";
+import { ReceiptRescanPanel } from "@/components/money/receipt-rescan-panel";
 import type { Transaction } from "@/types/domain";
 
 // Keyword groups for the kind of thing that tends to get lumped onto one
@@ -50,6 +51,8 @@ export default async function CategoryAuditPage() {
         title="Category Audit"
         description="A back-check for receipts that quietly needed to be split — oil, gas, and mineral royalties above all, since those weren't even categorizable correctly until now."
       />
+
+      <ReceiptRescanPanel />
 
       <div className="card p-5 mb-6">
         <div className="text-sm font-semibold text-forest mb-2">Likely combined receipts ({likelyCombined.length})</div>

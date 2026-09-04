@@ -17,6 +17,7 @@ const REPORTS = [
 
 const QUICK_EXPORTS = [
   { title: "Income & Expenses", scope: "income_expenses", desc: "Income, expenses, and category breakdowns only" },
+  { title: "Receipts — Full Totals", scope: "receipts_full_total", desc: "One row per receipt/check at its full original amount — the companion to the itemized breakdown above, for split receipts" },
   { title: "Fields", scope: "fields", desc: "Field profitability, income/expense detail, crop & spray records" },
   { title: "Custom Work", scope: "work", desc: "Custom jobs, invoices, and payments" },
   { title: "Equipment & Vehicles", scope: "equipment", desc: "Assets, repairs, and mileage" },

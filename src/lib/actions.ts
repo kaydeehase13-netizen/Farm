@@ -1,10 +1,12 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import * as repo from "@/lib/data/repo";
 import { getFarm } from "@/lib/data/repo";
+import { scanReceiptImage } from "@/lib/receipt-ocr";
 
 /** Switch which tax year the app is currently displaying (Transactions, Reports, Home, etc). */
 export async function setViewTaxYearAction(formData: FormData) {
@@ -62,6 +64,10 @@ export async function createExpenseOrIncome(formData: FormData) {
   if (splitLines.length >= 2) {
     const farmCategories = await repo.listFarmCategories();
     const nameById = new Map(farmCategories.map((c) => [c.id, c.name]));
+    // Every line from this split shares one id so exports and reports can
+    // always trace them back to "these N transactions were one original
+    // total" — see splitGroupId on the Transaction type.
+    const splitGroupId = randomUUID();
     // Sales tax on the original receipt/check isn't broken out per line —
     // put the whole amount on the first expense-type line rather than
     // guessing a split, so it doesn't get silently dropped or doubled.
@@ -80,6 +86,7 @@ export async function createExpenseOrIncome(formData: FormData) {
         salesTax: i === firstExpenseIdx ? salesTax : 0,
         paymentMethod: str(formData, "paymentMethod"),
         farmCategoryId: line.farmCategoryId,
+        splitGroupId,
         isPersonalExcluded: str(formData, "isPersonalExcluded") === "on",
         cpaFlag: false,
         syncStatus: "synced",
@@ -153,6 +160,11 @@ export async function splitTransactionAction(transactionId: string, formData: Fo
   const nameById = new Map(farmCategories.map((c) => [c.id, c.name]));
   const baseDescription = (original.description ?? "").replace(/ — .+$/, ""); // strip a prior split suffix if re-splitting
   const lineLabel = (farmCategoryId: string) => `${baseDescription} — ${nameById.get(farmCategoryId) ?? "Split"}`.trim();
+  // Reuse the existing group id if this transaction was already part of a
+  // split (re-splitting one of its lines further) so every line, old and
+  // new, still traces back to the same original total. Otherwise start a
+  // fresh group.
+  const splitGroupId = original.splitGroupId ?? randomUUID();
 
   const [first, ...rest] = lines;
   await repo.updateTransaction(transactionId, {
@@ -160,6 +172,7 @@ export async function splitTransactionAction(transactionId: string, formData: Fo
     farmCategoryId: first.farmCategoryId,
     amount: first.amount,
     description: lineLabel(first.farmCategoryId),
+    splitGroupId,
   });
 
   const originalSplit = original.splits[0];
@@ -177,6 +190,7 @@ export async function splitTransactionAction(transactionId: string, formData: Fo
       salesTax: 0,
       paymentMethod: original.paymentMethod,
       farmCategoryId: line.farmCategoryId,
+      splitGroupId,
       isPersonalExcluded: original.isPersonalExcluded,
       cpaFlag: false,
       syncStatus: "synced",
@@ -509,6 +523,65 @@ export async function backfillTaxCategoriesAction() {
   return result;
 }
 
+export interface ReceiptRescanFlag {
+  receiptId: string;
+  fileName: string;
+  vendorName?: string;
+  transactionDate?: string;
+  linkedTransactionId?: string;
+  categoryBreakdown: { category: string; amount: number }[];
+}
+
+/**
+ * "Review the ones already uploaded" — re-runs the same line-item OCR
+ * analysis used on new receipts against a batch of already-saved receipt
+ * photos, and flags any that look like they cover more than one category
+ * (mirrors the live-scan "multipleCategories" check in receipt-ocr.ts).
+ * Nothing is changed automatically — this only surfaces candidates; splitting
+ * a flagged one still goes through the normal Split page so a human always
+ * confirms it, per "never silently make permanent AI financial decisions."
+ *
+ * Capped to MAX_PER_RUN per call to stay inside a serverless timeout and
+ * bound the OpenAI cost of one click — call it again (it's safe to re-run)
+ * to work through the rest; "cursor" lets a client page through the list.
+ */
+export async function rescanReceiptsForSplitsAction(cursor = 0): Promise<{
+  scanned: number;
+  flagged: ReceiptRescanFlag[];
+  nextCursor: number | null;
+  totalCandidates: number;
+}> {
+  const MAX_PER_RUN = 15;
+  const receipts = await repo.listReceipts();
+  const candidates = receipts;
+  const batch = candidates.slice(cursor, cursor + MAX_PER_RUN);
+
+  const flagged: ReceiptRescanFlag[] = [];
+  let scanned = 0;
+  for (const r of batch) {
+    const full = await repo.getReceipt(r.id);
+    if (!full?.fileDataUrl) continue;
+    scanned++;
+    const match = /^data:(.*?);base64,([\s\S]*)$/.exec(full.fileDataUrl);
+    const mimeType = match?.[1] ?? "image/jpeg";
+    const base64 = match?.[2] ?? full.fileDataUrl;
+    const result = await scanReceiptImage(base64, mimeType);
+    if (result.multipleCategories && result.categoryBreakdown.length >= 2) {
+      flagged.push({
+        receiptId: r.id,
+        fileName: r.fileName,
+        vendorName: full.ocrVendorGuess,
+        transactionDate: full.ocrDateGuess,
+        linkedTransactionId: r.linkedTransactionId,
+        categoryBreakdown: result.categoryBreakdown,
+      });
+    }
+  }
+
+  const nextCursor = cursor + MAX_PER_RUN < candidates.length ? cursor + MAX_PER_RUN : null;
+  return { scanned, flagged, nextCursor, totalCandidates: candidates.length };
+}
+
 /**
  * Runs the tax-opportunity scanner against one tax year's real data
  * (equipment purchases/sales, breeding-livestock sales, prepaid supplies,
@@ -584,23 +657,56 @@ export async function saveReceiptAndCreateExpenseAction(formData: FormData) {
   const farmCategoryId = str(formData, "farmCategoryId");
   const fieldId = str(formData, "fieldId");
 
-  // One call — the receipt insert, transaction insert, split insert, and the
-  // tax-year/vendor lookups all happen in a single Postgres round trip (see
-  // create_receipt_and_expense() / repo.createReceiptAndExpense) instead of
-  // 4+ sequential ones, which was the biggest chunk of "saving takes forever."
-  await repo.createReceiptAndExpense({
-    fileName: str(formData, "fileName") ?? "receipt.jpg",
-    fileDataUrl: str(formData, "fileDataUrl"),
-    captureSource: (str(formData, "captureSource") as any) ?? "web_upload",
-    vendorName,
-    transactionDate: date ?? new Date().toISOString().slice(0, 10),
-    amount: amount ?? 0,
-    salesTax: salesTax ?? 0,
-    farmCategoryId,
-    fieldId,
-  });
+  // A receipt that covers more than one category (or both income and
+  // expense) gets split into multiple separate transactions instead of one
+  // whole-amount transaction, so each is independently reportable. The
+  // receipt-scanner UI sends this as a JSON "splitLines" field whenever the
+  // user split the receipt (either from the OCR line-item hint or manually).
+  const rawSplitLines = str(formData, "splitLines");
+  const parsedSplitLines = (rawSplitLines ? JSON.parse(rawSplitLines) : []) as {
+    type?: string;
+    farmCategoryId: string;
+    amount: string | number;
+  }[];
+  const splitLines = parsedSplitLines
+    .map((l) => ({
+      type: (l.type === "income" || l.type === "expense" ? l.type : "expense") as "income" | "expense",
+      farmCategoryId: l.farmCategoryId,
+      amount: Number(l.amount) || 0,
+    }))
+    .filter((l) => l.farmCategoryId && l.amount > 0);
+
+  if (splitLines.length >= 2) {
+    await repo.createReceiptAndSplitExpenses({
+      fileName: str(formData, "fileName") ?? "receipt.jpg",
+      fileDataUrl: str(formData, "fileDataUrl"),
+      captureSource: (str(formData, "captureSource") as any) ?? "web_upload",
+      vendorName,
+      transactionDate: date ?? new Date().toISOString().slice(0, 10),
+      salesTax: salesTax ?? 0,
+      fieldId,
+      lines: splitLines,
+    });
+  } else {
+    // One call — the receipt insert, transaction insert, split insert, and the
+    // tax-year/vendor lookups all happen in a single Postgres round trip (see
+    // create_receipt_and_expense() / repo.createReceiptAndExpense) instead of
+    // 4+ sequential ones, which was the biggest chunk of "saving takes forever."
+    await repo.createReceiptAndExpense({
+      fileName: str(formData, "fileName") ?? "receipt.jpg",
+      fileDataUrl: str(formData, "fileDataUrl"),
+      captureSource: (str(formData, "captureSource") as any) ?? "web_upload",
+      vendorName,
+      transactionDate: date ?? new Date().toISOString().slice(0, 10),
+      amount: amount ?? 0,
+      salesTax: salesTax ?? 0,
+      farmCategoryId,
+      fieldId,
+    });
+  }
   revalidatePath("/money/receipts");
   revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
   revalidatePath("/home");
 }
 

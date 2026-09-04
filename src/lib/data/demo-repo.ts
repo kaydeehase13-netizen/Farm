@@ -216,6 +216,52 @@ export function createReceiptAndExpense(input: {
   });
 }
 
+export function createReceiptAndSplitExpenses(input: {
+  fileName: string; fileDataUrl?: string; captureSource: string;
+  vendorName?: string; transactionDate: string; salesTax?: number; fieldId?: string;
+  lines: { type: "income" | "expense"; farmCategoryId: string; amount: number }[];
+}): { receiptId: string; transactionIds: string[] } {
+  return mutate((db) => {
+    const receipt: Receipt = {
+      id: randomUUID(), farmBusinessId: FARM.id, fileName: input.fileName, fileDataUrl: input.fileDataUrl,
+      captureSource: input.captureSource as any, ocrStatus: "confirmed", ocrVendorGuess: input.vendorName,
+      ocrDateGuess: input.transactionDate,
+      confirmedAt: new Date().toISOString(), syncStatus: "synced", createdAt: new Date().toISOString(),
+    } as Receipt;
+    db.receipts.push(receipt);
+
+    const nameById = new Map(db.farmCategories.map((c) => [c.id, c.name]));
+    const splitGroupId = randomUUID();
+    const taxYear = Number(input.transactionDate.slice(0, 4)) || FARM.currentTaxYear;
+    const firstExpenseIdx = input.lines.findIndex((l) => l.type === "expense");
+    const transactionIds: string[] = [];
+
+    input.lines.forEach((line, i) => {
+      const txnId = randomUUID();
+      const taxCategoryCode = resolveDemoTaxCategoryCode(db, { farmCategoryId: line.farmCategoryId });
+      const splits: TransactionSplit[] = [{
+        id: randomUUID(), transactionId: txnId,
+        targetType: input.fieldId ? "field" : "general_overhead", fieldId: input.fieldId,
+        allocationMethod: "manual", allocatedAmount: line.amount, farmCategoryId: line.farmCategoryId,
+      }];
+      const txn: Transaction = {
+        id: txnId, farmBusinessId: FARM.id, taxYear, transactionType: line.type, status: "categorized",
+        transactionDate: input.transactionDate, vendorName: input.vendorName,
+        description: `Receipt — ${input.vendorName ?? "upload"} — ${nameById.get(line.farmCategoryId) ?? "Split"}`,
+        amount: line.amount, salesTax: i === firstExpenseIdx ? input.salesTax ?? 0 : 0,
+        farmCategoryId: line.farmCategoryId, taxCategoryCode, splitGroupId,
+        receiptId: i === 0 ? receipt.id : undefined,
+        isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced",
+        createdAt: new Date().toISOString(), splits,
+      };
+      db.transactions.push(txn);
+      transactionIds.push(txnId);
+    });
+
+    return { receiptId: receipt.id, transactionIds };
+  });
+}
+
 export function updateReceipt(id: string, patch: Partial<Receipt>) {
   return mutate((db) => {
     const idx = db.receipts.findIndex((r) => r.id === id);

@@ -121,6 +121,7 @@ function mapTransaction(r: any, splits: TransactionSplit[]): Transaction {
     description: r.description ?? undefined, amount: Number(r.amount), salesTax: r.sales_tax != null ? Number(r.sales_tax) : 0,
     paymentMethod: r.payment_method ?? undefined, farmCategoryId: r.farm_category_id ?? undefined,
     taxCategoryCode: r.tax_category?.code ?? undefined, receiptId: r.receipt_id ?? undefined,
+    splitGroupId: r.split_group_id ?? undefined,
     isPersonalExcluded: r.is_personal_excluded, cpaFlag: r.cpa_flag, cpaNote: r.cpa_note ?? undefined,
     syncStatus: r.sync_status, splits, createdAt: r.created_at,
   };
@@ -222,6 +223,7 @@ export async function createTransaction(input: Omit<Transaction, "id" | "created
     customer_id: input.customerId ?? null, description: input.description ?? null, amount: input.amount,
     sales_tax: input.salesTax ?? 0, payment_method: input.paymentMethod ?? null,
     farm_category_id: input.farmCategoryId ?? null, tax_category_id: taxCategoryId, receipt_id: input.receiptId ?? null,
+    split_group_id: input.splitGroupId ?? null,
     is_personal_excluded: input.isPersonalExcluded, cpa_flag: input.cpaFlag ?? false, sync_status: "synced",
   }).select("id").single();
   if (error || !txn) throw error;
@@ -309,6 +311,7 @@ export async function updateTransaction(id: string, patch: Partial<Transaction>)
   }
   if (patch.status !== undefined) update.status = patch.status;
   if (patch.transactionType !== undefined) update.transaction_type = patch.transactionType;
+  if (patch.splitGroupId !== undefined) update.split_group_id = patch.splitGroupId;
   if (patch.isPersonalExcluded !== undefined) update.is_personal_excluded = patch.isPersonalExcluded;
   if (patch.cpaFlag !== undefined) update.cpa_flag = patch.cpaFlag;
   if (patch.cpaNote !== undefined) update.cpa_note = patch.cpaNote;
@@ -495,6 +498,53 @@ export async function createReceiptAndExpense(input: {
     }],
   });
   return { receiptId: receipt.id, transactionId: txn.id };
+}
+
+/**
+ * Same idea as createReceiptAndExpense, but for a receipt that covers more
+ * than one category (or type) — one receipt photo, N expense/income lines,
+ * all sharing one splitGroupId so exports can always show either the
+ * itemized breakdown or the original combined total. Only the FIRST line
+ * gets linked to the receipt photo itself (receiptId) — the rest are
+ * ordinary transactions dated/vendored the same as the receipt.
+ */
+export async function createReceiptAndSplitExpenses(input: {
+  fileName: string; fileDataUrl?: string; captureSource: string;
+  vendorName?: string; transactionDate: string; salesTax?: number; fieldId?: string;
+  lines: { type: "income" | "expense"; farmCategoryId: string; amount: number }[];
+}): Promise<{ receiptId: string; transactionIds: string[] }> {
+  const { farm } = await ctx();
+  const receipt = await createReceipt({
+    farmBusinessId: farm.id, fileName: input.fileName, fileDataUrl: input.fileDataUrl,
+    captureSource: input.captureSource as any, ocrStatus: "confirmed",
+    ocrVendorGuess: input.vendorName, ocrDateGuess: input.transactionDate,
+    syncStatus: "synced",
+  });
+
+  const farmCategories = await listFarmCategories();
+  const nameById = new Map(farmCategories.map((c) => [c.id, c.name]));
+  const splitGroupId = randomUUID();
+  const taxYear = Number(input.transactionDate.slice(0, 4)) || farm.currentTaxYear;
+  const firstExpenseIdx = input.lines.findIndex((l) => l.type === "expense");
+
+  const transactionIds: string[] = [];
+  for (const [i, line] of input.lines.entries()) {
+    const txn = await createTransaction({
+      farmBusinessId: farm.id, taxYear, transactionType: line.type, status: "categorized",
+      transactionDate: input.transactionDate, vendorName: input.vendorName,
+      description: `Receipt — ${input.vendorName ?? "upload"} — ${nameById.get(line.farmCategoryId) ?? "Split"}`,
+      amount: line.amount, salesTax: i === firstExpenseIdx ? input.salesTax ?? 0 : 0,
+      farmCategoryId: line.farmCategoryId, splitGroupId,
+      receiptId: i === 0 ? receipt.id : undefined,
+      isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced",
+      splits: [{
+        targetType: input.fieldId ? "field" : "general_overhead", fieldId: input.fieldId,
+        allocationMethod: "manual", allocatedAmount: line.amount, farmCategoryId: line.farmCategoryId,
+      }],
+    });
+    transactionIds.push(txn.id);
+  }
+  return { receiptId: receipt.id, transactionIds };
 }
 
 export async function updateReceipt(id: string, patch: Partial<Receipt>) {

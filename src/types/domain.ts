@@ -99,6 +99,8 @@ export interface Transaction {
   farmCategoryId?: string;
   taxCategoryCode?: string;
   receiptId?: string;
+  /** Set on every line created by splitting one receipt/transaction into multiple categories — shared across all lines from that same split, so they can be traced back to "one original total." Undefined for an ordinary, never-split transaction. */
+  splitGroupId?: string;
   isPersonalExcluded: boolean;
   cpaFlag: boolean;
   cpaNote?: string;
