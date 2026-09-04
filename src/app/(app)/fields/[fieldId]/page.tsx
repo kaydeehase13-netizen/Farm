@@ -4,14 +4,22 @@ import { getField, fieldProfitability, listActivities, listCropYears, getFarm } 
 import { PageHeader, StatCard, money, moneyPrecise } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 
-export default async function FieldDetailPage({ params }: { params: Promise<{ fieldId: string }> }) {
+export default async function FieldDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ fieldId: string }>;
+  searchParams: Promise<{ activities?: string }>;
+}) {
   const { fieldId } = await params;
+  const { activities: activitiesParam } = await searchParams;
   const field = await getField(fieldId);
   if (!field) notFound();
   const farm = await getFarm();
   const taxYear = await getViewTaxYear();
+  const showAllActivities = activitiesParam === "all";
   const profit = await fieldProfitability(fieldId, taxYear);
-  const activities = await listActivities({ fieldId, year: taxYear });
+  const activities = await listActivities({ fieldId, year: showAllActivities ? undefined : taxYear });
   const cropYears = await listCropYears(fieldId);
 
   const expenseRows: [string, number][] = ([
@@ -70,7 +78,18 @@ export default async function FieldDetailPage({ params }: { params: Promise<{ fi
         </div>
 
         <div className="card p-5">
-          <div className="text-sm font-semibold text-forest mb-3">Field Activity History ({taxYear})</div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-semibold text-forest">
+              Field Activity History {showAllActivities ? "(All Years)" : `(${taxYear})`}
+            </div>
+            <Link
+              prefetch={false}
+              href={showAllActivities ? `/fields/${fieldId}` : `/fields/${fieldId}?activities=all`}
+              className="text-xs font-medium text-forest hover:underline whitespace-nowrap"
+            >
+              {showAllActivities ? `Show ${taxYear} only` : "Show all years"}
+            </Link>
+          </div>
           <ol className="relative border-l-2 border-cream-deep ml-2 space-y-5">
             {activities.map((a) => (
               <li key={a.id} className="ml-4">
@@ -85,7 +104,11 @@ export default async function FieldDetailPage({ params }: { params: Promise<{ fi
                 {a.notes && <div className="text-sm text-charcoal/50 italic">{a.notes}</div>}
               </li>
             ))}
-            {activities.length === 0 && <p className="text-sm text-charcoal/50">No activity logged for {taxYear}. Switch the year at the top of the page to see other years.</p>}
+            {activities.length === 0 && (
+              <p className="text-sm text-charcoal/50">
+                {showAllActivities ? "No activity logged for this field yet." : `No activity logged for ${taxYear}. Switch the year at the top of the page, or click "Show all years" above, to see other years.`}
+              </p>
+            )}
           </ol>
         </div>
       </div>
