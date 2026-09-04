@@ -15,6 +15,15 @@ const REPORTS = [
   { title: "Tax Organization", desc: "Readiness, missing docs, CPA questions", href: "/tax" },
 ];
 
+const QUICK_EXPORTS = [
+  { title: "Income & Expenses", scope: "income_expenses", desc: "Income, expenses, and category breakdowns only" },
+  { title: "Fields", scope: "fields", desc: "Field profitability, income/expense detail, crop & spray records" },
+  { title: "Custom Work", scope: "work", desc: "Custom jobs, invoices, and payments" },
+  { title: "Equipment & Vehicles", scope: "equipment", desc: "Assets, repairs, and mileage" },
+  { title: "Livestock, Loans & Inventory", scope: "other", desc: "Livestock, loan, and inventory records" },
+  { title: "Tax Review", scope: "tax_review", desc: "Potential tax opportunities & open CPA questions" },
+];
+
 export default async function ReportsPage() {
   const farm = await getFarm();
   const taxYear = await getViewTaxYear();
@@ -40,6 +49,26 @@ export default async function ReportsPage() {
             </div>
           </a>
         ))}
+      </div>
+
+      <div className="mt-10">
+        <div className="text-sm font-semibold text-forest mb-1">Quick Excel Exports</div>
+        <p className="text-sm text-charcoal/55 mb-4">
+          Smaller, single-topic workbooks — only fetch and build the sheets you need, so they download much faster than the full workbook.
+        </p>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {QUICK_EXPORTS.map((e) => (
+            <a
+              key={e.scope}
+              href={`/api/export/cpa-workbook?type=${e.scope}`}
+              className="card p-5 hover:border-forest transition-colors block"
+            >
+              <div className="font-semibold text-forest">{e.title}</div>
+              <p className="text-sm text-charcoal/55 mt-1">{e.desc}</p>
+              <div className="mt-3 text-xs font-medium text-forest">DOWNLOAD .XLSX</div>
+            </a>
+          ))}
+        </div>
       </div>
     </div>
   );

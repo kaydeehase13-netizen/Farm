@@ -37,13 +37,47 @@ function dateCell(iso?: string) {
   return iso ? new Date(iso + "T00:00:00") : undefined;
 }
 
+export type WorkbookScope =
+  | "full" | "cpa"
+  // Smaller, faster single-topic exports — each skips fetching (and never
+  // even queries) data it doesn't need, so it downloads much quicker than
+  // the full package. "field_report" / "custom_work" / "spray" are kept as
+  // aliases of the closest new section for any existing callers.
+  | "income_expenses" | "fields" | "work" | "equipment" | "other" | "tax_review"
+  | "field_report" | "custom_work" | "spray";
+
 export interface WorkbookOptions {
-  scope: "full" | "cpa" | "field_report" | "custom_work" | "spray";
+  scope: WorkbookScope;
   taxYear: number;
 }
 
+/** Sheets to KEEP for each scope. null/undefined = keep everything (the full package). */
+const SECTION_SHEETS: Partial<Record<WorkbookScope, string[]>> = {
+  cpa: [
+    "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Equipment & Assets",
+    "Vehicles & Mileage", "Potential Tax Opportunities", "CPA Questions", "Missing Documentation", "Transaction Detail",
+    "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category",
+  ],
+  income_expenses: [
+    "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Expenses by Farm Category",
+    "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Missing Documentation", "Transaction Detail",
+  ],
+  fields: ["Farm Summary", "Field Profitability", "Field Expenses", "Field Income", "Crop Summary", "Spray Records"],
+  spray: ["Farm Summary", "Spray Records"],
+  field_report: ["Farm Summary", "Field Profitability", "Field Expenses", "Field Income", "Crop Summary"],
+  work: ["Farm Summary", "Custom Work", "Customer Invoices", "Customer Payments"],
+  custom_work: ["Farm Summary", "Custom Work", "Customer Invoices", "Customer Payments"],
+  equipment: ["Farm Summary", "Equipment & Assets", "Equipment Repairs", "Vehicles & Mileage"],
+  other: ["Farm Summary", "Livestock", "Loans & Interest", "Inventory Purchases"],
+  tax_review: ["Farm Summary", "Potential Tax Opportunities", "CPA Questions"],
+};
+
 export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buffer> {
   const farm = await repo.getFarm();
+  // The activity → spray/fertilizer/seed join is the single heaviest query
+  // this workbook can make (every activity, every year, with four joined
+  // tables). Only fetch it for the scopes that actually use Spray Records.
+  const wantActivities = opts.scope === "full" || opts.scope === "fields" || opts.scope === "spray";
   const [
     fields, cropYears, yearTxns, farmCategories, jobs, customers, invoices, payments,
     assets, assetRepairs, mileageTrips, livestockGroups, livestockTransactions, loans,
@@ -52,7 +86,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     repo.listFields(), repo.listCropYears(), repo.listTransactions({ taxYear: opts.taxYear }), repo.listFarmCategories(),
     repo.listJobs(), repo.listCustomers(), repo.listInvoices(), repo.listPayments(),
     repo.listAssets(), repo.listAssetRepairs(), repo.listMileageTrips(), repo.listLivestockGroups(), repo.listLivestockTransactions(),
-    repo.listLoans(), repo.listInventory(), repo.listActivities(), repo.listTaxOpportunities(), repo.listTaxQuestions(),
+    repo.listLoans(), repo.listInventory(), wantActivities ? repo.listActivities() : Promise.resolve([]), repo.listTaxOpportunities(), repo.listTaxQuestions(),
   ]);
   const wb = new ExcelJS.Workbook();
   wb.creator = "FarmLedger";
@@ -403,13 +437,11 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     }
   }
 
-  if (opts.scope === "cpa") {
-    // Trim to the accountant-priority sheets per spec ("EXPORT FOR CPA")
-    const keep = new Set([
-      "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Equipment & Assets",
-      "Vehicles & Mileage", "Potential Tax Opportunities", "CPA Questions", "Missing Documentation", "Transaction Detail",
-      "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category",
-    ]);
+  // Trim to just the sheets this scope needs. "full" has no entry in
+  // SECTION_SHEETS, so it keeps everything built above.
+  const sheetsToKeep = SECTION_SHEETS[opts.scope];
+  if (sheetsToKeep) {
+    const keep = new Set(sheetsToKeep);
     [...wb.worksheets].forEach((ws) => { if (!keep.has(ws.name)) wb.removeWorksheet(ws.id); });
   }
 
