@@ -38,7 +38,7 @@ export default async function TransactionsPage({
         description={`${transactions.length} transaction${transactions.length === 1 ? "" : "s"} · Tax year ${taxYear}`}
         action={
           <div className="flex gap-2">
-            <a href={`/api/export/cpa-workbook?type=full`} className="card px-4 py-2 text-sm font-medium hover:border-forest">
+            <a href={`/api/export/cpa-workbook?type=full&taxYear=${taxYear}`} className="card px-4 py-2 text-sm font-medium hover:border-forest">
               Export Excel
             </a>
             <a href="/money/transactions/import-excel" className="card px-4 py-2 text-sm font-medium hover:border-forest">

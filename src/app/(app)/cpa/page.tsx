@@ -32,7 +32,7 @@ export default async function CpaPortalPage() {
         description={`${farm.name} · Tax year ${taxYear} — full web experience, no mobile app needed.`}
         action={
           <div className="flex gap-2">
-            <a href="/api/export/cpa-workbook?type=cpa" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">Download CPA Workbook (.xlsx)</a>
+            <a href={`/api/export/cpa-workbook?type=cpa&taxYear=${taxYear}`} className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">Download CPA Workbook (.xlsx)</a>
           </div>
         }
       />

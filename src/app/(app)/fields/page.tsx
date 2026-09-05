@@ -21,7 +21,7 @@ export default async function FieldsPage() {
             </Link>
             <Link prefetch={false} href="/fields/import" className="card px-4 py-2 text-sm font-medium hover:border-forest">Import Activities</Link>
             <Link prefetch={false} href="/fields/allocate-cost" className="card px-4 py-2 text-sm font-medium hover:border-forest">Allocate Product Cost</Link>
-            <a href="/api/export/field-report" className="card px-4 py-2 text-sm font-medium hover:border-forest">Export Field Report</a>
+            <a href={`/api/export/field-report?taxYear=${taxYear}`} className="card px-4 py-2 text-sm font-medium hover:border-forest">Export Field Report</a>
           </div>
         }
       />

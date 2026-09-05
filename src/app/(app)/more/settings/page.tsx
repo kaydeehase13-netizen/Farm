@@ -4,6 +4,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { inviteMemberAction } from "@/lib/auth-actions";
 import { FixTaxYearsButton } from "@/components/settings/fix-tax-years-button";
 import { FixTaxCategoriesButton } from "@/components/settings/fix-tax-categories-button";
+import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function SettingsPage({
   searchParams,
@@ -11,7 +12,7 @@ export default async function SettingsPage({
   searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
   const { error, notice } = await searchParams;
-  const farm = await getFarm();
+  const [farm, taxYear] = await Promise.all([getFarm(), getViewTaxYear()]);
   const supabaseOn = isSupabaseConfigured();
 
   const roles = [
@@ -88,8 +89,8 @@ export default async function SettingsPage({
 
       <div className="card p-5">
         <div className="text-sm font-semibold text-forest mb-2">Your Data</div>
-        <p className="text-sm text-charcoal/55 mb-3">Download a complete export of your farm&apos;s records at any time.</p>
-        <a href="/api/export/cpa-workbook?type=full" className="inline-block bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium">Download Full Account Export (.xlsx)</a>
+        <p className="text-sm text-charcoal/55 mb-3">Download a complete export of your farm&apos;s {taxYear} records. To export a different year, switch the tax year at the top of the page first, or use the year picker on the Reports page.</p>
+        <a href={`/api/export/cpa-workbook?type=full&taxYear=${taxYear}`} className="inline-block bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium">Download Full Account Export (.xlsx)</a>
       </div>
 
       <div className="card p-5">

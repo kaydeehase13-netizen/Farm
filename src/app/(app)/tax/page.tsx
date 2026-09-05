@@ -26,7 +26,7 @@ export default async function TaxCenterPage() {
       <PageHeader
         title="Tax Center"
         description="FarmLedger organizes your tax information. It does not file your return or make tax-law determinations — always ask your tax professional."
-        action={<a href="/api/export/cpa-workbook?type=cpa" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">Export for CPA</a>}
+        action={<a href={`/api/export/cpa-workbook?type=cpa&taxYear=${taxYear}`} className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">Export for CPA</a>}
       />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
