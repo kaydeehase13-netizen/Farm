@@ -7,6 +7,7 @@ import { cookies } from "next/headers";
 import * as repo from "@/lib/data/repo";
 import { getFarm } from "@/lib/data/repo";
 import { scanReceiptImage } from "@/lib/receipt-ocr";
+import { duplicateKey } from "@/lib/duplicate-key";
 
 /** Switch which tax year the app is currently displaying (Transactions, Reports, Home, etc). */
 export async function setViewTaxYearAction(formData: FormData) {
@@ -1232,31 +1233,41 @@ export async function bulkImportAllocateCostAction(formData: FormData): Promise<
   if (!(file instanceof File)) return { total: 0, imported: 0, failed: 0, results: [{ row: 0, ok: false, message: "No file uploaded." }] };
 
   const rows = await parseXlsxRows(await file.arrayBuffer());
+  // Same fix as the expense/income import: process rows in small concurrent
+  // batches rather than one at a time, so a big spreadsheet can't run past
+  // the server's request timeout (see bulkImportTransactions above for the
+  // full explanation of what that looked like when it happened).
+  const BATCH_SIZE = 10;
   const results: BulkImportRowResult[] = [];
   let imported = 0;
 
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    const rowNum = i + 2; // account for header row
-    const productName = toText(r["Product Name"]);
-    const totalAmount = toNumber(r["Total Amount"]);
-    if (!productName || !totalAmount) { results.push({ row: rowNum, ok: false, message: "Skipped — missing Product Name or Total Amount." }); continue; }
-    const year = toNumber(r["Year"]) ?? farm.currentTaxYear;
-    const farmCategoryId = await matchCategoryId(toText(r["Category"]), categories);
-    if (toText(r["Category"]) && !farmCategoryId) { results.push({ row: rowNum, ok: false, message: `Category "${r["Category"]}" doesn't match any category name.` }); continue; }
-    if (!farmCategoryId) { results.push({ row: rowNum, ok: false, message: "Skipped — missing Category." }); continue; }
+  for (let start = 0; start < rows.length; start += BATCH_SIZE) {
+    const batch = rows.slice(start, start + BATCH_SIZE);
+    const batchResults = await Promise.all(batch.map(async (r, offset): Promise<BulkImportRowResult> => {
+      const rowNum = start + offset + 2; // account for header row
+      const productName = toText(r["Product Name"]);
+      const totalAmount = toNumber(r["Total Amount"]);
+      if (!productName || !totalAmount) return { row: rowNum, ok: false, message: "Skipped — missing Product Name or Total Amount." };
+      const year = toNumber(r["Year"]) ?? farm.currentTaxYear;
+      const farmCategoryId = await matchCategoryId(toText(r["Category"]), categories);
+      if (toText(r["Category"]) && !farmCategoryId) return { row: rowNum, ok: false, message: `Category "${r["Category"]}" doesn't match any category name.` };
+      if (!farmCategoryId) return { row: rowNum, ok: false, message: "Skipped — missing Category." };
 
-    try {
-      const outcome = await allocateProductCostAction({
-        year, productName, totalAmount, farmCategoryId,
-        vendorName: toText(r["Vendor (optional)"]) ?? toText(r["Vendor"]),
-        transactionDate: toIsoDate(r["Date (optional, YYYY-MM-DD)"]) ?? toIsoDate(r["Date"]),
-      });
-      if (outcome.allocated) { imported++; results.push({ row: rowNum, ok: true, message: `Allocated ${outcome.allocations.length} field(s).` }); }
-      else results.push({ row: rowNum, ok: false, message: outcome.message });
-    } catch (e: any) {
-      results.push({ row: rowNum, ok: false, message: e?.message ?? "Failed to allocate." });
-    }
+      try {
+        const outcome = await allocateProductCostAction({
+          year, productName, totalAmount, farmCategoryId,
+          vendorName: toText(r["Vendor (optional)"]) ?? toText(r["Vendor"]),
+          transactionDate: toIsoDate(r["Date (optional, YYYY-MM-DD)"]) ?? toIsoDate(r["Date"]),
+        });
+        return outcome.allocated
+          ? { row: rowNum, ok: true, message: `Allocated ${outcome.allocations.length} field(s).` }
+          : { row: rowNum, ok: false, message: outcome.message };
+      } catch (e: any) {
+        return { row: rowNum, ok: false, message: e?.message ?? "Failed to allocate." };
+      }
+    }));
+    results.push(...batchResults);
+    imported += batchResults.filter((r) => r.ok).length;
   }
 
   return { total: rows.length, imported, failed: rows.length - imported, results };
@@ -1268,47 +1279,75 @@ async function bulkImportTransactions(formData: FormData, transactionType: "inco
   if (!(file instanceof File)) return { total: 0, imported: 0, failed: 0, results: [{ row: 0, ok: false, message: "No file uploaded." }] };
 
   const farm = await getFarm();
-  const categories = await repo.listFarmCategories();
+  const [categories, existingTxns] = await Promise.all([repo.listFarmCategories(), repo.listTransactions({})]);
   const rows = await parseXlsxRows(await file.arrayBuffer());
+
+  // Same vendor/description + date + amount as something already on file —
+  // most likely this exact row got imported before (including from a run
+  // that looked like it failed but actually went through — see the timeout
+  // note below). Skip it instead of creating a second copy.
+  const seenKeys = new Set(
+    existingTxns.map((t) => duplicateKey({ transactionType: t.transactionType, transactionDate: t.transactionDate, amount: t.amount, name: t.vendorName ?? t.description }))
+  );
+
+  // Importing one row at a time, sequentially, meant a big spreadsheet could
+  // easily run past the server's request timeout (each row is 2+ database
+  // round trips) — the import would silently die partway through, but any
+  // rows already written stayed written, and the browser just showed
+  // "unexpected response" with no way to tell how far it got. Rows are
+  // independent of each other, so they're processed in small concurrent
+  // batches instead of one at a time (same fix as the receipt re-scan
+  // batching), which both finishes well inside the timeout and makes a
+  // partial/duplicate result far less likely in the first place.
+  const BATCH_SIZE = 10;
   const results: BulkImportRowResult[] = [];
   let imported = 0;
 
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    const rowNum = i + 2;
-    const transactionDate = toIsoDate(r["Date (YYYY-MM-DD)"]) ?? toIsoDate(r["Date"]);
-    const amount = toNumber(r["Amount"]);
-    if (!transactionDate || !amount) { results.push({ row: rowNum, ok: false, message: "Skipped — missing Date or Amount." }); continue; }
+  for (let start = 0; start < rows.length; start += BATCH_SIZE) {
+    const batch = rows.slice(start, start + BATCH_SIZE);
+    const batchResults = await Promise.all(batch.map(async (r, offset): Promise<BulkImportRowResult> => {
+      const rowNum = start + offset + 2;
+      const transactionDate = toIsoDate(r["Date (YYYY-MM-DD)"]) ?? toIsoDate(r["Date"]);
+      const amount = toNumber(r["Amount"]);
+      if (!transactionDate || !amount) return { row: rowNum, ok: false, message: "Skipped — missing Date or Amount." };
 
-    const categoryName = toText(r["Category"]);
-    const farmCategoryId = await matchCategoryId(categoryName, categories);
-    const categoryWarning = categoryName && !farmCategoryId ? ` (Category "${categoryName}" didn't match — imported as Uncategorized.)` : "";
+      const categoryName = toText(r["Category"]);
+      const farmCategoryId = await matchCategoryId(categoryName, categories);
+      const categoryWarning = categoryName && !farmCategoryId ? ` (Category "${categoryName}" didn't match — imported as Uncategorized.)` : "";
 
-    const description = toText(r["Description"]) ?? (transactionType === "income" ? toText(r["Customer (optional)"]) : undefined) ?? (transactionType === "income" ? "Income" : "Expense");
-    const vendorName = transactionType === "expense" ? toText(r["Vendor"]) : undefined;
-    const taxYear = Number(transactionDate.slice(0, 4)) || farm.currentTaxYear;
+      const description = toText(r["Description"]) ?? (transactionType === "income" ? toText(r["Customer (optional)"]) : undefined) ?? (transactionType === "income" ? "Income" : "Expense");
+      const vendorName = transactionType === "expense" ? toText(r["Vendor"]) : undefined;
+      const taxYear = Number(transactionDate.slice(0, 4)) || farm.currentTaxYear;
 
-    try {
-      await repo.createTransaction({
-        farmBusinessId: farm.id,
-        taxYear,
-        transactionType,
-        status: farmCategoryId ? "categorized" : "needs_review",
-        transactionDate,
-        vendorName,
-        description: transactionType === "income" && toText(r["Customer (optional)"]) ? `${description} — ${r["Customer (optional)"]}` : description,
-        amount,
-        farmCategoryId,
-        isPersonalExcluded: false,
-        cpaFlag: false,
-        syncStatus: "synced",
-        splits: [{ targetType: "general_overhead", allocationMethod: "manual", allocatedAmount: amount, farmCategoryId }],
-      });
-      imported++;
-      results.push({ row: rowNum, ok: true, message: `Imported.${categoryWarning}` });
-    } catch (e: any) {
-      results.push({ row: rowNum, ok: false, message: e?.message ?? "Failed to import." });
-    }
+      const key = duplicateKey({ transactionType, transactionDate, amount, name: vendorName ?? description });
+      if (seenKeys.has(key)) {
+        return { row: rowNum, ok: false, message: `Skipped — looks like a duplicate of an existing ${transactionType} (same ${vendorName ? "vendor" : "description"}, date, and amount).` };
+      }
+      seenKeys.add(key); // also catches the same row repeated twice within this same file
+
+      try {
+        await repo.createTransaction({
+          farmBusinessId: farm.id,
+          taxYear,
+          transactionType,
+          status: farmCategoryId ? "categorized" : "needs_review",
+          transactionDate,
+          vendorName,
+          description: transactionType === "income" && toText(r["Customer (optional)"]) ? `${description} — ${r["Customer (optional)"]}` : description,
+          amount,
+          farmCategoryId,
+          isPersonalExcluded: false,
+          cpaFlag: false,
+          syncStatus: "synced",
+          splits: [{ targetType: "general_overhead", allocationMethod: "manual", allocatedAmount: amount, farmCategoryId }],
+        });
+        return { row: rowNum, ok: true, message: `Imported.${categoryWarning}` };
+      } catch (e: any) {
+        return { row: rowNum, ok: false, message: e?.message ?? "Failed to import." };
+      }
+    }));
+    results.push(...batchResults);
+    imported += batchResults.filter((r) => r.ok).length;
   }
 
   revalidatePath("/money/transactions");

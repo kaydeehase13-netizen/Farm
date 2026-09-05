@@ -2,6 +2,7 @@ import { listTransactions, listFarmCategories, listFields } from "@/lib/data/rep
 import { PageHeader } from "@/components/ui/stat-card";
 import { TransactionsTable } from "@/components/money/transactions-table";
 import { ReceiptRescanPanel } from "@/components/money/receipt-rescan-panel";
+import { duplicateKey } from "@/lib/duplicate-key";
 import type { Transaction } from "@/types/domain";
 
 // Keyword groups for the kind of thing that tends to get lumped onto one
@@ -45,12 +46,45 @@ export default async function CategoryAuditPage() {
     .filter((r) => r.groups.length === 1 && !isRoyaltyCategorized(r.t))
     .map((r) => r.t);
 
+  // Same type + vendor/description + date + amount as another transaction
+  // on file — most likely the same row got imported/entered twice (e.g. a
+  // bulk import that looked like it failed partway through but had actually
+  // gone through, then got re-uploaded). Grouped so every copy of a
+  // duplicate shows up together — nothing here gets deleted automatically,
+  // only flagged for review.
+  const byKey = new Map<string, Transaction[]>();
+  for (const t of transactions) {
+    if (t.isPersonalExcluded) continue;
+    const key = duplicateKey({ transactionType: t.transactionType, transactionDate: t.transactionDate, amount: t.amount, name: t.vendorName ?? t.description });
+    const group = byKey.get(key) ?? [];
+    group.push(t);
+    byKey.set(key, group);
+  }
+  const possibleDuplicates = Array.from(byKey.values())
+    .filter((group) => group.length >= 2)
+    .flat()
+    .sort((a, b) => a.transactionDate.localeCompare(b.transactionDate) || (a.vendorName ?? a.description ?? "").localeCompare(b.vendorName ?? b.description ?? ""));
+
   return (
     <div>
       <PageHeader
         title="Category Audit"
         description="A back-check for receipts that quietly needed to be split — oil, gas, and mineral royalties above all, since those weren't even categorizable correctly until now."
       />
+
+      <div className="card p-5 mb-6">
+        <div className="text-sm font-semibold text-forest mb-2">Possible Duplicate Transactions ({possibleDuplicates.length})</div>
+        <p className="text-sm text-charcoal/55 mb-3">
+          Grouped by matching type, vendor/description, date, and amount — each group below is 2 or more transactions that
+          look like the same thing entered twice. Nothing is deleted automatically; check the boxes on the extras and use
+          the bulk Delete action below the table to remove them.
+        </p>
+        {possibleDuplicates.length === 0 ? (
+          <p className="text-sm text-charcoal/50">Nothing flagged — no two transactions on file share the same type, name, date, and amount.</p>
+        ) : (
+          <TransactionsTable transactions={possibleDuplicates} categories={farmCategories} fields={fields} />
+        )}
+      </div>
 
       <ReceiptRescanPanel />
 
