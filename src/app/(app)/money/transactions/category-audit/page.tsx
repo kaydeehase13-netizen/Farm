@@ -77,7 +77,9 @@ export default async function CategoryAuditPage() {
         <p className="text-sm text-charcoal/55 mb-3">
           Grouped by matching type, vendor/description, date, and amount — each group below is 2 or more transactions that
           look like the same thing entered twice. Nothing is deleted automatically; check the boxes on the extras and use
-          the bulk Delete action below the table to remove them.
+          the bulk Delete action below the table to remove them. Note: once you delete the extra copy, the one you kept will
+          drop off this list too — that&apos;s expected, it just means it no longer has a duplicate to be flagged against. It
+          isn&apos;t deleted; you&apos;ll still find it under Money → Transactions.
         </p>
         {possibleDuplicates.length === 0 ? (
           <p className="text-sm text-charcoal/50">Nothing flagged — no two transactions on file share the same type, name, date, and amount.</p>
