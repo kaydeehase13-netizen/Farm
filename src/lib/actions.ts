@@ -1014,6 +1014,7 @@ export async function bulkUpdateCategoryAction(formData: FormData) {
     await repo.updateTransaction(id, { farmCategoryId });
   }
   revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
 }
 
 export async function bulkAssignFieldAction(formData: FormData) {
@@ -1027,12 +1028,14 @@ export async function bulkAssignFieldAction(formData: FormData) {
     } as any);
   }
   revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
 }
 
 /** Recategorize a single transaction (used by the per-row category picker). */
 export async function recategorizeTransactionAction(transactionId: string, farmCategoryId: string) {
   await repo.updateTransaction(transactionId, { farmCategoryId, status: "categorized" });
   revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
   revalidatePath("/home");
   revalidatePath("/tax");
   revalidatePath("/reports");
@@ -1042,6 +1045,7 @@ export async function recategorizeTransactionAction(transactionId: string, farmC
 export async function updateTransactionDateAction(transactionId: string, transactionDate: string) {
   await repo.updateTransaction(transactionId, { transactionDate });
   revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
   revalidatePath("/home");
   revalidatePath("/tax");
   revalidatePath("/reports");
@@ -1060,6 +1064,7 @@ export async function setTransactionOmittedAction(transactionId: string, omitted
     status: omitted ? "excluded_personal" : "needs_review",
   });
   revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
   revalidatePath("/home");
   revalidatePath("/tax");
   revalidatePath("/reports");
@@ -1070,6 +1075,7 @@ export async function setTransactionOmittedAction(transactionId: string, omitted
 export async function deleteTransactionAction(transactionId: string) {
   await repo.deleteTransaction(transactionId);
   revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
   revalidatePath("/home");
   revalidatePath("/tax");
   revalidatePath("/reports");
