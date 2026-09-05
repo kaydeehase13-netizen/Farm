@@ -1,6 +1,7 @@
 import { listTransactions, listFarmCategories, listFields } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { TransactionsTable } from "@/components/money/transactions-table";
+import { DuplicateGroups } from "@/components/money/duplicate-groups";
 import { ReceiptRescanPanel } from "@/components/money/receipt-rescan-panel";
 import { duplicateKey } from "@/lib/duplicate-key";
 import type { Transaction } from "@/types/domain";
@@ -60,10 +61,14 @@ export default async function CategoryAuditPage() {
     group.push(t);
     byKey.set(key, group);
   }
-  const possibleDuplicates = Array.from(byKey.values())
-    .filter((group) => group.length >= 2)
-    .flat()
-    .sort((a, b) => a.transactionDate.localeCompare(b.transactionDate) || (a.vendorName ?? a.description ?? "").localeCompare(b.vendorName ?? b.description ?? ""));
+  const duplicateGroups = Array.from(byKey.entries())
+    .filter(([, group]) => group.length >= 2)
+    .map(([key, group]) => ({ key, transactions: group }))
+    .sort((a, b) =>
+      a.transactions[0].transactionDate.localeCompare(b.transactions[0].transactionDate) ||
+      (a.transactions[0].vendorName ?? a.transactions[0].description ?? "").localeCompare(b.transactions[0].vendorName ?? b.transactions[0].description ?? "")
+    );
+  const possibleDuplicatesCount = duplicateGroups.reduce((n, g) => n + g.transactions.length, 0);
 
   return (
     <div>
@@ -73,19 +78,18 @@ export default async function CategoryAuditPage() {
       />
 
       <div className="card p-5 mb-6">
-        <div className="text-sm font-semibold text-forest mb-2">Possible Duplicate Transactions ({possibleDuplicates.length})</div>
+        <div className="text-sm font-semibold text-forest mb-2">
+          Possible Duplicate Transactions ({duplicateGroups.length} group{duplicateGroups.length === 1 ? "" : "s"}, {possibleDuplicatesCount} transactions)
+        </div>
         <p className="text-sm text-charcoal/55 mb-3">
-          Grouped by matching type, vendor/description, date, and amount — each group below is 2 or more transactions that
-          look like the same thing entered twice. Nothing is deleted automatically; check the boxes on the extras and use
-          the bulk Delete action below the table to remove them. Note: once you delete the extra copy, the one you kept will
-          drop off this list too — that&apos;s expected, it just means it no longer has a duplicate to be flagged against. It
-          isn&apos;t deleted; you&apos;ll still find it under Money → Transactions.
+          Each box below is one group of transactions that match on type, vendor/description, date, and amount — most
+          likely the same thing entered more than once. Duplicate copies look identical on purpose, so instead of picking
+          them out of a table by eye, pick which one to keep (it defaults to the one with a receipt on file, or the oldest
+          entry) and use &quot;Keep 1, delete other N&quot; to remove the rest of that group in one step. A group disappears
+          from this list once it's down to a single copy — that copy isn&apos;t deleted, it just no longer has a duplicate
+          to be flagged against; you&apos;ll still find it under Money → Transactions.
         </p>
-        {possibleDuplicates.length === 0 ? (
-          <p className="text-sm text-charcoal/50">Nothing flagged — no two transactions on file share the same type, name, date, and amount.</p>
-        ) : (
-          <TransactionsTable transactions={possibleDuplicates} categories={farmCategories} fields={fields} />
-        )}
+        <DuplicateGroups groups={duplicateGroups} />
       </div>
 
       <ReceiptRescanPanel />
