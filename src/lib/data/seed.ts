@@ -44,6 +44,10 @@ export const VENDORS: Vendor[] = [
 ];
 
 export const FARM_CATEGORIES: FarmCategory[] = [
+  { id: "cat-grain", name: "Grain", defaultTaxCategoryCode: "income_sales_livestock_produce" },
+  { id: "cat-custom-income", name: "Custom Farming", defaultTaxCategoryCode: "income_custom_hire" },
+  { id: "cat-cows", name: "Cows", defaultTaxCategoryCode: "income_sales_livestock_produce" },
+  { id: "cat-other-income", name: "Other Income", defaultTaxCategoryCode: "income_other" },
   { id: "cat-seed", name: "Seed", defaultTaxCategoryCode: "exp_seeds" },
   { id: "cat-fert", name: "Fertilizer", defaultTaxCategoryCode: "exp_fertilizer" },
   { id: "cat-chem", name: "Chemical", defaultTaxCategoryCode: "exp_chemicals" },
