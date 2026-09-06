@@ -22,6 +22,11 @@ export interface TaxCategoryDef {
 
 export const TAX_CATEGORIES: TaxCategoryDef[] = [
   { code: "income_sales_livestock_resale", label: "Sales of Purchased Livestock and Other Resale Items (Net)", scheduleReference: "Schedule F, Line 1c", type: "income" },
+  // Line 1b — what actually gets netted against 1a to produce 1c above. Added
+  // alongside 1c so "livestock bought, then sold" can be entered as two
+  // ordinary transactions (a purchase and a sale) instead of forcing the
+  // net figure into a single entry by hand.
+  { code: "exp_cost_livestock_resale", label: "Cost of Livestock/Other Items Purchased for Resale", scheduleReference: "Schedule F, Line 1b", type: "expense" },
   { code: "income_sales_livestock_produce", label: "Sales of Livestock, Produce, Grains, and Other Products Raised", scheduleReference: "Schedule F, Line 2", type: "income" },
   { code: "income_coop_distributions", label: "Cooperative Distributions (Form 1099-PATR)", scheduleReference: "Schedule F, Line 3a", type: "income" },
   { code: "income_govt_payments", label: "Agricultural Program Payments", scheduleReference: "Schedule F, Line 4a", type: "income" },

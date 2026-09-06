@@ -49,6 +49,12 @@ export const FARM_CATEGORIES: FarmCategory[] = [
   { id: "cat-cows", name: "Cows", defaultTaxCategoryCode: "income_sales_livestock_produce" },
   { id: "cat-other-income", name: "Other Income", defaultTaxCategoryCode: "income_other" },
   { id: "cat-w2-wages", name: "Wages (W-2)", defaultTaxCategoryCode: "income_w2_wages" },
+  // "Cows" above is for livestock you raised yourself (Schedule F Line 2).
+  // These two are the buy-then-resell side (Schedule F Line 1a/1b/1c) — a
+  // purchase and a later sale of the same animal(s), entered as two
+  // ordinary transactions rather than one hand-computed net figure.
+  { id: "cat-livestock-purchased", name: "Livestock Purchased", defaultTaxCategoryCode: "exp_cost_livestock_resale" },
+  { id: "cat-livestock-sold", name: "Livestock Sold", defaultTaxCategoryCode: "income_sales_livestock_resale" },
   { id: "cat-seed", name: "Seed", defaultTaxCategoryCode: "exp_seeds" },
   { id: "cat-fert", name: "Fertilizer", defaultTaxCategoryCode: "exp_fertilizer" },
   { id: "cat-chem", name: "Chemical", defaultTaxCategoryCode: "exp_chemicals" },
