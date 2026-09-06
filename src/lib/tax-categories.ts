@@ -17,7 +17,7 @@ export interface TaxCategoryDef {
   scheduleReference: string | null;
   type: "income" | "expense";
   /** Which return this category flows to. Omitted = "schedule_f" (the original, farm-only set below). */
-  scheduleType?: "schedule_f" | "schedule_c" | "schedule_e";
+  scheduleType?: "schedule_f" | "schedule_c" | "schedule_e" | "w2";
 }
 
 export const TAX_CATEGORIES: TaxCategoryDef[] = [
@@ -92,6 +92,18 @@ export const TAX_CATEGORIES: TaxCategoryDef[] = [
   { code: "income_mineral_royalty", label: "Mineral Royalty Income (Non-Oil/Gas)", scheduleReference: "Schedule E, Part I", type: "income", scheduleType: "schedule_e" },
   { code: "income_oil_gas_lease_bonus", label: "Oil & Gas Lease Bonus / Delay Rental", scheduleReference: "Schedule E, Part I", type: "income", scheduleType: "schedule_e" },
   { code: "exp_royalty_related", label: "Royalty-Related Expenses (Legal, Admin — Ask Your CPA About Depletion)", scheduleReference: "Schedule E, Part I", type: "expense", scheduleType: "schedule_e" },
+
+  // --- W-2 wage income (Form 1040, Line 1a) ---
+  // Wages already have income tax and FICA (Social Security/Medicare)
+  // withheld by the employer and are NOT self-employment income — they do
+  // not belong on Schedule F or Schedule C, and are never subject to
+  // self-employment tax. Kept as its own schedule type specifically so it
+  // never gets summed into the Schedule F or Schedule C totals (which
+  // would misstate farm/self-employment profit and could look like it's
+  // being taxed a second time via SE tax on top of the withholding already
+  // taken from the paycheck). Recorded here purely so it shows up in your
+  // full income picture and CPA export, off to the side of farm income.
+  { code: "income_w2_wages", label: "W-2 Wage Income (Not Self-Employment)", scheduleReference: "Form 1040, Line 1a", type: "income", scheduleType: "w2" },
 ];
 
 export function taxCategoryMeta(code?: string): TaxCategoryDef | undefined {
@@ -107,6 +119,6 @@ export function taxCategoryScheduleRef(code?: string): string {
   return taxCategoryMeta(code)?.scheduleReference ?? "";
 }
 
-export function taxCategoryScheduleType(code?: string): "schedule_f" | "schedule_c" | "schedule_e" {
+export function taxCategoryScheduleType(code?: string): "schedule_f" | "schedule_c" | "schedule_e" | "w2" {
   return taxCategoryMeta(code)?.scheduleType ?? "schedule_f";
 }

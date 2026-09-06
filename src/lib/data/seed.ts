@@ -48,6 +48,7 @@ export const FARM_CATEGORIES: FarmCategory[] = [
   { id: "cat-custom-income", name: "Custom Farming", defaultTaxCategoryCode: "income_custom_hire" },
   { id: "cat-cows", name: "Cows", defaultTaxCategoryCode: "income_sales_livestock_produce" },
   { id: "cat-other-income", name: "Other Income", defaultTaxCategoryCode: "income_other" },
+  { id: "cat-w2-wages", name: "Wages (W-2)", defaultTaxCategoryCode: "income_w2_wages" },
   { id: "cat-seed", name: "Seed", defaultTaxCategoryCode: "exp_seeds" },
   { id: "cat-fert", name: "Fertilizer", defaultTaxCategoryCode: "exp_fertilizer" },
   { id: "cat-chem", name: "Chemical", defaultTaxCategoryCode: "exp_chemicals" },

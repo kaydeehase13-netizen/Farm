@@ -57,12 +57,12 @@ const SECTION_SHEETS: Partial<Record<WorkbookScope, string[]>> = {
     "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Equipment & Assets",
     "Vehicles & Mileage", "Potential Tax Opportunities", "CPA Questions", "Missing Documentation", "Transaction Detail",
     "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Royalty Income (Sch E)",
-    "Receipts - Full Total",
+    "W-2 Wages (Not SE)", "Receipts - Full Total",
   ],
   income_expenses: [
     "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Expenses by Farm Category",
     "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Royalty Income (Sch E)",
-    "Missing Documentation", "Transaction Detail", "Receipts - Full Total",
+    "W-2 Wages (Not SE)", "Missing Documentation", "Transaction Detail", "Receipts - Full Total",
   ],
   fields: ["Farm Summary", "Field Profitability", "Field Expenses", "Field Income", "Crop Summary", "Spray Records"],
   spray: ["Farm Summary", "Spray Records"],
@@ -245,6 +245,29 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   royaltySheet.addRow({});
   const royaltyTotalRow = royaltySheet.addRow({ description: "NET TOTAL", amount: { formula: `SUMIF(B2:B${royaltySheet.rowCount - 1},"income",F2:F${royaltySheet.rowCount - 1})-SUMIF(B2:B${royaltySheet.rowCount - 1},"expense",F2:F${royaltySheet.rowCount - 1})` } });
   royaltyTotalRow.font = { bold: true };
+
+  // --- W-2 Wages (Form 1040, Line 1a) — deliberately kept OFF the Schedule F
+  // and Schedule C sheets above. Wages already have income tax and FICA
+  // withheld by the employer; they aren't farm or self-employment income
+  // and never factor into either schedule's total or the SE-tax review
+  // flag. This sheet exists purely so W-2 income still shows up somewhere
+  // in the full picture / CPA export.
+  const wageTxns = yearTxns.filter((t) => !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "w2");
+  const wageSheet = addSheet(wb, "W-2 Wages (Not SE)", [
+    { header: "Date", key: "date", width: 14 }, { header: "Employer", key: "who", width: 26 },
+    { header: "Description", key: "description", width: 36 },
+    { header: "Amount", key: "amount", width: 16, style: { numFmt: CURRENCY_FMT } }, { header: "Documentation", key: "doc", width: 16 },
+  ]);
+  for (const t of wageTxns) {
+    wageSheet.addRow({
+      date: dateCell(t.transactionDate), who: t.vendorName ?? "—", description: t.description,
+      amount: t.amount, doc: t.receiptId ? "On file" : "Missing",
+    });
+  }
+  wageSheet.getColumn("date").numFmt = "mm/dd/yyyy";
+  wageSheet.addRow({});
+  const wageTotalRow = wageSheet.addRow({ description: "TOTAL", amount: { formula: `SUM(D2:D${wageSheet.rowCount - 1})` } });
+  wageTotalRow.font = { bold: true };
 
   // --- Field Profitability ---
   const fieldProfit = addSheet(wb, "Field Profitability", [
@@ -460,7 +483,8 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
       detailSheet.addRow({
         date: dateCell(t.transactionDate), type: t.transactionType,
         schedule: taxCategoryScheduleType(t.taxCategoryCode) === "schedule_c" ? "Schedule C"
-          : taxCategoryScheduleType(t.taxCategoryCode) === "schedule_e" ? "Schedule E" : "Schedule F",
+          : taxCategoryScheduleType(t.taxCategoryCode) === "schedule_e" ? "Schedule E"
+          : taxCategoryScheduleType(t.taxCategoryCode) === "w2" ? "Form 1040 (Wages)" : "Schedule F",
         vendor: t.vendorName, desc: t.description,
         farmCat: farmCategoryLabel(t.farmCategoryId, farmCategories), taxCat: taxCategoryLabel(t.taxCategoryCode),
         target: splitTargetLabel(s, fields, jobs), amount: s.allocatedAmount, status: t.status, doc: t.receiptId ? "On file" : "Missing",
