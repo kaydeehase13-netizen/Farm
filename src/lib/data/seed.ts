@@ -55,6 +55,13 @@ export const FARM_CATEGORIES: FarmCategory[] = [
   // ordinary transactions rather than one hand-computed net figure.
   { id: "cat-livestock-purchased", name: "Livestock Purchased", defaultTaxCategoryCode: "exp_cost_livestock_resale" },
   { id: "cat-livestock-sold", name: "Livestock Sold", defaultTaxCategoryCode: "income_sales_livestock_resale" },
+  // Real estate house-project tracking — off to the side of every farm/SE
+  // category above. Purchase price and rehab are capitalized (not
+  // deductible as paid); the eventual sale/schedule is TBD with a CPA.
+  { id: "cat-flip-purchase", name: "House Project: Purchase Price", defaultTaxCategoryCode: "flip_purchase_price" },
+  { id: "cat-flip-rehab", name: "House Project: Rehab / Materials", defaultTaxCategoryCode: "flip_rehab_cost" },
+  { id: "cat-flip-selling-cost", name: "House Project: Selling Costs", defaultTaxCategoryCode: "flip_selling_cost" },
+  { id: "cat-flip-proceeds", name: "House Project: Sale Proceeds", defaultTaxCategoryCode: "flip_sale_proceeds" },
   { id: "cat-seed", name: "Seed", defaultTaxCategoryCode: "exp_seeds" },
   { id: "cat-fert", name: "Fertilizer", defaultTaxCategoryCode: "exp_fertilizer" },
   { id: "cat-chem", name: "Chemical", defaultTaxCategoryCode: "exp_chemicals" },

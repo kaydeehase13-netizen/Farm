@@ -17,7 +17,7 @@ export interface TaxCategoryDef {
   scheduleReference: string | null;
   type: "income" | "expense";
   /** Which return this category flows to. Omitted = "schedule_f" (the original, farm-only set below). */
-  scheduleType?: "schedule_f" | "schedule_c" | "schedule_e" | "w2";
+  scheduleType?: "schedule_f" | "schedule_c" | "schedule_e" | "w2" | "real_estate";
 }
 
 export const TAX_CATEGORIES: TaxCategoryDef[] = [
@@ -109,6 +109,32 @@ export const TAX_CATEGORIES: TaxCategoryDef[] = [
   // taken from the paycheck). Recorded here purely so it shows up in your
   // full income picture and CPA export, off to the side of farm income.
   { code: "income_w2_wages", label: "W-2 Wage Income (Not Self-Employment)", scheduleReference: "Form 1040, Line 1a", type: "income", scheduleType: "w2" },
+
+  // --- House flip / rehab project — real estate, not a farm activity ---
+  // Deliberately NOT Schedule F or Schedule C. This specific property is
+  // slated to become a primary residence once finished (per the user),
+  // which is a THIRD possible outcome beyond the usual flip fork:
+  //   - Sold as a "dealer" business property -> ordinary income, Schedule C
+  //   - Sold as an occasional/investment sale -> capital gain, Schedule D
+  //   - Kept and lived in 2+ of the 5 years before an eventual sale ->
+  //     Section 121 personal-residence exclusion may shield up to
+  //     $250k/$500k of gain from tax entirely
+  // Which one applies depends on facts (how it's used, how long it's held,
+  // whether that changes again) that only shake out later — plans here
+  // have already shifted once. So this stays in its own bucket, off to the
+  // side of every other schedule, until the eventual use is settled with
+  // a CPA.
+  //
+  // Purchase price and rehab/improvement costs are NOT ordinary deductible
+  // expenses as they're paid, under any of the three outcomes above —
+  // they're capitalized into the property's cost basis and only reduce
+  // taxable gain (or grow the tax-free amount, under Section 121) whenever
+  // it's eventually sold. Entering them here just tracks the money; it
+  // doesn't claim a deduction anywhere else in this app.
+  { code: "flip_purchase_price", label: "House Project — Purchase Price (Capitalized, Not a Deduction)", scheduleReference: "Adds to cost basis", type: "expense", scheduleType: "real_estate" },
+  { code: "flip_rehab_cost", label: "House Project — Rehab / Materials / Contractor Labor (Capitalized, Not a Deduction)", scheduleReference: "Adds to cost basis", type: "expense", scheduleType: "real_estate" },
+  { code: "flip_selling_cost", label: "House Project — Selling Costs (Commission, Closing Costs)", scheduleReference: "Reduces sale proceeds if/when sold", type: "expense", scheduleType: "real_estate" },
+  { code: "flip_sale_proceeds", label: "House Project — Sale Proceeds (if/when sold)", scheduleReference: "Schedule C, Schedule D, or Section 121 personal-residence exclusion — confirm with your CPA", type: "income", scheduleType: "real_estate" },
 ];
 
 export function taxCategoryMeta(code?: string): TaxCategoryDef | undefined {
@@ -124,6 +150,6 @@ export function taxCategoryScheduleRef(code?: string): string {
   return taxCategoryMeta(code)?.scheduleReference ?? "";
 }
 
-export function taxCategoryScheduleType(code?: string): "schedule_f" | "schedule_c" | "schedule_e" | "w2" {
+export function taxCategoryScheduleType(code?: string): "schedule_f" | "schedule_c" | "schedule_e" | "w2" | "real_estate" {
   return taxCategoryMeta(code)?.scheduleType ?? "schedule_f";
 }

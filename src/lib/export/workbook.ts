@@ -57,12 +57,12 @@ const SECTION_SHEETS: Partial<Record<WorkbookScope, string[]>> = {
     "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Equipment & Assets",
     "Vehicles & Mileage", "Potential Tax Opportunities", "CPA Questions", "Missing Documentation", "Transaction Detail",
     "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Royalty Income (Sch E)",
-    "W-2 Wages (Not SE)", "Receipts - Full Total",
+    "W-2 Wages (Not SE)", "House Project (Real Estate)", "Receipts - Full Total",
   ],
   income_expenses: [
     "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Expenses by Farm Category",
     "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Royalty Income (Sch E)",
-    "W-2 Wages (Not SE)", "Missing Documentation", "Transaction Detail", "Receipts - Full Total",
+    "W-2 Wages (Not SE)", "House Project (Real Estate)", "Missing Documentation", "Transaction Detail", "Receipts - Full Total",
   ],
   fields: ["Farm Summary", "Field Profitability", "Field Expenses", "Field Income", "Crop Summary", "Spray Records"],
   spray: ["Farm Summary", "Spray Records"],
@@ -268,6 +268,34 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   wageSheet.addRow({});
   const wageTotalRow = wageSheet.addRow({ description: "TOTAL", amount: { formula: `SUM(D2:D${wageSheet.rowCount - 1})` } });
   wageTotalRow.font = { bold: true };
+
+  // --- House Project / Real Estate — also kept OFF Schedule F and Schedule C.
+  // Purchase price and rehab costs are capitalized into cost basis rather
+  // than deducted as incurred. Whether the eventual sale (if it happens)
+  // is ordinary income (Schedule C), a capital gain (Schedule D), or
+  // shielded by the Section 121 personal-residence exclusion depends on
+  // facts — frequency, intent, how it's used, holding period — that only
+  // a CPA can weigh, especially since the plan for this property has
+  // already shifted once (flip -> primary residence). This sheet just
+  // tracks the money and nets it out; it makes no schedule determination
+  // on its own.
+  const flipTxns = yearTxns.filter((t) => !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "real_estate");
+  const flipSheet = addSheet(wb, "House Project (Real Estate)", [
+    { header: "Date", key: "date", width: 14 }, { header: "Type", key: "type", width: 10 },
+    { header: "Vendor/Buyer", key: "who", width: 26 }, { header: "Description", key: "description", width: 36 },
+    { header: "Tax Category", key: "taxCategory", width: 44 },
+    { header: "Amount", key: "amount", width: 16, style: { numFmt: CURRENCY_FMT } }, { header: "Documentation", key: "doc", width: 16 },
+  ]);
+  for (const t of flipTxns) {
+    flipSheet.addRow({
+      date: dateCell(t.transactionDate), type: t.transactionType, who: t.vendorName ?? t.customerId ?? "—", description: t.description,
+      taxCategory: taxCategoryLabel(t.taxCategoryCode), amount: t.amount, doc: t.receiptId ? "On file" : "Missing",
+    });
+  }
+  flipSheet.getColumn("date").numFmt = "mm/dd/yyyy";
+  flipSheet.addRow({});
+  const flipTotalRow = flipSheet.addRow({ description: "NET (sale proceeds minus purchase price, rehab, and selling costs — schedule/exclusion TBD with your CPA)", amount: { formula: `SUMIF(B2:B${flipSheet.rowCount - 1},"income",F2:F${flipSheet.rowCount - 1})-SUMIF(B2:B${flipSheet.rowCount - 1},"expense",F2:F${flipSheet.rowCount - 1})` } });
+  flipTotalRow.font = { bold: true };
 
   // --- Field Profitability ---
   const fieldProfit = addSheet(wb, "Field Profitability", [
@@ -484,7 +512,8 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
         date: dateCell(t.transactionDate), type: t.transactionType,
         schedule: taxCategoryScheduleType(t.taxCategoryCode) === "schedule_c" ? "Schedule C"
           : taxCategoryScheduleType(t.taxCategoryCode) === "schedule_e" ? "Schedule E"
-          : taxCategoryScheduleType(t.taxCategoryCode) === "w2" ? "Form 1040 (Wages)" : "Schedule F",
+          : taxCategoryScheduleType(t.taxCategoryCode) === "w2" ? "Form 1040 (Wages)"
+          : taxCategoryScheduleType(t.taxCategoryCode) === "real_estate" ? "House Project (Sch, TBD)" : "Schedule F",
         vendor: t.vendorName, desc: t.description,
         farmCat: farmCategoryLabel(t.farmCategoryId, farmCategories), taxCat: taxCategoryLabel(t.taxCategoryCode),
         target: splitTargetLabel(s, fields, jobs), amount: s.allocatedAmount, status: t.status, doc: t.receiptId ? "On file" : "Missing",
