@@ -1280,6 +1280,28 @@ export async function allocateProductCostAction(input: {
 export interface BulkImportRowResult { row: number; ok: boolean; message: string; }
 export interface BulkImportSummary { total: number; imported: number; failed: number; results: BulkImportRowResult[]; }
 
+/** One parsed-but-not-yet-imported row, editable before the user confirms the import. */
+export interface BulkImportDraftRow {
+  row: number;
+  transactionDate?: string;
+  amount?: number;
+  vendorName?: string;
+  description?: string;
+  farmCategoryId?: string;
+  /** Whichever category name was typed in the spreadsheet, kept for reference even after farmCategoryId is edited. */
+  originalCategoryName?: string;
+  /** Unchecked by default when this looks like it's missing required fields or duplicates something already on file — the user can still check it back on. */
+  include: boolean;
+  warning?: string;
+}
+export interface BulkImportPreview {
+  transactionType: "income" | "expense";
+  categories: { id: string; name: string }[];
+  rows: BulkImportDraftRow[];
+  /** True if the file couldn't be read at all — rows will be empty. */
+  fileError?: string;
+}
+
 async function matchCategoryId(name: string | undefined, categories: { id: string; name: string }[]): Promise<string | undefined> {
   if (!name) return undefined;
   const needle = name.trim().toLowerCase();
@@ -1440,4 +1462,140 @@ export async function bulkImportIncomeAction(formData: FormData): Promise<BulkIm
 
 export async function bulkImportExpenseAction(formData: FormData): Promise<BulkImportSummary> {
   return bulkImportTransactions(formData, "expense");
+}
+
+// -----------------------------------------------------------------------
+// Preview-before-import: same file parsing and duplicate/category checks
+// as bulkImportTransactions above, but nothing gets written to the
+// database yet. Returns editable draft rows so the user can fix a
+// mis-parsed date, retype a vendor, switch a category the auto-match
+// missed, or uncheck a row entirely, before anything actually lands in
+// their books. commitBulkImport below takes exactly those (possibly
+// edited) rows and does the actual writing — the same batched-write
+// logic bulkImportTransactions used, just reading from the edited rows
+// instead of re-parsing the file.
+// -----------------------------------------------------------------------
+
+async function bulkImportPreview(formData: FormData, transactionType: "income" | "expense"): Promise<BulkImportPreview> {
+  const { parseXlsxRows, toIsoDate, toNumber, toText } = await import("@/lib/xlsx-import");
+  const file = formData.get("file");
+  const categories = await repo.listFarmCategories();
+  if (!(file instanceof File)) {
+    return { transactionType, categories, rows: [], fileError: "No file uploaded." };
+  }
+
+  const existingKeys = await repo.listTransactionDedupeKeys();
+  let parsedRows: Awaited<ReturnType<typeof parseXlsxRows>>;
+  try {
+    parsedRows = await parseXlsxRows(await file.arrayBuffer());
+  } catch (e) {
+    return { transactionType, categories, rows: [], fileError: e instanceof Error ? e.message : "Couldn't read that file." };
+  }
+
+  const seenKeys = new Set(existingKeys.map((t) => duplicateKey(t)));
+  const rows: BulkImportDraftRow[] = [];
+  for (let i = 0; i < parsedRows.length; i++) {
+    const r = parsedRows[i];
+    const rowNum = i + 2;
+    const transactionDate = toIsoDate(r["Date (YYYY-MM-DD)"]) ?? toIsoDate(r["Date"]);
+    const amount = toNumber(r["Amount"]);
+    const categoryName = toText(r["Category"]);
+    const farmCategoryId = await matchCategoryId(categoryName, categories);
+    const description = toText(r["Description"]) ?? (transactionType === "income" ? toText(r["Customer (optional)"]) : undefined);
+    const vendorName = transactionType === "expense" ? toText(r["Vendor"]) : undefined;
+
+    let warning: string | undefined;
+    let include = true;
+    if (!transactionDate || !amount) {
+      warning = "Missing Date or Amount.";
+      include = false;
+    } else {
+      const key = duplicateKey({ transactionType, transactionDate, amount, name: vendorName ?? description });
+      if (seenKeys.has(key)) {
+        warning = `Looks like a duplicate of an existing ${transactionType} (same ${vendorName ? "vendor" : "description"}, date, and amount).`;
+        include = false;
+      } else {
+        seenKeys.add(key); // also catches the same row repeated twice within this same file
+        if (categoryName && !farmCategoryId) warning = `Category "${categoryName}" didn't match any existing category — pick one below.`;
+      }
+    }
+
+    rows.push({
+      row: rowNum, transactionDate, amount, vendorName, description, farmCategoryId,
+      originalCategoryName: categoryName, include, warning,
+    });
+  }
+
+  return { transactionType, categories, rows };
+}
+
+export async function previewImportIncomeAction(formData: FormData): Promise<BulkImportPreview> {
+  return bulkImportPreview(formData, "income");
+}
+
+export async function previewImportExpenseAction(formData: FormData): Promise<BulkImportPreview> {
+  return bulkImportPreview(formData, "expense");
+}
+
+async function bulkImportCommit(rows: BulkImportDraftRow[], transactionType: "income" | "expense"): Promise<BulkImportSummary> {
+  const farm = await getFarm();
+  // Re-check duplicates against what's on file right now, not just what the
+  // preview saw a moment ago — someone could have imported something else
+  // (or this same file, from another tab) in between.
+  const existingKeys = await repo.listTransactionDedupeKeys();
+  const seenKeys = new Set(existingKeys.map((t) => duplicateKey(t)));
+
+  const toImport = rows.filter((r) => r.include);
+  const BATCH_SIZE = 10;
+  const results: BulkImportRowResult[] = [];
+  let imported = 0;
+
+  for (let start = 0; start < toImport.length; start += BATCH_SIZE) {
+    const batch = toImport.slice(start, start + BATCH_SIZE);
+    const batchResults = await Promise.all(batch.map(async (r): Promise<BulkImportRowResult> => {
+      if (!r.transactionDate || !r.amount) return { row: r.row, ok: false, message: "Skipped — missing Date or Amount." };
+      const description = r.description ?? (transactionType === "income" ? "Income" : "Expense");
+      const key = duplicateKey({ transactionType, transactionDate: r.transactionDate, amount: r.amount, name: r.vendorName ?? description });
+      if (seenKeys.has(key)) {
+        return { row: r.row, ok: false, message: `Skipped — looks like a duplicate of an existing ${transactionType}.` };
+      }
+      seenKeys.add(key);
+
+      const taxYear = Number(r.transactionDate.slice(0, 4)) || farm.currentTaxYear;
+      try {
+        await repo.createTransaction({
+          farmBusinessId: farm.id,
+          taxYear,
+          transactionType,
+          status: r.farmCategoryId ? "categorized" : "needs_review",
+          transactionDate: r.transactionDate,
+          vendorName: r.vendorName,
+          description,
+          amount: r.amount,
+          farmCategoryId: r.farmCategoryId,
+          isPersonalExcluded: false,
+          cpaFlag: false,
+          syncStatus: "synced",
+          splits: [{ targetType: "general_overhead", allocationMethod: "manual", allocatedAmount: r.amount, farmCategoryId: r.farmCategoryId }],
+        });
+        return { row: r.row, ok: true, message: "Imported." };
+      } catch (e: any) {
+        return { row: r.row, ok: false, message: e?.message ?? "Failed to import." };
+      }
+    }));
+    results.push(...batchResults);
+    imported += batchResults.filter((r) => r.ok).length;
+  }
+
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  return { total: toImport.length, imported, failed: toImport.length - imported, results };
+}
+
+export async function commitImportIncomeAction(rows: BulkImportDraftRow[]): Promise<BulkImportSummary> {
+  return bulkImportCommit(rows, "income");
+}
+
+export async function commitImportExpenseAction(rows: BulkImportDraftRow[]): Promise<BulkImportSummary> {
+  return bulkImportCommit(rows, "expense");
 }

@@ -68,6 +68,14 @@ export const FARM_CATEGORIES: FarmCategory[] = [
   // Interest — Other instead — those already exist and are deductible.
   { id: "cat-loan-proceeds", name: "Loan Proceeds Received", defaultTaxCategoryCode: "income_loan_proceeds" },
   { id: "cat-loan-principal", name: "Loan Principal Payment", defaultTaxCategoryCode: "exp_loan_principal" },
+  // The exp_interest_mortgage/exp_interest_other tax categories (Schedule F
+  // Line 21a/21b) existed from day one, but never had a farm-facing bucket
+  // to pick in the category dropdown -- same original gap income had before
+  // migration 0017. Adding these now since the loan principal payment
+  // categories above only work if the interest portion of a payment has
+  // somewhere to go.
+  { id: "cat-interest-mortgage", name: "Interest — Mortgage", defaultTaxCategoryCode: "exp_interest_mortgage" },
+  { id: "cat-interest-other", name: "Interest — Other", defaultTaxCategoryCode: "exp_interest_other" },
   { id: "cat-seed", name: "Seed", defaultTaxCategoryCode: "exp_seeds" },
   { id: "cat-fert", name: "Fertilizer", defaultTaxCategoryCode: "exp_fertilizer" },
   { id: "cat-chem", name: "Chemical", defaultTaxCategoryCode: "exp_chemicals" },
