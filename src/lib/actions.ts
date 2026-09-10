@@ -1103,6 +1103,30 @@ export async function setTransactionOmittedAction(transactionId: string, omitted
   revalidatePath("/fields");
 }
 
+/**
+ * Marks a transaction as a stand-in duplicate of an expense/income that's
+ * also recorded elsewhere — e.g. a lump-sum category total typed in from a
+ * year-end summary with no dates, which a later dated check/bank import
+ * will also cover. Excludes it from income, expense, and tax totals (same
+ * effect as "Omit") without touching isPersonalExcluded, since this isn't
+ * a personal expense — it's a real farm cost that's just represented
+ * twice on purpose, and only one copy should count. The optional note is
+ * a free-text pointer to whatever it matches (e.g. "Matches July 14 Farm
+ * Credit check #1042") so both copies can be found again later.
+ */
+export async function markTransactionDuplicateAction(transactionId: string, excluded: boolean, note?: string) {
+  await repo.updateTransaction(transactionId, {
+    isDuplicateExcluded: excluded,
+    duplicateNote: excluded ? (note || undefined) : undefined,
+  });
+  revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
+  revalidatePath("/fields");
+}
+
 /** Permanently deletes a transaction. Use setTransactionOmittedAction to keep the record but exclude it instead. */
 export async function deleteTransactionAction(transactionId: string) {
   await repo.deleteTransaction(transactionId);

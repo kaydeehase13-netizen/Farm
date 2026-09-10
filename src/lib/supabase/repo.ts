@@ -122,7 +122,8 @@ function mapTransaction(r: any, splits: TransactionSplit[]): Transaction {
     paymentMethod: r.payment_method ?? undefined, farmCategoryId: r.farm_category_id ?? undefined,
     taxCategoryCode: r.tax_category?.code ?? undefined, receiptId: r.receipt_id ?? undefined,
     splitGroupId: r.split_group_id ?? undefined, productName: r.product_name ?? undefined,
-    isPersonalExcluded: r.is_personal_excluded, cpaFlag: r.cpa_flag, cpaNote: r.cpa_note ?? undefined,
+    isPersonalExcluded: r.is_personal_excluded, isDuplicateExcluded: r.is_duplicate_excluded ?? false, duplicateNote: r.duplicate_note ?? undefined,
+    cpaFlag: r.cpa_flag, cpaNote: r.cpa_note ?? undefined,
     syncStatus: r.sync_status, splits, createdAt: r.created_at,
   };
 }
@@ -376,6 +377,8 @@ export async function updateTransaction(id: string, patch: Partial<Transaction>)
   if (patch.splitGroupId !== undefined) update.split_group_id = patch.splitGroupId;
   if (patch.productName !== undefined) update.product_name = patch.productName;
   if (patch.isPersonalExcluded !== undefined) update.is_personal_excluded = patch.isPersonalExcluded;
+  if (patch.isDuplicateExcluded !== undefined) update.is_duplicate_excluded = patch.isDuplicateExcluded;
+  if (patch.duplicateNote !== undefined) update.duplicate_note = patch.duplicateNote;
   if (patch.cpaFlag !== undefined) update.cpa_flag = patch.cpaFlag;
   if (patch.cpaNote !== undefined) update.cpa_note = patch.cpaNote;
   if (patch.amount !== undefined) update.amount = patch.amount;
@@ -1170,7 +1173,8 @@ export async function scanTaxOpportunities(taxYear: number): Promise<{ created: 
     .select("id, transaction_type, transaction_date, amount, description, tax_category:tax_category_id(code), farm_category:farm_category_id(name)")
     .eq("farm_business_id", farm.id)
     .eq("tax_year_id", taxYearId)
-    .eq("is_personal_excluded", false);
+    .eq("is_personal_excluded", false)
+    .eq("is_duplicate_excluded", false);
   // Net Schedule C (self-employment) income for the year, tracked alongside the
   // per-transaction rule checks below so the scan isn't only looking at farm data.
   let seNetIncome = 0;
@@ -1347,7 +1351,7 @@ export async function dashboardSummary(taxYear: number) {
   const [txns, receipts, invoices, taxQuestions, inventory] = await Promise.all([
     listTransactions({ taxYear }), listReceipts(), listInvoices(), listTaxQuestions(), listInventory(),
   ]);
-  const active = txns.filter((t) => !t.isPersonalExcluded);
+  const active = txns.filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded);
   const income = active.filter((t) => t.transactionType === "income").reduce((s, t) => s + t.amount, 0);
   const expenses = active.filter((t) => t.transactionType === "expense").reduce((s, t) => s + t.amount, 0);
   const margin = income - expenses;

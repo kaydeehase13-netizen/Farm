@@ -7,6 +7,7 @@ import { money } from "@/components/ui/stat-card";
 import {
   bulkAssignFieldAction, bulkUpdateCategoryAction, recategorizeTransactionAction,
   updateTransactionDateAction, setTransactionOmittedAction, deleteTransactionAction,
+  markTransactionDuplicateAction,
 } from "@/lib/actions";
 
 export function TransactionsTable({
@@ -70,6 +71,19 @@ export function TransactionsTable({
     if (nowOmitted && !window.confirm("Mark this as personal / not a farm expense? It'll be excluded from income, expense, and tax totals but stay on record.")) return;
     startTransition(() => setTransactionOmittedAction(t.id, nowOmitted));
   }
+  function toggleDuplicate(t: Transaction) {
+    const nowExcluded = !t.isDuplicateExcluded;
+    if (nowExcluded) {
+      const note = window.prompt(
+        "This will exclude it from income, expense, and Schedule F totals but keep the record. " +
+        "Optional: note what it duplicates (e.g. \"Matches July 14 Farm Credit check #1042\") so you can find both copies later."
+      );
+      if (note === null) return; // cancelled
+      startTransition(() => markTransactionDuplicateAction(t.id, true, note || undefined));
+    } else {
+      startTransition(() => markTransactionDuplicateAction(t.id, false));
+    }
+  }
   function deleteOne(t: Transaction) {
     if (!window.confirm(`Permanently delete this ${t.transactionType}${t.vendorName ? ` (${t.vendorName})` : ""}? This can't be undone.`)) return;
     startTransition(async () => {
@@ -122,7 +136,7 @@ export function TransactionsTable({
           </thead>
           <tbody>
             {transactions.map((t) => (
-              <tr key={t.id} className={t.isPersonalExcluded ? "opacity-50" : ""}>
+              <tr key={t.id} className={t.isPersonalExcluded || t.isDuplicateExcluded ? "opacity-50" : ""}>
                 <td><input type="checkbox" checked={selected.has(t.id)} onChange={() => toggle(t.id)} /></td>
                 <td className="whitespace-nowrap">
                   <input
@@ -136,6 +150,9 @@ export function TransactionsTable({
                 <td>
                   <div className="font-medium">{t.vendorName ?? t.customerId ?? "—"}</div>
                   <div className="text-charcoal/50 text-xs">{t.description}</div>
+                  {t.isDuplicateExcluded && (
+                    <div className="text-status-amber text-xs mt-0.5">Duplicate — not counted{t.duplicateNote ? `: ${t.duplicateNote}` : ""}</div>
+                  )}
                 </td>
                 <td>
                   <select
@@ -164,6 +181,9 @@ export function TransactionsTable({
                   </Link>
                   <button onClick={() => toggleOmitted(t)} disabled={isPending} className="text-charcoal/60 hover:underline mr-2">
                     {t.isPersonalExcluded ? "Un-omit" : "Omit"}
+                  </button>
+                  <button onClick={() => toggleDuplicate(t)} disabled={isPending} className="text-charcoal/60 hover:underline mr-2">
+                    {t.isDuplicateExcluded ? "Un-mark duplicate" : "Mark duplicate"}
                   </button>
                   <button onClick={() => deleteOne(t)} disabled={isPending} className="text-status-red hover:underline">
                     Delete

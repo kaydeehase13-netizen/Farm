@@ -606,7 +606,7 @@ export function scanTaxOpportunities(taxYear: number): { created: number; alread
     // per-transaction rule checks below so the scan isn't only looking at farm data.
     let seNetIncome = 0;
 
-    for (const t of db.transactions.filter((t) => t.taxYear === taxYear && !t.isPersonalExcluded)) {
+    for (const t of db.transactions.filter((t) => t.taxYear === taxYear && !t.isPersonalExcluded && !t.isDuplicateExcluded)) {
       checked++;
       const farmCat = db.farmCategories.find((c) => c.id === t.farmCategoryId);
       const farmCatName = (farmCat?.name ?? "").toLowerCase();
@@ -746,7 +746,7 @@ function round2(n: number) {
 // -----------------------------------------------------------------------
 
 export function dashboardSummary(taxYear: number) {
-  const txns = listTransactions({ taxYear }).filter((t) => !t.isPersonalExcluded);
+  const txns = listTransactions({ taxYear }).filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded);
   const income = txns.filter((t) => t.transactionType === "income").reduce((s, t) => s + t.amount, 0);
   const expenses = txns.filter((t) => t.transactionType === "expense").reduce((s, t) => s + t.amount, 0);
   const margin = income - expenses;

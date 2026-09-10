@@ -104,6 +104,19 @@ export interface Transaction {
   /** Set on every line created by splitting one receipt/transaction into multiple categories — shared across all lines from that same split, so they can be traced back to "one original total." Undefined for an ordinary, never-split transaction. */
   splitGroupId?: string;
   isPersonalExcluded: boolean;
+  /**
+   * True when this transaction is a stand-in for an expense/income that's
+   * ALSO recorded (or will be) somewhere else — e.g. a lump-sum category
+   * total typed in from a year-end summary that has no dates, which will
+   * eventually be covered by the real dated check/bank transaction too.
+   * Excluded from every income/expense/Schedule total exactly like
+   * isPersonalExcluded, but kept separate from it since this isn't a
+   * personal expense — it's a real farm cost that's just represented
+   * twice in the records on purpose, and only one copy should count.
+   */
+  isDuplicateExcluded?: boolean;
+  /** Free-text pointer to whatever this duplicate matches — e.g. "Matches July 14 Farm Credit check #1042" — so the excluded copy and its real counterpart can be found later. */
+  duplicateNote?: string;
   cpaFlag: boolean;
   cpaNote?: string;
   syncStatus: SyncStatus;

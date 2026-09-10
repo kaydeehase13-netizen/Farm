@@ -124,7 +124,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Field", key: "field", width: 18 },
     { header: "Documentation", key: "doc", width: 16 },
   ]);
-  for (const t of yearTxns.filter((t) => t.transactionType === "income" && !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
+  for (const t of yearTxns.filter((t) => t.transactionType === "income" && !t.isPersonalExcluded && !t.isDuplicateExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
     incomeSheet.addRow({
       date: dateCell(t.transactionDate), source: t.vendorName ?? t.customerId ?? "—", description: t.description,
       taxCategory: taxCategoryLabel(t.taxCategoryCode), amount: t.amount,
@@ -149,7 +149,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Documentation", key: "doc", width: 16 },
     { header: "CPA Flag", key: "cpaFlag", width: 12 },
   ]);
-  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
+  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded && !t.isDuplicateExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
     expenseSheet.addRow({
       date: dateCell(t.transactionDate), vendor: t.vendorName, description: t.description,
       farmCategory: farmCategoryLabel(t.farmCategoryId, farmCategories), taxCategory: taxCategoryLabel(t.taxCategoryCode),
@@ -168,7 +168,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Total", key: "total", width: 16, style: { numFmt: CURRENCY_FMT } },
   ]);
   const taxTotals = new Map<string, number>();
-  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
+  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded && !t.isDuplicateExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
     const key = t.taxCategoryCode ?? "uncategorized";
     taxTotals.set(key, (taxTotals.get(key) ?? 0) + t.amount);
   }
@@ -179,14 +179,14 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
     { header: "Category", key: "cat", width: 28 }, { header: "Total", key: "total", width: 16, style: { numFmt: CURRENCY_FMT } },
   ]);
   const farmTotals = new Map<string, number>();
-  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
+  for (const t of yearTxns.filter((t) => t.transactionType === "expense" && !t.isPersonalExcluded && !t.isDuplicateExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_f")) {
     const key = t.farmCategoryId ?? "uncategorized";
     farmTotals.set(key, (farmTotals.get(key) ?? 0) + t.amount);
   }
   for (const [id, total] of farmTotals) byFarm.addRow({ cat: farmCategoryLabel(id, farmCategories), total });
 
   // --- Self-Employment (Schedule C) — income, expenses, and by-category totals ---
-  const seTxns = yearTxns.filter((t) => !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_c");
+  const seTxns = yearTxns.filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_c");
   const seIncomeSheet = addSheet(wb, "SE Income (Sch C)", [
     { header: "Date", key: "date", width: 14 }, { header: "Source", key: "source", width: 26 },
     { header: "Description", key: "description", width: 36 }, { header: "Tax Category", key: "taxCategory", width: 30 },
@@ -228,7 +228,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   // farm income on purpose; these don't belong mixed in with crop/livestock
   // sales. Income and expenses share one sheet since Schedule E royalty
   // volume is usually much lighter than Schedule F/C.
-  const royaltyTxns = yearTxns.filter((t) => !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_e");
+  const royaltyTxns = yearTxns.filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "schedule_e");
   const royaltySheet = addSheet(wb, "Royalty Income (Sch E)", [
     { header: "Date", key: "date", width: 14 }, { header: "Type", key: "type", width: 10 },
     { header: "Payer/Vendor", key: "who", width: 26 }, { header: "Description", key: "description", width: 36 },
@@ -252,7 +252,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   // and never factor into either schedule's total or the SE-tax review
   // flag. This sheet exists purely so W-2 income still shows up somewhere
   // in the full picture / CPA export.
-  const wageTxns = yearTxns.filter((t) => !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "w2");
+  const wageTxns = yearTxns.filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "w2");
   const wageSheet = addSheet(wb, "W-2 Wages (Not SE)", [
     { header: "Date", key: "date", width: 14 }, { header: "Employer", key: "who", width: 26 },
     { header: "Description", key: "description", width: 36 },
@@ -279,7 +279,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   // already shifted once (flip -> primary residence). This sheet just
   // tracks the money and nets it out; it makes no schedule determination
   // on its own.
-  const flipTxns = yearTxns.filter((t) => !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "real_estate");
+  const flipTxns = yearTxns.filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "real_estate");
   const flipSheet = addSheet(wb, "House Project (Real Estate)", [
     { header: "Date", key: "date", width: 14 }, { header: "Type", key: "type", width: 10 },
     { header: "Vendor/Buyer", key: "who", width: 26 }, { header: "Description", key: "description", width: 36 },
@@ -304,7 +304,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   // above, where it belongs). This sheet exists purely so loan draws and
   // principal payments are on record without ever being summed into farm
   // income, farm expenses, or the Schedule F total.
-  const loanTxns = yearTxns.filter((t) => !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "loan");
+  const loanTxns = yearTxns.filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "loan");
   const loanSheet = addSheet(wb, "Loan Proceeds & Principal", [
     { header: "Date", key: "date", width: 14 }, { header: "Type", key: "type", width: 10 },
     { header: "Lender/Vendor", key: "who", width: 26 }, { header: "Description", key: "description", width: 36 },
@@ -565,7 +565,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   const splitGroups = new Map<string, typeof yearTxns>();
   const unsplit: typeof yearTxns = [];
   for (const t of yearTxns) {
-    if (t.isPersonalExcluded) continue;
+    if (t.isPersonalExcluded || t.isDuplicateExcluded) continue;
     if (t.splitGroupId) {
       const arr = splitGroups.get(t.splitGroupId) ?? [];
       arr.push(t);

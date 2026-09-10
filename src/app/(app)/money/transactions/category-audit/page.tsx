@@ -55,7 +55,7 @@ export default async function CategoryAuditPage() {
   // only flagged for review.
   const byKey = new Map<string, Transaction[]>();
   for (const t of transactions) {
-    if (t.isPersonalExcluded) continue;
+    if (t.isPersonalExcluded || t.isDuplicateExcluded) continue;
     const key = duplicateKey({ transactionType: t.transactionType, transactionDate: t.transactionDate, amount: t.amount, name: t.vendorName ?? t.description });
     const group = byKey.get(key) ?? [];
     group.push(t);
