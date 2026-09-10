@@ -1426,9 +1426,14 @@ export async function dashboardSummary(taxYear: number) {
   // money, not earnings — see 0021), and W-2 wages / the house project are
   // real money but deliberately never counted toward farm income/expenses
   // (see 0018, 0020) — so none of the three belong in this top-line total.
+  // Loan interest IS a real, deductible Schedule F expense (Line 21a/21b)
+  // and still counts on the actual tax export — this only keeps it out of
+  // the dashboard's top-line number, per Kaydee's preference to see this
+  // total as "farm operations," with anything loan-related kept separate.
   const isOffBooks = (t: Transaction) => {
     const st = taxCategoryScheduleType(t.taxCategoryCode);
-    return st === "loan" || st === "w2" || st === "real_estate";
+    if (st === "loan" || st === "w2" || st === "real_estate") return true;
+    return t.taxCategoryCode === "exp_interest_mortgage" || t.taxCategoryCode === "exp_interest_other";
   };
   const income = active.filter((t) => t.transactionType === "income" && !isOffBooks(t)).reduce((s, t) => s + t.amount, 0);
   const expenses = active.filter((t) => t.transactionType === "expense" && !isOffBooks(t)).reduce((s, t) => s + t.amount, 0);
