@@ -57,12 +57,12 @@ const SECTION_SHEETS: Partial<Record<WorkbookScope, string[]>> = {
     "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Equipment & Assets",
     "Vehicles & Mileage", "Potential Tax Opportunities", "CPA Questions", "Missing Documentation", "Transaction Detail",
     "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Royalty Income (Sch E)",
-    "W-2 Wages (Not SE)", "House Project (Real Estate)", "Receipts - Full Total",
+    "W-2 Wages (Not SE)", "House Project (Real Estate)", "Loan Proceeds & Principal", "Receipts - Full Total",
   ],
   income_expenses: [
     "Farm Summary", "Income", "Expenses", "Expenses by Tax Category", "Expenses by Farm Category",
     "SE Income (Sch C)", "SE Expenses (Sch C)", "SE Expenses by Category", "Royalty Income (Sch E)",
-    "W-2 Wages (Not SE)", "House Project (Real Estate)", "Missing Documentation", "Transaction Detail", "Receipts - Full Total",
+    "W-2 Wages (Not SE)", "House Project (Real Estate)", "Loan Proceeds & Principal", "Missing Documentation", "Transaction Detail", "Receipts - Full Total",
   ],
   fields: ["Farm Summary", "Field Profitability", "Field Expenses", "Field Income", "Crop Summary", "Spray Records"],
   spray: ["Farm Summary", "Spray Records"],
@@ -297,6 +297,31 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   const flipTotalRow = flipSheet.addRow({ description: "NET (sale proceeds minus purchase price, rehab, and selling costs — schedule/exclusion TBD with your CPA)", amount: { formula: `SUMIF(B2:B${flipSheet.rowCount - 1},"income",F2:F${flipSheet.rowCount - 1})-SUMIF(B2:B${flipSheet.rowCount - 1},"expense",F2:F${flipSheet.rowCount - 1})` } });
   flipTotalRow.font = { bold: true };
 
+  // --- Loan Proceeds & Principal Repayment — also kept OFF Schedule F.
+  // Borrowed money isn't income and repaying principal isn't a deductible
+  // expense; only the interest portion of a payment is (tracked separately
+  // under Interest — Mortgage / Interest — Other on the Schedule F sheet
+  // above, where it belongs). This sheet exists purely so loan draws and
+  // principal payments are on record without ever being summed into farm
+  // income, farm expenses, or the Schedule F total.
+  const loanTxns = yearTxns.filter((t) => !t.isPersonalExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "loan");
+  const loanSheet = addSheet(wb, "Loan Proceeds & Principal", [
+    { header: "Date", key: "date", width: 14 }, { header: "Type", key: "type", width: 10 },
+    { header: "Lender/Vendor", key: "who", width: 26 }, { header: "Description", key: "description", width: 36 },
+    { header: "Tax Category", key: "taxCategory", width: 44 },
+    { header: "Amount", key: "amount", width: 16, style: { numFmt: CURRENCY_FMT } }, { header: "Documentation", key: "doc", width: 16 },
+  ]);
+  for (const t of loanTxns) {
+    loanSheet.addRow({
+      date: dateCell(t.transactionDate), type: t.transactionType, who: t.vendorName ?? "—", description: t.description,
+      taxCategory: taxCategoryLabel(t.taxCategoryCode), amount: t.amount, doc: t.receiptId ? "On file" : "Missing",
+    });
+  }
+  loanSheet.getColumn("date").numFmt = "mm/dd/yyyy";
+  loanSheet.addRow({});
+  const loanTotalRow = loanSheet.addRow({ description: "Not taxable income or a deductible expense — shown for record-keeping only. Interest paid is tracked separately on the Schedule F sheet.", amount: { formula: `SUMIF(B2:B${loanSheet.rowCount - 1},"income",F2:F${loanSheet.rowCount - 1})-SUMIF(B2:B${loanSheet.rowCount - 1},"expense",F2:F${loanSheet.rowCount - 1})` } });
+  loanTotalRow.font = { bold: true };
+
   // --- Field Profitability ---
   const fieldProfit = addSheet(wb, "Field Profitability", [
     { header: "Field", key: "field", width: 18 }, { header: "Crop", key: "crop", width: 14 },
@@ -513,7 +538,8 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
         schedule: taxCategoryScheduleType(t.taxCategoryCode) === "schedule_c" ? "Schedule C"
           : taxCategoryScheduleType(t.taxCategoryCode) === "schedule_e" ? "Schedule E"
           : taxCategoryScheduleType(t.taxCategoryCode) === "w2" ? "Form 1040 (Wages)"
-          : taxCategoryScheduleType(t.taxCategoryCode) === "real_estate" ? "House Project (Sch, TBD)" : "Schedule F",
+          : taxCategoryScheduleType(t.taxCategoryCode) === "real_estate" ? "House Project (Sch, TBD)"
+          : taxCategoryScheduleType(t.taxCategoryCode) === "loan" ? "Loan (Not Taxable/Deductible)" : "Schedule F",
         vendor: t.vendorName, desc: t.description,
         farmCat: farmCategoryLabel(t.farmCategoryId, farmCategories), taxCat: taxCategoryLabel(t.taxCategoryCode),
         target: splitTargetLabel(s, fields, jobs), amount: s.allocatedAmount, status: t.status, doc: t.receiptId ? "On file" : "Missing",

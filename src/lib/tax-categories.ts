@@ -17,7 +17,7 @@ export interface TaxCategoryDef {
   scheduleReference: string | null;
   type: "income" | "expense";
   /** Which return this category flows to. Omitted = "schedule_f" (the original, farm-only set below). */
-  scheduleType?: "schedule_f" | "schedule_c" | "schedule_e" | "w2" | "real_estate";
+  scheduleType?: "schedule_f" | "schedule_c" | "schedule_e" | "w2" | "real_estate" | "loan";
 }
 
 export const TAX_CATEGORIES: TaxCategoryDef[] = [
@@ -135,6 +135,22 @@ export const TAX_CATEGORIES: TaxCategoryDef[] = [
   { code: "flip_rehab_cost", label: "House Project — Rehab / Materials / Contractor Labor (Capitalized, Not a Deduction)", scheduleReference: "Adds to cost basis", type: "expense", scheduleType: "real_estate" },
   { code: "flip_selling_cost", label: "House Project — Selling Costs (Commission, Closing Costs)", scheduleReference: "Reduces sale proceeds if/when sold", type: "expense", scheduleType: "real_estate" },
   { code: "flip_sale_proceeds", label: "House Project — Sale Proceeds (if/when sold)", scheduleReference: "Schedule C, Schedule D, or Section 121 personal-residence exclusion — confirm with your CPA", type: "income", scheduleType: "real_estate" },
+
+  // --- Loan proceeds & principal repayment — never income or expense ---
+  // Borrowing money isn't income (you owe it back), and repaying the
+  // principal you borrowed isn't a deductible expense (it's not a cost of
+  // doing business — it's just returning money that was never yours to
+  // begin with). Only the INTEREST portion of a loan payment is deductible,
+  // and that already has its own home: exp_interest_mortgage /
+  // exp_interest_other above (Schedule F, Line 21a/21b) — use one of those
+  // for the interest slice of a payment, same as any other loan. These two
+  // categories exist purely so the principal side of a loan draw or a loan
+  // payment can be logged as an actual transaction (so your books balance
+  // and the cash movement is on record) without it ever being summed into
+  // farm income, farm expenses, or Schedule F. Kept off Schedule F/C/E
+  // entirely, same mechanism as W-2 wages and the house project above.
+  { code: "income_loan_proceeds", label: "Loan Proceeds Received (Not Income)", scheduleReference: "Not reported as income — it's borrowed money, not earnings", type: "income", scheduleType: "loan" },
+  { code: "exp_loan_principal", label: "Loan Principal Repayment (Not a Deductible Expense)", scheduleReference: "Not deductible — only the interest portion of a payment is (see Interest — Mortgage / Interest — Other)", type: "expense", scheduleType: "loan" },
 ];
 
 export function taxCategoryMeta(code?: string): TaxCategoryDef | undefined {
@@ -150,6 +166,6 @@ export function taxCategoryScheduleRef(code?: string): string {
   return taxCategoryMeta(code)?.scheduleReference ?? "";
 }
 
-export function taxCategoryScheduleType(code?: string): "schedule_f" | "schedule_c" | "schedule_e" | "w2" | "real_estate" {
+export function taxCategoryScheduleType(code?: string): "schedule_f" | "schedule_c" | "schedule_e" | "w2" | "real_estate" | "loan" {
   return taxCategoryMeta(code)?.scheduleType ?? "schedule_f";
 }

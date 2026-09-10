@@ -62,6 +62,12 @@ export const FARM_CATEGORIES: FarmCategory[] = [
   { id: "cat-flip-rehab", name: "House Project: Rehab / Materials", defaultTaxCategoryCode: "flip_rehab_cost" },
   { id: "cat-flip-selling-cost", name: "House Project: Selling Costs", defaultTaxCategoryCode: "flip_selling_cost" },
   { id: "cat-flip-proceeds", name: "House Project: Sale Proceeds", defaultTaxCategoryCode: "flip_sale_proceeds" },
+  // Loan draws and principal repayment — never income, never a deductible
+  // expense (see tax-categories.ts for the full explanation). Log the
+  // interest portion of a payment separately under Interest — Mortgage or
+  // Interest — Other instead — those already exist and are deductible.
+  { id: "cat-loan-proceeds", name: "Loan Proceeds Received", defaultTaxCategoryCode: "income_loan_proceeds" },
+  { id: "cat-loan-principal", name: "Loan Principal Payment", defaultTaxCategoryCode: "exp_loan_principal" },
   { id: "cat-seed", name: "Seed", defaultTaxCategoryCode: "exp_seeds" },
   { id: "cat-fert", name: "Fertilizer", defaultTaxCategoryCode: "exp_fertilizer" },
   { id: "cat-chem", name: "Chemical", defaultTaxCategoryCode: "exp_chemicals" },
