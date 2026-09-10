@@ -166,6 +166,36 @@ export async function listTransactions(filters: {
   return result;
 }
 
+/**
+ * Lightweight companion to listTransactions() for the bulk-import
+ * duplicate check (src/lib/actions.ts). That check only needs type, date,
+ * amount, and a name to build each existing transaction's duplicate key —
+ * listTransactions({}) was being used for this, but it also joins in
+ * tax_year/tax_category, fetches and maps every transaction_split row
+ * (an O(n) join filtered per transaction, so effectively O(n^2) as the
+ * table grows), and builds full Transaction objects, none of which the
+ * dedup check uses. On a farm with a large transaction history this made
+ * every single bulk import re-do that whole expensive fetch first, slow
+ * enough to blow past the server's request timeout and fail the import
+ * outright (the generic "Server Components render" error) before a single
+ * row of the new file was even processed. This selects only the four
+ * columns actually needed, with no split join and no per-row mapping.
+ */
+export async function listTransactionDedupeKeys(): Promise<{ transactionType: string; transactionDate: string; amount: number; name?: string }[]> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase
+    .from("transaction")
+    .select("transaction_type, transaction_date, amount, description, vendor:vendor_id(name)")
+    .eq("farm_business_id", farm.id);
+  if (error || !data) return [];
+  return (data as any[]).map((r) => ({
+    transactionType: r.transaction_type,
+    transactionDate: r.transaction_date,
+    amount: Number(r.amount),
+    name: (Array.isArray(r.vendor) ? r.vendor[0]?.name : r.vendor?.name) ?? r.description ?? undefined,
+  }));
+}
+
 export async function getTransaction(id: string): Promise<Transaction | null> {
   const { supabase, farm } = await ctx();
   const { data: r } = await supabase.from("transaction").select(TXN_SELECT).eq("id", id).eq("farm_business_id", farm.id).maybeSingle();

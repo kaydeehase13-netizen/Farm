@@ -66,6 +66,14 @@ export function listTransactions(filters: {
   return [...rows].sort((a, b) => b.transactionDate.localeCompare(a.transactionDate));
 }
 
+/** Lightweight companion to listTransactions() for the bulk-import duplicate check — see the Supabase repo's version of this function for why it exists as its own thing rather than reusing listTransactions({}). */
+export function listTransactionDedupeKeys() {
+  return getDB().transactions.map((t) => ({
+    transactionType: t.transactionType, transactionDate: t.transactionDate, amount: t.amount,
+    name: t.vendorName ?? t.description,
+  }));
+}
+
 // Same gap as the live Supabase repo's resolveTaxCategoryId(): a chosen
 // farm category should always carry its default tax category along with
 // it unless something more specific was given explicitly.

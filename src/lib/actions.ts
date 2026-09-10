@@ -1317,16 +1317,23 @@ async function bulkImportTransactions(formData: FormData, transactionType: "inco
   if (!(file instanceof File)) return { total: 0, imported: 0, failed: 0, results: [{ row: 0, ok: false, message: "No file uploaded." }] };
 
   const farm = await getFarm();
-  const [categories, existingTxns] = await Promise.all([repo.listFarmCategories(), repo.listTransactions({})]);
+  // listTransactionDedupeKeys(), NOT listTransactions({}) — the dedup check
+  // below only needs type/date/amount/name for every existing transaction.
+  // listTransactions({}) also joins tax_year/tax_category and fetches +
+  // maps every transaction_split row per transaction, which on a farm with
+  // a large transaction history was slow enough on its own to blow past
+  // the server's request timeout before a single row of the new file got
+  // processed — showing up as a generic "Server Components render" error
+  // with no rows imported at all. See listTransactionDedupeKeys()'s own
+  // comment for the full explanation.
+  const [categories, existingKeys] = await Promise.all([repo.listFarmCategories(), repo.listTransactionDedupeKeys()]);
   const rows = await parseXlsxRows(await file.arrayBuffer());
 
   // Same vendor/description + date + amount as something already on file —
   // most likely this exact row got imported before (including from a run
   // that looked like it failed but actually went through — see the timeout
   // note below). Skip it instead of creating a second copy.
-  const seenKeys = new Set(
-    existingTxns.map((t) => duplicateKey({ transactionType: t.transactionType, transactionDate: t.transactionDate, amount: t.amount, name: t.vendorName ?? t.description }))
-  );
+  const seenKeys = new Set(existingKeys.map((t) => duplicateKey(t)));
 
   // Importing one row at a time, sequentially, meant a big spreadsheet could
   // easily run past the server's request timeout (each row is 2+ database
