@@ -4,6 +4,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { inviteMemberAction } from "@/lib/auth-actions";
 import { FixTaxYearsButton } from "@/components/settings/fix-tax-years-button";
 import { FixTaxCategoriesButton } from "@/components/settings/fix-tax-categories-button";
+import { FixNeedsReviewButton } from "@/components/settings/fix-needs-review-button";
 import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function SettingsPage({
@@ -111,6 +112,17 @@ export default async function SettingsPage({
           safe to run any time, and safe to run more than once.
         </p>
         <FixTaxCategoriesButton />
+      </div>
+
+      <div className="card p-5">
+        <div className="text-sm font-semibold text-forest mb-2">"Needs Review" Repair</div>
+        <p className="text-sm text-charcoal/55 mb-3">
+          The bulk category-change action used to update a transaction&apos;s category without clearing its &quot;Needs Review&quot; flag
+          (only editing one row at a time did that) — so anything you recategorized in bulk before this was fixed could keep
+          showing up under Transactions Needing Review even though you&apos;d already fixed it. This finds every transaction that
+          already has a category but is still flagged and clears it — safe to run any time, and safe to run more than once.
+        </p>
+        <FixNeedsReviewButton />
       </div>
     </div>
   );

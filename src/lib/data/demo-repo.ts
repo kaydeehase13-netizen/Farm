@@ -156,6 +156,21 @@ export function backfillTaxCategories() {
   });
 }
 
+/** One-off repair: same idea as backfillTaxCategories above — every transaction with a category but still stuck on status "needs_review" (bulk-recategorize used to skip clearing this) gets flipped to "categorized". */
+export function fixStaleNeedsReview() {
+  return mutate((db) => {
+    let checked = 0;
+    let fixed = 0;
+    for (const t of db.transactions) {
+      if (t.status !== "needs_review" || !t.farmCategoryId) continue;
+      checked++;
+      t.status = "categorized";
+      fixed++;
+    }
+    return { checked, fixed };
+  });
+}
+
 export function listReceipts() {
   return [...getDB().receipts].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }

@@ -587,6 +587,27 @@ export async function backfillTaxCategoriesAction() {
   return result;
 }
 
+/**
+ * One-off repair: the bulk "change category" action on the Transactions
+ * page used to update a transaction's category without ever clearing its
+ * status out of "needs_review" (only the single-row category picker did
+ * that) — so anything recategorized in bulk before that fix kept showing
+ * up under "Transactions Needing Review" even though it had already been
+ * fixed. This finds every transaction that has a category but is still
+ * stuck on needs_review and flips it to categorized. Safe to run any
+ * time, and safe to run more than once.
+ */
+export async function fixStaleNeedsReviewAction() {
+  const result = await repo.fixStaleNeedsReview();
+  revalidatePath("/home");
+  revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
+  revalidatePath("/reports");
+  revalidatePath("/tax");
+  revalidatePath("/cpa");
+  return result;
+}
+
 export interface ReceiptRescanFlag {
   receiptId: string;
   fileName: string;
@@ -1011,10 +1032,21 @@ export async function bulkUpdateCategoryAction(formData: FormData) {
   const ids = formData.getAll("transactionIds").map(String);
   const farmCategoryId = str(formData, "farmCategoryId");
   for (const id of ids) {
-    await repo.updateTransaction(id, { farmCategoryId });
+    // Match recategorizeTransactionAction (the single-row category picker):
+    // picking a category is exactly what "needs review" is waiting on, so
+    // clear that flag here too. Without this, a bulk-recategorized
+    // transaction kept showing up under "Transactions Needing Review" even
+    // though it had already been fixed, because only the per-row picker
+    // was clearing the status. (Built conditionally, not `status:
+    // undefined` — the demo-mode repo does a plain object spread, where an
+    // explicit `undefined` would wipe the field instead of leaving it be.)
+    await repo.updateTransaction(id, farmCategoryId ? { farmCategoryId, status: "categorized" } : { farmCategoryId });
   }
   revalidatePath("/money/transactions");
   revalidatePath("/money/transactions/category-audit");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
 }
 
 export async function bulkAssignFieldAction(formData: FormData) {

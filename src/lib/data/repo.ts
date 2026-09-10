@@ -82,6 +82,11 @@ export async function backfillTaxCategories() {
   return demo.backfillTaxCategories();
 }
 
+export async function fixStaleNeedsReview() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).fixStaleNeedsReview();
+  return demo.fixStaleNeedsReview();
+}
+
 export async function deleteTransaction(id: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteTransaction(id);
   return demo.deleteTransaction(id);

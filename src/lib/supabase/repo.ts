@@ -302,6 +302,38 @@ export async function backfillTaxCategories(): Promise<{ checked: number; fixed:
   return { checked: rows.length, fixed };
 }
 
+/**
+ * One-off repair for the same class of bug as the two above: the bulk
+ * "change category" action on the Transactions page updated a
+ * transaction's farm_category_id but never cleared its status out of
+ * "needs_review" (only the single-row category picker did that), so a
+ * transaction you'd already recategorized in bulk kept showing up under
+ * "Transactions Needing Review" as if it were untouched. That action is
+ * fixed going forward; this catches every transaction already stuck in
+ * that state — has a category, but status is still needs_review — and
+ * flips it to categorized. Safe to run any time, and safe to run more
+ * than once.
+ */
+export async function fixStaleNeedsReview(): Promise<{ checked: number; fixed: number }> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase
+    .from("transaction")
+    .select("id")
+    .eq("farm_business_id", farm.id)
+    .eq("status", "needs_review")
+    .not("farm_category_id", "is", null);
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as { id: string }[];
+  if (rows.length === 0) return { checked: 0, fixed: 0 };
+
+  let fixed = 0;
+  for (const r of rows) {
+    const { error: updErr } = await supabase.from("transaction").update({ status: "categorized" }).eq("id", r.id);
+    if (!updErr) fixed++;
+  }
+  return { checked: rows.length, fixed };
+}
+
 export async function updateTransaction(id: string, patch: Partial<Transaction>) {
   const { supabase, farm } = await ctx();
   const update: Record<string, unknown> = {};
