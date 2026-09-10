@@ -74,6 +74,55 @@ export function listTransactionDedupeKeys() {
   }));
 }
 
+// Demo mode has no real vendor table -- each transaction just carries a
+// free-text vendorName string, not a vendorId. There's nothing to key a
+// "vendor" off besides the name itself, so this derives a stable pseudo-id
+// from it. The live Supabase repo doesn't need this: every transaction
+// there already points at a real vendor_id via getOrCreateVendor.
+function vendorIdFromName(name: string): string {
+  return `vname:${name.trim().toLowerCase()}`;
+}
+
+export interface VendorSummary { id: string; name: string; transactionCount: number; totalIncome: number; totalExpense: number; }
+
+export function listVendors(): VendorSummary[] {
+  const stats = new Map<string, { name: string; count: number; income: number; expense: number }>();
+  for (const t of getDB().transactions) {
+    if (!t.vendorName) continue;
+    const id = vendorIdFromName(t.vendorName);
+    const s = stats.get(id) ?? { name: t.vendorName, count: 0, income: 0, expense: 0 };
+    s.count++;
+    if (t.transactionType === "income") s.income += t.amount; else s.expense += t.amount;
+    stats.set(id, s);
+  }
+  return Array.from(stats.entries())
+    .map(([id, s]) => ({ id, name: s.name, transactionCount: s.count, totalIncome: s.income, totalExpense: s.expense }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function getVendor(id: string): { id: string; name: string } | undefined {
+  const v = listVendors().find((v) => v.id === id);
+  return v ? { id: v.id, name: v.name } : undefined;
+}
+
+/** Every transaction whose (derived) vendor matches this id — the demo-mode equivalent of listTransactions({ vendorId }), which doesn't work here since demo transactions never set a real vendorId. */
+export function listVendorTransactions(id: string) {
+  return listTransactions({}).filter((t) => t.vendorName && vendorIdFromName(t.vendorName) === id);
+}
+
+/** See the Supabase repo's renameVendor for the merge-on-collision behavior this mirrors. */
+export function renameVendor(id: string, newName: string): { merged: boolean; mergedIntoId?: string } {
+  const trimmed = newName.trim();
+  if (!trimmed) throw new Error("Name can't be blank.");
+  const newId = vendorIdFromName(trimmed);
+  return mutate((db) => {
+    for (const t of db.transactions) {
+      if (t.vendorName && vendorIdFromName(t.vendorName) === id) t.vendorName = trimmed;
+    }
+    return newId !== id ? { merged: true, mergedIntoId: newId } : { merged: false };
+  });
+}
+
 // Same gap as the live Supabase repo's resolveTaxCategoryId(): a chosen
 // farm category should always carry its default tax category along with
 // it unless something more specific was given explicitly.

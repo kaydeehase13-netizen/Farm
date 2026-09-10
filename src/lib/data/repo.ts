@@ -42,6 +42,26 @@ export async function createField(input: Parameters<typeof demo.createField>[0])
   return demo.createField(input);
 }
 
+export async function listVendors() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listVendors();
+  return demo.listVendors();
+}
+
+export async function getVendor(id: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).getVendor(id);
+  return demo.getVendor(id);
+}
+
+export async function listVendorTransactions(id: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listVendorTransactions(id);
+  return demo.listVendorTransactions(id);
+}
+
+export async function renameVendor(id: string, newName: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).renameVendor(id, newName);
+  return demo.renameVendor(id, newName);
+}
+
 export async function listCropYears(fieldId?: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listCropYears(fieldId);
   return demo.listCropYears(fieldId);

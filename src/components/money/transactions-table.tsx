@@ -148,7 +148,11 @@ export function TransactionsTable({
                   />
                 </td>
                 <td>
-                  <div className="font-medium">{t.vendorName ?? t.customerId ?? "—"}</div>
+                  <div className="font-medium">
+                    {t.vendorId ? (
+                      <Link prefetch={false} href={`/money/vendors/${t.vendorId}`} className="text-forest hover:underline">{t.vendorName}</Link>
+                    ) : (t.vendorName ?? t.customerId ?? "—")}
+                  </div>
                   <div className="text-charcoal/50 text-xs">{t.description}</div>
                   {t.isDuplicateExcluded && (
                     <div className="text-status-amber text-xs mt-0.5">Duplicate — not counted{t.duplicateNote ? `: ${t.duplicateNote}` : ""}</div>

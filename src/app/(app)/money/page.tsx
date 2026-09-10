@@ -12,6 +12,7 @@ const TILES = [
   { href: "/work/invoices", label: "Payments", desc: "Payments received against invoices" },
   { href: "/money/banking", label: "Banking", desc: "Connected bank & credit-card accounts" },
   { href: "/money/loans", label: "Loans", desc: "Farm loans, balances & interest" },
+  { href: "/money/vendors", label: "Vendors & Income Sources", desc: "Rename or merge a vendor/buyer — updates every transaction at once" },
 ];
 
 export default async function MoneyOverviewPage() {

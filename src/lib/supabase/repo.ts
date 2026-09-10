@@ -142,6 +142,75 @@ export async function listTaxYears(): Promise<number[]> {
   return Array.from(years).sort((a, b) => b - a);
 }
 
+export interface VendorSummary { id: string; name: string; transactionCount: number; totalIncome: number; totalExpense: number; }
+
+/**
+ * Every transaction stores a real vendor_id (getOrCreateVendor upserts on
+ * name), so this is a real list of distinct payers/vendors, not just
+ * distinct strings — "Source / Buyer" on an income transaction and
+ * "Vendor" on an expense one are the exact same field, just relabeled
+ * per type, so one vendor list covers both directions.
+ */
+export async function listVendors(): Promise<VendorSummary[]> {
+  const { supabase, farm } = await ctx();
+  const { data: vendors } = await supabase.from("vendor").select("id, name").eq("farm_business_id", farm.id).order("name");
+  if (!vendors?.length) return [];
+  const { data: txns } = await supabase
+    .from("transaction")
+    .select("vendor_id, transaction_type, amount")
+    .eq("farm_business_id", farm.id)
+    .not("vendor_id", "is", null);
+  const stats = new Map<string, { count: number; income: number; expense: number }>();
+  for (const t of (txns ?? []) as any[]) {
+    const s = stats.get(t.vendor_id) ?? { count: 0, income: 0, expense: 0 };
+    s.count++;
+    if (t.transaction_type === "income") s.income += Number(t.amount); else s.expense += Number(t.amount);
+    stats.set(t.vendor_id, s);
+  }
+  return vendors.map((v) => {
+    const s = stats.get(v.id);
+    return { id: v.id, name: v.name, transactionCount: s?.count ?? 0, totalIncome: s?.income ?? 0, totalExpense: s?.expense ?? 0 };
+  });
+}
+
+export async function getVendor(id: string): Promise<{ id: string; name: string } | undefined> {
+  const { supabase, farm } = await ctx();
+  const { data } = await supabase.from("vendor").select("id, name").eq("id", id).eq("farm_business_id", farm.id).maybeSingle();
+  return data ? { id: data.id, name: data.name } : undefined;
+}
+
+export async function listVendorTransactions(id: string): Promise<Transaction[]> {
+  return listTransactions({ vendorId: id });
+}
+
+/**
+ * Renames a vendor. Since every transaction points at vendor_id (not a
+ * copy of the name), this single update is enough — every transaction
+ * that used this vendor shows the new name immediately, no need to touch
+ * transaction rows at all.
+ *
+ * If the new name collides with a DIFFERENT existing vendor (e.g. "Farm
+ * Credit" vs. "Farm Credit Services" turning out to be the same lender),
+ * treat it as a merge instead of erroring: repoint every transaction from
+ * this vendor onto the existing one, then remove this now-empty vendor.
+ * That's almost certainly what "rename to match" means in practice.
+ */
+export async function renameVendor(id: string, newName: string): Promise<{ merged: boolean; mergedIntoId?: string }> {
+  const { supabase, farm } = await ctx();
+  const trimmed = newName.trim();
+  if (!trimmed) throw new Error("Name can't be blank.");
+
+  const { data: existing } = await supabase
+    .from("vendor").select("id").eq("farm_business_id", farm.id).eq("name", trimmed).neq("id", id).maybeSingle();
+  if (existing) {
+    await supabase.from("transaction").update({ vendor_id: existing.id }).eq("vendor_id", id).eq("farm_business_id", farm.id);
+    await supabase.from("vendor").delete().eq("id", id).eq("farm_business_id", farm.id);
+    return { merged: true, mergedIntoId: existing.id };
+  }
+  await supabase.from("vendor").update({ name: trimmed }).eq("id", id).eq("farm_business_id", farm.id);
+  return { merged: false };
+}
+
 const TXN_SELECT = "*, vendor:vendor_id(name), tax_year:tax_year_id(year), tax_category:tax_category_id(code)";
 
 export async function listTransactions(filters: {

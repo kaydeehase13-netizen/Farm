@@ -886,6 +886,25 @@ export async function createLoanAction(formData: FormData) {
   revalidatePath("/money/loans");
 }
 
+/**
+ * Renames a vendor/income-source — "Vendor" on an expense and "Source /
+ * Buyer" on an income transaction are the same underlying field, so this
+ * covers both. Every transaction that used this vendor picks up the new
+ * name immediately since they all point at the same vendor record. If the
+ * new name matches a different vendor that already exists, the two get
+ * merged instead of erroring — redirect to whichever vendor the name
+ * ends up under.
+ */
+export async function renameVendorAction(vendorId: string, formData: FormData) {
+  const name = str(formData, "name");
+  if (!name) throw new Error("Name can't be blank.");
+  const result = await repo.renameVendor(vendorId, name);
+  revalidatePath("/money/vendors");
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  redirect(`/money/vendors/${result.merged && result.mergedIntoId ? result.mergedIntoId : vendorId}`);
+}
+
 export async function recordPaymentAction(formData: FormData) {
   const farm = await getFarm();
   await repo.recordPayment({
