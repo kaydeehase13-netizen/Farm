@@ -1104,6 +1104,24 @@ export async function updateTransactionDateAction(transactionId: string, transac
 }
 
 /**
+ * Edit a single transaction's Source/Buyer (income) or Vendor (expense)
+ * name directly from the transactions table — e.g. to add the person who
+ * actually paid instead of leaving it blank or generic. Resolves to an
+ * existing vendor/income-source with that name or creates a new one, same
+ * as typing it on the New Transaction form; it does not rename any other
+ * transaction's vendor (use the Vendors page to rename/merge everywhere).
+ */
+export async function updateTransactionVendorAction(transactionId: string, vendorName: string) {
+  await repo.updateTransaction(transactionId, { vendorName: vendorName.trim() || undefined });
+  revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
+  revalidatePath("/money/vendors");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
+}
+
+/**
  * "Omit" = mark a transaction as personal / not a farm expense, excluding it
  * from income, expense, and tax-readiness totals without deleting it — the
  * record stays for reference, it just stops counting. Un-omitting puts it

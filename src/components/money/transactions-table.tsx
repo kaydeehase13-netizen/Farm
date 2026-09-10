@@ -7,7 +7,7 @@ import { money } from "@/components/ui/stat-card";
 import {
   bulkAssignFieldAction, bulkUpdateCategoryAction, recategorizeTransactionAction,
   updateTransactionDateAction, setTransactionOmittedAction, deleteTransactionAction,
-  markTransactionDuplicateAction,
+  markTransactionDuplicateAction, updateTransactionVendorAction,
 } from "@/lib/actions";
 
 export function TransactionsTable({
@@ -15,6 +15,7 @@ export function TransactionsTable({
 }: { transactions: Transaction[]; categories: FarmCategory[]; fields: Field[] }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
+  const [editingVendorId, setEditingVendorId] = useState<string | null>(null);
   const allSelected = selected.size > 0 && selected.size === transactions.length;
 
   function toggle(id: string) {
@@ -65,6 +66,11 @@ export function TransactionsTable({
   function changeDate(id: string, transactionDate: string) {
     if (!transactionDate) return;
     startTransition(() => updateTransactionDateAction(id, transactionDate));
+  }
+  function saveVendor(t: Transaction, name: string) {
+    setEditingVendorId(null);
+    if (name === (t.vendorName ?? "")) return;
+    startTransition(() => updateTransactionVendorAction(t.id, name));
   }
   function toggleOmitted(t: Transaction) {
     const nowOmitted = !t.isPersonalExcluded;
@@ -148,11 +154,39 @@ export function TransactionsTable({
                   />
                 </td>
                 <td>
-                  <div className="font-medium">
-                    {t.vendorId ? (
-                      <Link prefetch={false} href={`/money/vendors/${t.vendorId}`} className="text-forest hover:underline">{t.vendorName}</Link>
-                    ) : (t.vendorName ?? t.customerId ?? "—")}
-                  </div>
+                  {editingVendorId === t.id ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      defaultValue={t.vendorName ?? ""}
+                      placeholder={t.transactionType === "income" ? "Who paid? (Source / Buyer)" : "Vendor"}
+                      className="border rounded px-1.5 py-1 bg-white text-sm w-full max-w-[180px]"
+                      disabled={isPending}
+                      onBlur={(e) => saveVendor(t, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+                        if (e.key === "Escape") setEditingVendorId(null);
+                      }}
+                    />
+                  ) : (
+                    <div className="font-medium group flex items-center gap-1.5">
+                      {t.vendorId ? (
+                        <Link prefetch={false} href={`/money/vendors/${t.vendorId}`} className="text-forest hover:underline">{t.vendorName}</Link>
+                      ) : (
+                        <span className={t.vendorName ? "" : "text-charcoal/40 italic"}>
+                          {t.vendorName ?? t.customerId ?? (t.transactionType === "income" ? "Add who paid…" : "Add vendor…")}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setEditingVendorId(t.id)}
+                        className="text-charcoal/35 hover:text-forest text-xs opacity-0 group-hover:opacity-100"
+                        title={t.transactionType === "income" ? "Edit who paid" : "Edit vendor"}
+                      >
+                        ✎
+                      </button>
+                    </div>
+                  )}
                   <div className="text-charcoal/50 text-xs">{t.description}</div>
                   {t.isDuplicateExcluded && (
                     <div className="text-status-amber text-xs mt-0.5">Duplicate — not counted{t.duplicateNote ? `: ${t.duplicateNote}` : ""}</div>
