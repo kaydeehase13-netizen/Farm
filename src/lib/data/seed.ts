@@ -50,6 +50,19 @@ export const FARM_CATEGORIES: FarmCategory[] = [
   { id: "cat-other-income", name: "Other Income", defaultTaxCategoryCode: "income_other" },
   { id: "cat-w2-wages", name: "Wages (W-2)", defaultTaxCategoryCode: "income_w2_wages" },
   { id: "cat-program-payment", name: "Program Payment", defaultTaxCategoryCode: "income_govt_payments" },
+  // Gift / FCE / Kanza / Agco — each gets both an income and an expense
+  // bucket (money can move either direction with any of these), mapped to
+  // the same generic Other Income / Other Expense tax lines as "Other"
+  // above. They're separate farm_category rows purely so they show up as
+  // their own named category instead of getting lumped under "Other."
+  { id: "cat-gift-income", name: "Gift Received", defaultTaxCategoryCode: "income_other" },
+  { id: "cat-gift-expense", name: "Gift Given", defaultTaxCategoryCode: "exp_other" },
+  { id: "cat-fce-income", name: "FCE (Income)", defaultTaxCategoryCode: "income_other" },
+  { id: "cat-fce-expense", name: "FCE (Expense)", defaultTaxCategoryCode: "exp_other" },
+  { id: "cat-kanza-income", name: "Kanza (Income)", defaultTaxCategoryCode: "income_other" },
+  { id: "cat-kanza-expense", name: "Kanza (Expense)", defaultTaxCategoryCode: "exp_other" },
+  { id: "cat-agco-income", name: "Agco (Income)", defaultTaxCategoryCode: "income_other" },
+  { id: "cat-agco-expense", name: "Agco (Expense)", defaultTaxCategoryCode: "exp_other" },
   // "Cows" above is for livestock you raised yourself (Schedule F Line 2).
   // These two are the buy-then-resell side (Schedule F Line 1a/1b/1c) — a
   // purchase and a later sale of the same animal(s), entered as two

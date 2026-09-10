@@ -1164,6 +1164,55 @@ export async function markTransactionDuplicateAction(transactionId: string, excl
   revalidatePath("/fields");
 }
 
+/**
+ * Copies a transaction's full amount into a second category as its own
+ * new transaction — for money that genuinely counts in two places at
+ * once (e.g. a payment that's both a Program Payment on the farm books
+ * AND W-2 wage income), as opposed to Split, which divides one total
+ * across categories that add back up to it. This intentionally counts
+ * the amount twice across the two categories' totals — that's the point,
+ * not a bug — so use it only when the full amount really does belong in
+ * both places, not as a shortcut around Split.
+ */
+export async function duplicateTransactionToCategoryAction(transactionId: string, farmCategoryId: string) {
+  const original = await repo.getTransaction(transactionId);
+  if (!original) throw new Error("Original transaction not found.");
+  const taxYear = Number(original.transactionDate.slice(0, 4));
+  const fieldId = original.splits?.[0]?.fieldId;
+  await repo.createTransaction({
+    farmBusinessId: original.farmBusinessId,
+    taxYear,
+    transactionType: original.transactionType,
+    status: "categorized",
+    transactionDate: original.transactionDate,
+    vendorName: original.vendorName,
+    customerId: original.customerId,
+    description: original.description,
+    amount: original.amount,
+    // Sales tax stays on the original copy only — duplicating it here
+    // would double it right along with the amount.
+    salesTax: 0,
+    paymentMethod: original.paymentMethod,
+    farmCategoryId,
+    isPersonalExcluded: false,
+    cpaFlag: false,
+    syncStatus: "synced",
+    splits: [{
+      targetType: fieldId ? "field" : "general_overhead",
+      fieldId,
+      allocationMethod: "manual",
+      allocatedAmount: original.amount,
+      farmCategoryId,
+    }],
+  });
+  revalidatePath("/money/transactions");
+  revalidatePath("/money/transactions/category-audit");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
+  revalidatePath("/fields");
+}
+
 /** Permanently deletes a transaction. Use setTransactionOmittedAction to keep the record but exclude it instead. */
 export async function deleteTransactionAction(transactionId: string) {
   await repo.deleteTransaction(transactionId);

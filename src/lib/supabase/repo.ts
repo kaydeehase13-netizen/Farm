@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServerSupabaseClient } from "./server";
 import { requireActiveFarm } from "./auth";
+import { taxCategoryScheduleType } from "@/lib/tax-categories";
 import type {
   Field, CropYear, Transaction, TransactionSplit, Receipt, Activity, Customer,
   CustomerField, Job, Invoice, Payment, Asset, AssetRepair, MileageTrip,
@@ -1421,8 +1422,16 @@ export async function dashboardSummary(taxYear: number) {
     listTransactions({ taxYear }), listReceipts(), listInvoices(), listTaxQuestions(), listInventory(),
   ]);
   const active = txns.filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded);
-  const income = active.filter((t) => t.transactionType === "income").reduce((s, t) => s + t.amount, 0);
-  const expenses = active.filter((t) => t.transactionType === "expense").reduce((s, t) => s + t.amount, 0);
+  // Loan proceeds/principal aren't income or expense at all (it's borrowed
+  // money, not earnings — see 0021), and W-2 wages / the house project are
+  // real money but deliberately never counted toward farm income/expenses
+  // (see 0018, 0020) — so none of the three belong in this top-line total.
+  const isOffBooks = (t: Transaction) => {
+    const st = taxCategoryScheduleType(t.taxCategoryCode);
+    return st === "loan" || st === "w2" || st === "real_estate";
+  };
+  const income = active.filter((t) => t.transactionType === "income" && !isOffBooks(t)).reduce((s, t) => s + t.amount, 0);
+  const expenses = active.filter((t) => t.transactionType === "expense" && !isOffBooks(t)).reduce((s, t) => s + t.amount, 0);
   const margin = income - expenses;
   const missingReceipts = active.filter((t) => t.transactionType === "expense" && !t.receiptId).length;
   const needsReview = active.filter((t) => t.status === "needs_review").length;

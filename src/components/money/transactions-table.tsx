@@ -7,7 +7,7 @@ import { money } from "@/components/ui/stat-card";
 import {
   bulkAssignFieldAction, bulkUpdateCategoryAction, recategorizeTransactionAction,
   updateTransactionDateAction, setTransactionOmittedAction, deleteTransactionAction,
-  markTransactionDuplicateAction, updateTransactionVendorAction,
+  markTransactionDuplicateAction, updateTransactionVendorAction, duplicateTransactionToCategoryAction,
 } from "@/lib/actions";
 
 export function TransactionsTable({
@@ -16,6 +16,7 @@ export function TransactionsTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
   const [editingVendorId, setEditingVendorId] = useState<string | null>(null);
+  const [dupingId, setDupingId] = useState<string | null>(null);
   const allSelected = selected.size > 0 && selected.size === transactions.length;
 
   function toggle(id: string) {
@@ -66,6 +67,16 @@ export function TransactionsTable({
   function changeDate(id: string, transactionDate: string) {
     if (!transactionDate) return;
     startTransition(() => updateTransactionDateAction(id, transactionDate));
+  }
+  function alsoCategorize(t: Transaction, farmCategoryId: string) {
+    setDupingId(null);
+    if (!farmCategoryId) return;
+    const catName = categories.find((c) => c.id === farmCategoryId)?.name ?? "that category";
+    if (!window.confirm(
+      `This adds a NEW transaction for the full ${money(t.amount)}, categorized as ${catName} — ` +
+      `on top of this one. Both will count in your totals (the amount counts twice, on purpose). Continue?`
+    )) return;
+    startTransition(() => duplicateTransactionToCategoryAction(t.id, farmCategoryId));
   }
   function saveVendor(t: Transaction, name: string) {
     setEditingVendorId(null);
@@ -217,6 +228,30 @@ export function TransactionsTable({
                   <Link prefetch={false} href={`/money/transactions/${t.id}/split`} className="text-forest hover:underline mr-2">
                     Split
                   </Link>
+                  {dupingId === t.id ? (
+                    <select
+                      autoFocus
+                      className="border rounded px-1 py-0.5 bg-white text-xs mr-2 max-w-[130px]"
+                      defaultValue=""
+                      disabled={isPending}
+                      onChange={(e) => alsoCategorize(t, e.target.value)}
+                      onBlur={() => setDupingId(null)}
+                    >
+                      <option value="" disabled>Also count as…</option>
+                      {categories.filter((c) => c.id !== t.farmCategoryId).map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <button
+                      onClick={() => setDupingId(t.id)}
+                      disabled={isPending}
+                      className="text-charcoal/60 hover:underline mr-2"
+                      title="Copy this transaction's full amount into a second category — both will count"
+                    >
+                      Also count as…
+                    </button>
+                  )}
                   <button onClick={() => toggleOmitted(t)} disabled={isPending} className="text-charcoal/60 hover:underline mr-2">
                     {t.isPersonalExcluded ? "Un-omit" : "Omit"}
                   </button>

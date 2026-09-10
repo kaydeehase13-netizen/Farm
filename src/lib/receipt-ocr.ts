@@ -57,6 +57,16 @@ export async function scanReceiptImage(imageBase64: string, mimeType: string): P
     };
   }
 
+  // The upload UI advertises "JPEG, PNG or PDF", but the vision endpoint's
+  // image_url content type only accepts actual image MIME types — a PDF
+  // sent that way is rejected with invalid_image_format. A PDF receipt
+  // needs its own content type: `file` with base64 file_data, which
+  // gpt-4o/gpt-4o-mini both support on Chat Completions.
+  const isPdf = (mimeType || "").toLowerCase() === "application/pdf";
+  const fileContent = isPdf
+    ? { type: "file", file: { filename: "receipt.pdf", file_data: `data:application/pdf;base64,${imageBase64}` } }
+    : { type: "image_url", image_url: { url: `data:${mimeType || "image/jpeg"};base64,${imageBase64}` } };
+
   try {
     const model = process.env.OPENAI_VISION_MODEL || "gpt-4o-mini";
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -81,7 +91,7 @@ export async function scanReceiptImage(imageBase64: string, mimeType: string): P
             role: "user",
             content: [
               { type: "text", text: "Extract the receipt data as JSON." },
-              { type: "image_url", image_url: { url: `data:${mimeType || "image/jpeg"};base64,${imageBase64}` } },
+              fileContent,
             ],
           },
         ],
