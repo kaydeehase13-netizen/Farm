@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 
 const CURRENCY_FMT = '"$"#,##0.00';
 const HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F3D2E" } };
@@ -73,34 +74,65 @@ export async function buildXlsxTemplate(opts: {
  * Parses an uploaded .xlsx/.csv file's first worksheet into row objects
  * keyed by the (trimmed) header text. Blank rows are skipped. Excel dates
  * come back as JS Date objects; everything else as string/number.
+ *
+ * Reads with the `xlsx` (SheetJS) library rather than ExcelJS — a real
+ * uploaded file is written by whatever software produced it (a bank's own
+ * export, Google Sheets, Numbers, etc.), not by us, and those don't all
+ * produce identical OOXML. One bank-export file crashed ExcelJS outright
+ * (an uncaught exception deep inside its own XML parser, "Cannot read
+ * properties of undefined (reading 'sheets')") because it used a
+ * namespace-prefixed `<x:workbook>` root element instead of the
+ * unprefixed `<workbook>` every Microsoft/Excel-written file uses — both
+ * are valid XML, but ExcelJS's parser only recognized the latter. That
+ * uncaught throw is what surfaced to the browser as a blank, unhelpful
+ * "Minified React error #441" instead of any usable message. SheetJS is
+ * built for exactly this kind of real-world variance and reads that same
+ * file without issue. ExcelJS stays in use for the template BUILDER above
+ * (buildXlsxTemplate) — files this app writes itself are never the
+ * problem, only files it has to read back from elsewhere.
  */
 export async function parseXlsxRows(fileBuffer: ArrayBuffer | Buffer): Promise<Record<string, string | number | Date | undefined>[]> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(fileBuffer as ArrayBuffer);
-  const sheet = wb.worksheets[0];
-  if (!sheet) return [];
+  let wb: XLSX.WorkBook;
+  try {
+    const buf = Buffer.isBuffer(fileBuffer) ? fileBuffer : Buffer.from(fileBuffer);
+    wb = XLSX.read(buf, { type: "buffer", cellDates: true });
+  } catch (e) {
+    throw new Error(
+      `Couldn't read that file as an Excel spreadsheet (${e instanceof Error ? e.message : "unknown error"}). ` +
+      `Try opening it and re-saving as .xlsx from Excel, Google Sheets, or Numbers, or start from the downloaded template instead.`
+    );
+  }
+  const sheetName = wb.SheetNames[0];
+  if (!sheetName) return [];
+  const sheet = wb.Sheets[sheetName];
 
-  const headers: string[] = [];
-  sheet.getRow(1).eachCell({ includeEmpty: true }, (cell, colNumber) => {
-    headers[colNumber] = String(cell.value ?? "").trim();
-  });
+  // header:1 + slice(1) instead of sheet_to_json's default object mode —
+  // the default mode silently drops a column entirely if two header cells
+  // trim to the same text, which the object mode has no way to warn about.
+  // Reading as raw rows first, keyed by our own trimmed header list, keeps
+  // every column even if the sheet is a little messy.
+  const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: undefined }) as unknown[][];
+  if (grid.length === 0) return [];
+  const headers = (grid[0] ?? []).map((h) => String(h ?? "").trim());
 
   const rows: Record<string, string | number | Date | undefined>[] = [];
-  sheet.eachRow((row, rowNumber) => {
-    if (rowNumber === 1) return;
+  for (const raw of grid.slice(1)) {
     const obj: Record<string, string | number | Date | undefined> = {};
     let hasValue = false;
-    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-      const key = headers[colNumber];
+    raw.forEach((cell, i) => {
+      const key = headers[i];
       if (!key) return;
-      let v = cell.value as any;
-      if (v && typeof v === "object" && "result" in v) v = v.result; // formula cell
+      let v = cell as any;
+      if (v == null) return;
       if (v instanceof Date) { obj[key] = v; hasValue = true; }
       else if (typeof v === "number") { obj[key] = v; hasValue = true; }
-      else if (typeof v === "string" && v.trim() !== "") { obj[key] = v.trim(); hasValue = true; }
+      else {
+        const s = String(v).trim();
+        if (s !== "") { obj[key] = s; hasValue = true; }
+      }
     });
     if (hasValue) rows.push(obj);
-  });
+  }
   return rows;
 }
 

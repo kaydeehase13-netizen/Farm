@@ -1270,7 +1270,12 @@ export async function bulkImportAllocateCostAction(formData: FormData): Promise<
   const categories = await repo.listFarmCategories();
   if (!(file instanceof File)) return { total: 0, imported: 0, failed: 0, results: [{ row: 0, ok: false, message: "No file uploaded." }] };
 
-  const rows = await parseXlsxRows(await file.arrayBuffer());
+  let rows: Awaited<ReturnType<typeof parseXlsxRows>>;
+  try {
+    rows = await parseXlsxRows(await file.arrayBuffer());
+  } catch (e) {
+    return { total: 0, imported: 0, failed: 0, results: [{ row: 0, ok: false, message: e instanceof Error ? e.message : "Couldn't read that file." }] };
+  }
   // Same fix as the expense/income import: process rows in small concurrent
   // batches rather than one at a time, so a big spreadsheet can't run past
   // the server's request timeout (see bulkImportTransactions above for the
@@ -1327,7 +1332,12 @@ async function bulkImportTransactions(formData: FormData, transactionType: "inco
   // with no rows imported at all. See listTransactionDedupeKeys()'s own
   // comment for the full explanation.
   const [categories, existingKeys] = await Promise.all([repo.listFarmCategories(), repo.listTransactionDedupeKeys()]);
-  const rows = await parseXlsxRows(await file.arrayBuffer());
+  let rows: Awaited<ReturnType<typeof parseXlsxRows>>;
+  try {
+    rows = await parseXlsxRows(await file.arrayBuffer());
+  } catch (e) {
+    return { total: 0, imported: 0, failed: 0, results: [{ row: 0, ok: false, message: e instanceof Error ? e.message : "Couldn't read that file." }] };
+  }
 
   // Same vendor/description + date + amount as something already on file —
   // most likely this exact row got imported before (including from a run
