@@ -542,7 +542,15 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
           : taxCategoryScheduleType(t.taxCategoryCode) === "loan" ? "Loan (Not Taxable/Deductible)" : "Schedule F",
         vendor: t.vendorName, desc: t.description,
         farmCat: farmCategoryLabel(t.farmCategoryId, farmCategories), taxCat: taxCategoryLabel(t.taxCategoryCode),
-        target: splitTargetLabel(s, fields, jobs), amount: s.allocatedAmount, status: t.status, doc: t.receiptId ? "On file" : "Missing",
+        target: splitTargetLabel(s, fields, jobs), amount: s.allocatedAmount,
+        // isDuplicateExcluded doesn't have its own TransactionStatus value
+        // (unlike "Omit", which sets status to excluded_personal) -- flag it
+        // here directly so it's identifiable in the one sheet that includes
+        // every transaction, excluded ones included. Every totals sheet
+        // above already filters both flags out, so this is purely a "why
+        // isn't this counted" audit trail, not a double-count risk.
+        status: t.isDuplicateExcluded ? `duplicate — excluded${t.duplicateNote ? `: ${t.duplicateNote}` : ""}` : t.status,
+        doc: t.receiptId ? "On file" : "Missing",
       });
     }
   }
