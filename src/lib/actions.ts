@@ -406,7 +406,7 @@ export async function createFieldActivity(formData: FormData) {
  * one of our ActivityType enum values before calling this — this action
  * just does the writes and reports back how many succeeded/failed.
  */
-export async function importActivitiesAction(rows: {
+type ImportRow = {
   activityDate: string;
   fieldId: string;
   fieldName?: string;
@@ -422,33 +422,71 @@ export async function importActivitiesAction(rows: {
   moisturePct?: number | null;
   applicatorName?: string | null;
   notes?: string | null;
-}[]) {
+};
+
+/**
+ * Multiple CSV rows sharing the same field + date + activity type describe
+ * ONE real-world event (a tank-mix spray or a fertilizer blend applied all
+ * at once) — not several separate activities. Combining them here before
+ * they ever reach createActivity is what keeps a re-import from producing
+ * the fragmented "5 blank spray rows + 5 single-product rows" mess a raw
+ * per-product CSV would otherwise create; the app already displays these
+ * as one event with several product lines, so the data should match that.
+ */
+function groupImportRows(rows: ImportRow[]) {
+  const order: string[] = [];
+  const groups = new Map<string, { first: ImportRow; products: ImportRow[] }>();
+  for (const row of rows) {
+    const groupable = row.activityType === "spray" || row.activityType === "fertilize";
+    const key = groupable
+      ? ["g", row.fieldId, row.activityDate, row.activityType].join("|")
+      : ["u", row.fieldId, row.activityDate, row.activityType, order.length].join("|");
+    let g = groups.get(key);
+    if (!g) {
+      g = { first: row, products: [] };
+      groups.set(key, g);
+      order.push(key);
+    }
+    if (row.productName) g.products.push(row);
+    // Prefer a row's own acres/applicator/notes if the group's first row didn't have them.
+    if (g.first.acres == null && row.acres != null) g.first.acres = row.acres;
+    if (!g.first.applicatorName && row.applicatorName) g.first.applicatorName = row.applicatorName;
+    if (!g.first.notes && row.notes) g.first.notes = row.notes;
+  }
+  return order.map((key) => groups.get(key)!);
+}
+
+export async function importActivitiesAction(rows: ImportRow[]) {
   const farm = await getFarm();
   let imported = 0;
   let repaired = 0;
   let skippedDuplicates = 0;
   const errors: string[] = [];
+  const groupedRows = groupImportRows(rows);
 
   // Guard against re-importing the same CSV (or a file with repeated rows).
   // The match key is deliberately just date+type+acres+yield — NOT product
-  // name — because an earlier bug could create an activity but silently
+  // name(s) — because an earlier bug could create an activity but silently
   // fail to attach its spray/fertilizer/seed product, leaving that
   // activity's stored product name blank. If product name were part of the
-  // match key, a row whose real product is "32/thio" would never match its
-  // own broken (blank-product) activity, and re-running the import would
-  // create a brand-new duplicate activity instead of repairing the
+  // match key, a group whose real products are "32/thio" would never match
+  // its own broken (blank-product) activity, and re-running the import
+  // would create a brand-new duplicate activity instead of repairing the
   // existing one — doubling up the field's activity history. So: match on
-  // the core fields first, then decide by product name whether it's a
-  // true duplicate (skip), a broken one to backfill (repair), or a
+  // the core fields first, then decide by the product-name SET whether
+  // it's a true duplicate (skip), a broken one to backfill (repair), or a
   // genuinely different activity that happens to share date/type/acres
-  // (create new, e.g. two different products applied the same day at the
+  // (create new, e.g. two different tank mixes applied the same day at the
   // same acreage).
-  type Seen = { activityId: string; hasProductInfo: boolean; productName: string; claimed: boolean };
+  type Seen = { activityId: string; hasProductInfo: boolean; productKey: string; claimed: boolean };
   const existingByField = new Map<string, Map<string, Seen[]>>();
   function coreSignature(row: { activityDate: string; activityType: string; acres?: number | null; yieldAmount?: number | null }) {
     const acres = row.acres != null ? Math.round(row.acres * 1000) / 1000 : "";
     const yieldAmount = row.yieldAmount != null ? Math.round(row.yieldAmount * 1000) / 1000 : "";
     return [row.activityDate, row.activityType, acres, yieldAmount].join("|");
+  }
+  function productKeyOf(names: string[]) {
+    return Array.from(new Set(names.map((n) => n.trim().toLowerCase()).filter(Boolean))).sort().join("+");
   }
   async function seenForField(fieldId: string) {
     let map = existingByField.get(fieldId);
@@ -457,10 +495,15 @@ export async function importActivitiesAction(rows: {
       map = new Map<string, Seen[]>();
       for (const a of existing) {
         const key = coreSignature({ activityDate: a.activityDate, activityType: a.activityType, acres: a.acres ?? null, yieldAmount: a.yieldAmount ?? null });
+        const names = [
+          ...(a.sprayProducts ?? []).map((p) => p.productName),
+          ...(a.fertilizerProducts ?? []).map((p) => p.productName),
+          ...(a.seedProductName ? [a.seedProductName] : []),
+        ];
         const entry: Seen = {
           activityId: a.id,
-          hasProductInfo: Boolean(a.sprayProducts?.length || a.fertilizerProducts?.length || a.seedProductName),
-          productName: (a.sprayProducts?.[0]?.productName ?? a.seedProductName ?? "").trim().toLowerCase(),
+          hasProductInfo: names.length > 0,
+          productKey: productKeyOf(names),
           claimed: false,
         };
         const list = map.get(key);
@@ -471,31 +514,39 @@ export async function importActivitiesAction(rows: {
     return map;
   }
 
-  for (const row of rows) {
+  for (const group of groupedRows) {
+    const row = group.first;
     try {
       const seen = await seenForField(row.fieldId);
       const key = coreSignature(row);
       const candidates = seen.get(key) ?? [];
-      const rowProduct = (row.productName ?? "").trim().toLowerCase();
-      const exactDuplicate = candidates.find((c) => c.hasProductInfo && c.productName === rowProduct);
+      const isSpray = row.activityType === "spray";
+      const isFertilize = row.activityType === "fertilize";
+      const productLines = group.products.map((p) => ({
+        productId: "prod-imported",
+        productName: p.productName!,
+        rate: p.rate ?? 0,
+        rateUnit: p.rateUnit ?? "",
+        quantityUsed: p.quantity ?? 0,
+        quantityUnit: p.quantityUnit ?? "",
+      }));
+      const rowProductKey = productKeyOf(productLines.map((p) => p.productName));
+      const exactDuplicate = candidates.find((c) => c.hasProductInfo && c.productKey === rowProductKey);
       const brokenCandidate = !exactDuplicate ? candidates.find((c) => !c.hasProductInfo && !c.claimed) : undefined;
-      const isSpray = row.activityType === "spray" || row.activityType === "fertilize";
 
       if (exactDuplicate) {
         skippedDuplicates++;
         continue;
       }
-      if (brokenCandidate && row.productName) {
+      if (brokenCandidate && productLines.length) {
         await repo.repairActivityProductDetails(brokenCandidate.activityId, {
-          sprayProducts: isSpray ? [{
-            productId: "prod-imported", productName: row.productName,
-            rate: row.rate ?? 0, rateUnit: row.rateUnit ?? "", quantityUsed: row.quantity ?? 0, quantityUnit: row.quantityUnit ?? "",
-          }] : undefined,
-          seedProductName: row.activityType === "plant" ? row.productName : undefined,
+          sprayProducts: isSpray ? productLines : undefined,
+          fertilizerProducts: isFertilize ? productLines : undefined,
+          seedProductName: row.activityType === "plant" ? (row.productName ?? undefined) : undefined,
           seedingRate: row.activityType === "plant" ? (row.rate ?? undefined) : undefined,
         });
         brokenCandidate.hasProductInfo = true;
-        brokenCandidate.productName = rowProduct;
+        brokenCandidate.productKey = rowProductKey;
         brokenCandidate.claimed = true;
         repaired++;
         continue;
@@ -508,14 +559,8 @@ export async function importActivitiesAction(rows: {
         activityDate: row.activityDate,
         acres: row.acres ?? undefined,
         applicatorName: row.applicatorName ?? undefined,
-        sprayProducts: isSpray && row.productName ? [{
-          productId: "prod-imported",
-          productName: row.productName,
-          rate: row.rate ?? 0,
-          rateUnit: row.rateUnit ?? "",
-          quantityUsed: row.quantity ?? 0,
-          quantityUnit: row.quantityUnit ?? "",
-        }] : undefined,
+        sprayProducts: isSpray && productLines.length ? productLines : undefined,
+        fertilizerProducts: isFertilize && productLines.length ? productLines : undefined,
         seedProductName: row.activityType === "plant" ? (row.productName ?? undefined) : undefined,
         seedingRate: row.activityType === "plant" ? (row.rate ?? undefined) : undefined,
         yieldAmount: row.yieldAmount ?? undefined,
@@ -524,7 +569,7 @@ export async function importActivitiesAction(rows: {
         notes: row.notes ?? undefined,
         syncStatus: "synced",
       });
-      const newEntry: Seen = { activityId: created.id, hasProductInfo: Boolean(row.productName), productName: rowProduct, claimed: true };
+      const newEntry: Seen = { activityId: created.id, hasProductInfo: productLines.length > 0, productKey: rowProductKey, claimed: true };
       if (candidates.length) candidates.push(newEntry); else seen.set(key, [newEntry]);
       imported++;
     } catch (e) {
@@ -1444,6 +1489,9 @@ export async function bulkImportAllocateCostAction(formData: FormData): Promise<
   const categories = await repo.listFarmCategories();
   if (!(file instanceof File)) return { total: 0, imported: 0, failed: 0, results: [{ row: 0, ok: false, message: "No file uploaded." }] };
 
+  // See bulkImportTransactions above for why this is caught rather than
+  // left to throw uncaught (a file this app didn't write itself can trip
+  // up the reader in ways that aren't the server's fault).
   let rows: Awaited<ReturnType<typeof parseXlsxRows>>;
   try {
     rows = await parseXlsxRows(await file.arrayBuffer());
@@ -1506,6 +1554,13 @@ async function bulkImportTransactions(formData: FormData, transactionType: "inco
   // with no rows imported at all. See listTransactionDedupeKeys()'s own
   // comment for the full explanation.
   const [categories, existingKeys] = await Promise.all([repo.listFarmCategories(), repo.listTransactionDedupeKeys()]);
+
+  // A file this app didn't write itself can be read back by a different
+  // library/version than whatever wrote it (a bank export, Google Sheets,
+  // Numbers, ...) — that mismatch belongs to the person uploading, not a
+  // server crash, so it's caught here and returned as a normal failed
+  // result instead of throwing uncaught, which used to blow up the whole
+  // action and surface as a blank, unhelpful "Minified React error #441."
   let rows: Awaited<ReturnType<typeof parseXlsxRows>>;
   try {
     rows = await parseXlsxRows(await file.arrayBuffer());
