@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getField, fieldProfitability, listActivities, listCropYears, getFarm } from "@/lib/data/repo";
+import { getField, fieldProfitability, listActivities, listCropYears, getFarm, fieldProductUsage, listFarmCategories } from "@/lib/data/repo";
 import { PageHeader, StatCard, money, moneyPrecise } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 import { DeleteFieldButton } from "@/components/fields/delete-field-button";
+import { ProductUsagePanel } from "@/components/fields/product-usage-panel";
+import { HarvestActivityEditor } from "@/components/fields/harvest-activity-editor";
 
 export default async function FieldDetailPage({
   params,
@@ -22,6 +24,8 @@ export default async function FieldDetailPage({
   const profit = await fieldProfitability(fieldId, taxYear);
   const activities = await listActivities({ fieldId, year: showAllActivities ? undefined : taxYear });
   const cropYears = await listCropYears(fieldId);
+  const productUsage = await fieldProductUsage(fieldId, taxYear);
+  const farmCategories = await listFarmCategories();
 
   const expenseRows: [string, number][] = ([
     ["Seed", profit.expenseSeed], ["Fertilizer", profit.expenseFertilizer], ["Chemical", profit.expenseChemical],
@@ -50,6 +54,10 @@ export default async function FieldDetailPage({
         <StatCard label="Total Expense" value={money(profit.totalExpense)} sub={moneyPrecise(profit.expensePerAcre) + "/ac"} />
         <StatCard label="Margin" value={money(profit.margin)} tone={profit.margin >= 0 ? "green" : "red"} />
         <StatCard label="Margin / Acre" value={moneyPrecise(profit.marginPerAcre)} tone={profit.marginPerAcre >= 0 ? "green" : "red"} />
+      </div>
+
+      <div className="mb-6">
+        <ProductUsagePanel usage={productUsage} taxYear={taxYear} />
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
@@ -106,6 +114,18 @@ export default async function FieldDetailPage({
                 {a.seedProductName && <div className="text-sm text-charcoal/60">{a.seedProductName} @ {a.seedingRate}/ac</div>}
                 {a.yieldAmount && <div className="text-sm text-charcoal/60">{a.yieldAmount} {a.yieldUnit}{a.moisturePct ? ` · ${a.moisturePct}% moisture` : ""}</div>}
                 {a.notes && <div className="text-sm text-charcoal/50 italic">{a.notes}</div>}
+                {a.activityType === "harvest" && (
+                  <HarvestActivityEditor
+                    activityId={a.id}
+                    fieldId={fieldId}
+                    cropName={a.notes?.match(/Crop:\s*([^.]+)/)?.[1]?.trim()}
+                    currentYield={a.yieldAmount}
+                    currentYieldUnit={a.yieldUnit}
+                    currentMoisture={a.moisturePct}
+                    currentAcres={a.acres}
+                    farmCategories={farmCategories}
+                  />
+                )}
               </li>
             ))}
             {activities.length === 0 && (

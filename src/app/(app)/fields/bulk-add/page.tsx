@@ -2,21 +2,24 @@ import Link from "next/link";
 import { listFields } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { BulkFieldImport } from "@/components/fields/bulk-field-import";
+import { DeleteAllFieldsButton } from "@/components/fields/delete-all-fields-button";
 
 export default async function BulkAddFieldsPage() {
   const fields = await listFields();
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl space-y-6">
       <PageHeader
         title="Bulk Add Fields"
         description="Add many fields at once from a boundary report, instead of one at a time."
       />
 
+      <DeleteAllFieldsButton fieldCount={fields.length} />
+
       <BulkFieldImport existingFieldNames={fields.map((f) => f.name)} />
 
       {fields.length > 0 && (
-        <div className="card p-6 mt-6">
+        <div className="card p-6">
           <div className="text-sm font-semibold text-forest mb-1">Your Current Fields ({fields.length})</div>
           <p className="text-xs text-charcoal/50 mb-3">
             Fields aren&apos;t tied to a single year, so old ones stay on record for their history even after you add

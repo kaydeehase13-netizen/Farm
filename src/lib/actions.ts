@@ -320,6 +320,35 @@ export async function deleteFieldAction(fieldId: string) {
   revalidatePath("/fields");
 }
 
+/** "Start fresh" — deletes every field it safely can (skipping any with real transaction/activity/crop-year history) and reports both lists. */
+export async function deleteAllFieldsAction() {
+  const result = await repo.deleteAllFields();
+  revalidatePath("/fields");
+  return result;
+}
+
+/** Powers the field detail page's "Product Usage & Cost" panel: total quantity used per product this year, plus its allocated dollar cost when one has been recorded. */
+export async function fieldProductUsageAction(fieldId: string, taxYear: number) {
+  return repo.fieldProductUsage(fieldId, taxYear);
+}
+
+/** Lets a harvest activity's yield/moisture/acres be corrected after the fact — e.g. a final scale ticket comes in different than the equipment-software estimate. */
+export async function updateActivityYieldAction(activityId: string, patch: { yieldAmount?: number | null; yieldUnit?: string | null; moisturePct?: number | null; acres?: number | null }) {
+  await repo.updateActivityYield(activityId, patch);
+  revalidatePath("/fields");
+}
+
+/** Records what a harvest sold for as a real income transaction split to the field — the income-side mirror of allocateProductCostAction. */
+export async function recordFieldSaleAction(input: {
+  fieldId: string; amount: number; quantitySold?: number | null; quantityUnit?: string | null;
+  cropName?: string; farmCategoryId: string; transactionDate: string; vendorName?: string;
+}) {
+  await repo.recordFieldSale(input);
+  revalidatePath("/fields");
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+}
+
 export async function createFieldActivity(formData: FormData) {
   const farm = await getFarm();
   const activityType = str(formData, "activityType") as any;

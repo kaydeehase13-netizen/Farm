@@ -47,6 +47,34 @@ export async function deleteField(fieldId: string) {
   return demo.deleteField(fieldId);
 }
 
+export async function deleteAllFields() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteAllFields();
+  return demo.deleteAllFields();
+}
+
+export async function fieldProductUsage(fieldId: string, taxYear: number) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).fieldProductUsage(fieldId, taxYear);
+  return demo.fieldProductUsage(fieldId, taxYear);
+}
+
+export async function getActivity(activityId: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).getActivity(activityId);
+  return demo.getActivity(activityId);
+}
+
+export async function updateActivityYield(activityId: string, patch: { yieldAmount?: number | null; yieldUnit?: string | null; moisturePct?: number | null; acres?: number | null }) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).updateActivityYield(activityId, patch);
+  return demo.updateActivityYield(activityId, patch);
+}
+
+export async function recordFieldSale(input: {
+  fieldId: string; amount: number; quantitySold?: number | null; quantityUnit?: string | null;
+  cropName?: string; farmCategoryId: string; transactionDate: string; vendorName?: string;
+}) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).recordFieldSale(input);
+  return demo.recordFieldSale(input);
+}
+
 export async function listVendors() {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listVendors();
   return demo.listVendors();

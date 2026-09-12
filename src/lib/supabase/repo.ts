@@ -100,6 +100,103 @@ export async function deleteField(fieldId: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/**
+ * "Start fresh" helper: attempts to delete every field on the farm, one at
+ * a time, reusing deleteField's guard so anything with real history (a
+ * transaction, activity, or crop year) is safely skipped instead of
+ * orphaning that data. Returns exactly what happened so the UI can show
+ * Kaydee a clear before/after instead of a silent bulk wipe.
+ */
+export async function deleteAllFields(): Promise<{ deleted: string[]; skipped: { name: string; reason: string }[] }> {
+  const fields = await listFields();
+  const deleted: string[] = [];
+  const skipped: { name: string; reason: string }[] = [];
+  for (const f of fields) {
+    try {
+      await deleteField(f.id);
+      deleted.push(f.name);
+    } catch (e) {
+      skipped.push({ name: f.name, reason: e instanceof Error ? e.message : "Couldn't delete this field." });
+    }
+  }
+  return { deleted, skipped };
+}
+
+export interface FieldProductUsage {
+  category: "Seed" | "Fertilizer" | "Chemical";
+  productName: string;
+  totalQuantity: number;
+  unit?: string;
+  allocatedCost: number | null;
+}
+
+/**
+ * "How much of X did this field use, and what did that cost" — grouped by
+ * product, for the field's Product Usage & Cost panel. Quantities come from
+ * logged/imported activities; cost comes from Allocate Product Cost entries
+ * (allocateProductCostAction), which stamps its expense description as
+ * "<productName> — allocated by usage (<fieldName>)" — that's the only link
+ * between a specific product and a specific dollar figure today, so this
+ * matches on it. A product with no matching allocation shows a null cost
+ * rather than $0, so the UI can tell "used but not priced yet" apart from
+ * "genuinely free."
+ *
+ * Exact-duplicate activity rows (same date/type/acres/product/quantity —
+ * a known artifact of a prior import) are only counted once, keyed by their
+ * full signature, so a field's totals stay right even before that data gets
+ * cleaned up.
+ */
+export async function fieldProductUsage(fieldId: string, taxYear: number): Promise<FieldProductUsage[]> {
+  const [field, activities, txns] = await Promise.all([
+    getField(fieldId),
+    listActivities({ fieldId, year: taxYear }),
+    listTransactions({ taxYear }),
+  ]);
+
+  const seenSignatures = new Set<string>();
+  const usage = new Map<string, { category: FieldProductUsage["category"]; productName: string; totalQuantity: number; unit?: string }>();
+
+  function addLine(category: FieldProductUsage["category"], productName: string | undefined, quantity: number | undefined, unit: string | undefined, a: Activity) {
+    if (!productName || !productName.trim()) return;
+    const sig = [a.activityDate, a.activityType, a.acres ?? "", productName.trim().toLowerCase(), quantity ?? "", unit ?? ""].join("|");
+    if (seenSignatures.has(sig)) return;
+    seenSignatures.add(sig);
+    const key = `${category}|${productName.trim().toLowerCase()}`;
+    const existing = usage.get(key);
+    const qty = quantity ?? 0;
+    if (existing) existing.totalQuantity += qty;
+    else usage.set(key, { category, productName: productName.trim(), totalQuantity: qty, unit });
+  }
+
+  for (const a of activities) {
+    for (const p of a.sprayProducts ?? []) addLine("Chemical", p.productName, p.quantityUsed, p.quantityUnit, a);
+    for (const p of a.fertilizerProducts ?? []) addLine("Fertilizer", p.productName, p.quantityUsed, p.quantityUnit, a);
+    if (a.seedProductName) addLine("Seed", a.seedProductName, a.seedingRate && a.acres ? a.seedingRate * a.acres : undefined, "units", a);
+  }
+
+  const fieldName = field?.name ?? "";
+  function allocatedCostFor(productName: string): number | null {
+    const needle = productName.trim().toLowerCase();
+    let total = 0;
+    let found = false;
+    for (const t of txns) {
+      if (t.transactionType !== "expense") continue;
+      const desc = (t.description ?? "").toLowerCase();
+      if (!desc.startsWith(`${needle} —`) && !desc.startsWith(`${needle} -`)) continue;
+      for (const s of t.splits) {
+        if (s.fieldId !== fieldId) continue;
+        total += s.allocatedAmount;
+        found = true;
+      }
+    }
+    return found ? total : null;
+  }
+
+  return Array.from(usage.values())
+    .map((u) => ({ ...u, allocatedCost: allocatedCostFor(u.productName) }))
+    .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
+}
+
 export async function listCropYears(fieldId?: string): Promise<CropYear[]> {
   const { supabase, farm } = await ctx();
   let q = supabase.from("crop_year").select("id, field_id, planted_acres, actual_yield, yield_unit, crop:crop_id(name), tax_year:tax_year_id(year, farm_business_id)");
@@ -890,6 +987,69 @@ export async function repairActivityProductDetails(activityId: string, details: 
 }) {
   const { supabase, farm } = await ctx();
   await writeActivityProductDetails(supabase, farm, activityId, undefined, details);
+}
+
+export async function getActivity(activityId: string): Promise<Activity | null> {
+  const { supabase, farm } = await ctx();
+  const { data } = await supabase.from("activity").select("id, field_id, farm_business_id, activity_type, acres, field:field_id(name)").eq("id", activityId).eq("farm_business_id", farm.id).maybeSingle();
+  if (!data) return null;
+  const activities = await listActivities({ fieldId: (data as any).field_id ?? undefined });
+  return activities.find((a) => a.id === activityId) ?? null;
+}
+
+/**
+ * Lets a harvest activity's yield numbers be corrected after the fact —
+ * e.g. the PDF import over/undercounted a wet/dry weight, or Kaydee just
+ * wants to update it once the final scale ticket comes in. Only touches
+ * fields that are actually passed (undefined = leave as-is), and only
+ * writes the harvest_activity_detail row (creating it via upsert if this
+ * activity somehow didn't have one yet).
+ */
+export async function updateActivityYield(activityId: string, patch: { yieldAmount?: number | null; yieldUnit?: string | null; moisturePct?: number | null; acres?: number | null }): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const { data: activity, error: findErr } = await supabase.from("activity").select("id").eq("id", activityId).eq("farm_business_id", farm.id).maybeSingle();
+  if (findErr || !activity) throw new Error("Couldn't find that activity.");
+
+  if (patch.acres !== undefined) {
+    const { error } = await supabase.from("activity").update({ acres: patch.acres }).eq("id", activityId);
+    if (error) throw new Error(error.message);
+  }
+  if (patch.yieldAmount !== undefined || patch.yieldUnit !== undefined || patch.moisturePct !== undefined) {
+    const { data: existing } = await supabase.from("harvest_activity_detail").select("yield_amount, yield_unit, moisture_pct").eq("activity_id", activityId).maybeSingle();
+    const { error } = await supabase.from("harvest_activity_detail").upsert({
+      activity_id: activityId,
+      yield_amount: patch.yieldAmount !== undefined ? patch.yieldAmount : existing?.yield_amount ?? null,
+      yield_unit: patch.yieldUnit !== undefined ? patch.yieldUnit : existing?.yield_unit ?? null,
+      moisture_pct: patch.moisturePct !== undefined ? patch.moisturePct : existing?.moisture_pct ?? null,
+    }, { onConflict: "activity_id" });
+    if (error) throw new Error(error.message);
+  }
+}
+
+/**
+ * Records what a harvest actually sold for as a real income transaction
+ * split to the field — this is the income-side mirror of
+ * allocateProductCostAction's expense-side product cost allocation. One
+ * sale = one income transaction with a single split to this field, so it
+ * shows up in that field's Income line and in the regular transaction list
+ * (and can be edited/deleted from there like any other transaction).
+ */
+export async function recordFieldSale(input: {
+  fieldId: string; amount: number; quantitySold?: number | null; quantityUnit?: string | null;
+  cropName?: string; farmCategoryId: string; transactionDate: string; vendorName?: string;
+}): Promise<void> {
+  const { farm } = await ctx();
+  const field = await getField(input.fieldId);
+  const taxYear = Number(input.transactionDate.slice(0, 4)) || farm.currentTaxYear;
+  const qtyNote = input.quantitySold ? ` (${input.quantitySold}${input.quantityUnit ? ` ${input.quantityUnit}` : ""})` : "";
+  await createTransaction({
+    farmBusinessId: farm.id, taxYear, transactionType: "income", status: "categorized",
+    transactionDate: input.transactionDate, vendorName: input.vendorName,
+    description: `${input.cropName ?? "Crop"} sale — ${field?.name ?? "field"}${qtyNote}`,
+    amount: input.amount, farmCategoryId: input.farmCategoryId,
+    isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced",
+    splits: [{ targetType: "field", fieldId: input.fieldId, allocationMethod: "manual", allocatedAmount: input.amount, farmCategoryId: input.farmCategoryId }],
+  });
 }
 
 export async function listCustomers(): Promise<Customer[]> {

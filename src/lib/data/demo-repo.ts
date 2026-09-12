@@ -53,6 +53,22 @@ export function deleteField(fieldId: string) {
   });
 }
 
+/** Demo-mode mirror of the Supabase deleteAllFields: reuses deleteField's guard per field. */
+export function deleteAllFields(): { deleted: string[]; skipped: { name: string; reason: string }[] } {
+  const fields = listFields();
+  const deleted: string[] = [];
+  const skipped: { name: string; reason: string }[] = [];
+  for (const f of fields) {
+    try {
+      deleteField(f.id);
+      deleted.push(f.name);
+    } catch (e) {
+      skipped.push({ name: f.name, reason: e instanceof Error ? e.message : "Couldn't delete this field." });
+    }
+  }
+  return { deleted, skipped };
+}
+
 export function listCropYears(fieldId?: string) {
   const db = getDB();
   return fieldId ? db.cropYears.filter((c) => c.fieldId === fieldId) : db.cropYears;
@@ -415,6 +431,88 @@ export function listActivities(filters: { fieldId?: string; activityType?: strin
   if (filters.customerId) rows = rows.filter((a) => a.customerId === filters.customerId);
   if (filters.year) rows = rows.filter((a) => a.activityDate.startsWith(String(filters.year)));
   return [...rows].sort((a, b) => b.activityDate.localeCompare(a.activityDate));
+}
+
+/** Demo-mode mirror of the Supabase fieldProductUsage. */
+export function fieldProductUsage(fieldId: string, taxYear: number) {
+  const activities = listActivities({ fieldId, year: taxYear });
+  const txns = listTransactions({ taxYear });
+
+  const seenSignatures = new Set<string>();
+  const usage = new Map<string, { category: "Seed" | "Fertilizer" | "Chemical"; productName: string; totalQuantity: number; unit?: string }>();
+
+  function addLine(category: "Seed" | "Fertilizer" | "Chemical", productName: string | undefined, quantity: number | undefined, unit: string | undefined, a: Activity) {
+    if (!productName || !productName.trim()) return;
+    const sig = [a.activityDate, a.activityType, a.acres ?? "", productName.trim().toLowerCase(), quantity ?? "", unit ?? ""].join("|");
+    if (seenSignatures.has(sig)) return;
+    seenSignatures.add(sig);
+    const key = `${category}|${productName.trim().toLowerCase()}`;
+    const existing = usage.get(key);
+    const qty = quantity ?? 0;
+    if (existing) existing.totalQuantity += qty;
+    else usage.set(key, { category, productName: productName.trim(), totalQuantity: qty, unit });
+  }
+
+  for (const a of activities) {
+    for (const p of a.sprayProducts ?? []) addLine("Chemical", p.productName, p.quantityUsed, p.quantityUnit, a);
+    for (const p of a.fertilizerProducts ?? []) addLine("Fertilizer", p.productName, p.quantityUsed, p.quantityUnit, a);
+    if (a.seedProductName) addLine("Seed", a.seedProductName, a.seedingRate && a.acres ? a.seedingRate * a.acres : undefined, "units", a);
+  }
+
+  function allocatedCostFor(productName: string): number | null {
+    const needle = productName.trim().toLowerCase();
+    let total = 0;
+    let found = false;
+    for (const t of txns) {
+      if (t.transactionType !== "expense") continue;
+      const desc = (t.description ?? "").toLowerCase();
+      if (!desc.startsWith(`${needle} —`) && !desc.startsWith(`${needle} -`)) continue;
+      for (const s of t.splits) {
+        if (s.fieldId !== fieldId) continue;
+        total += s.allocatedAmount;
+        found = true;
+      }
+    }
+    return found ? total : null;
+  }
+
+  return Array.from(usage.values())
+    .map((u) => ({ ...u, allocatedCost: allocatedCostFor(u.productName) }))
+    .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
+}
+
+export function getActivity(activityId: string) {
+  return getDB().activities.find((a) => a.id === activityId) ?? null;
+}
+
+/** Demo-mode mirror of the Supabase updateActivityYield. */
+export function updateActivityYield(activityId: string, patch: { yieldAmount?: number | null; yieldUnit?: string | null; moisturePct?: number | null; acres?: number | null }) {
+  mutate((db) => {
+    const a = db.activities.find((a) => a.id === activityId);
+    if (!a) throw new Error("Couldn't find that activity.");
+    if (patch.yieldAmount !== undefined) a.yieldAmount = patch.yieldAmount ?? undefined;
+    if (patch.yieldUnit !== undefined) a.yieldUnit = patch.yieldUnit ?? undefined;
+    if (patch.moisturePct !== undefined) a.moisturePct = patch.moisturePct ?? undefined;
+    if (patch.acres !== undefined) a.acres = patch.acres ?? undefined;
+  });
+}
+
+/** Demo-mode mirror of the Supabase recordFieldSale. */
+export function recordFieldSale(input: {
+  fieldId: string; amount: number; quantitySold?: number | null; quantityUnit?: string | null;
+  cropName?: string; farmCategoryId: string; transactionDate: string; vendorName?: string;
+}) {
+  const field = getField(input.fieldId);
+  const taxYear = Number(input.transactionDate.slice(0, 4)) || FARM.currentTaxYear;
+  const qtyNote = input.quantitySold ? ` (${input.quantitySold}${input.quantityUnit ? ` ${input.quantityUnit}` : ""})` : "";
+  createTransaction({
+    farmBusinessId: FARM.id, taxYear, transactionType: "income", status: "categorized",
+    transactionDate: input.transactionDate, vendorName: input.vendorName,
+    description: `${input.cropName ?? "Crop"} sale — ${field?.name ?? "field"}${qtyNote}`,
+    amount: input.amount, farmCategoryId: input.farmCategoryId,
+    isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced",
+    splits: [{ targetType: "field", fieldId: input.fieldId, allocationMethod: "manual", allocatedAmount: input.amount, farmCategoryId: input.farmCategoryId }],
+  });
 }
 
 export function createActivity(input: Omit<Activity, "id" | "createdAt">) {
