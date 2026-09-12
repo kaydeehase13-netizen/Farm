@@ -74,6 +74,32 @@ export async function createField(input: Omit<Field, "id" | "farmBusinessId">): 
   return mapField(data);
 }
 
+/**
+ * Deletes a field, but only when nothing points at it — a transaction
+ * split, a logged activity, or a crop year. Deleting a field that's
+ * actually been used would either orphan that financial/activity history
+ * or (depending on the DB's foreign key) silently fail — so this checks
+ * first and gives a clear, specific reason instead of a raw DB error.
+ */
+export async function deleteField(fieldId: string): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const [{ count: splitCount }, { count: activityCount }, { count: cropYearCount }] = await Promise.all([
+    supabase.from("transaction_split").select("id", { count: "exact", head: true }).eq("field_id", fieldId),
+    supabase.from("activity").select("id", { count: "exact", head: true }).eq("field_id", fieldId),
+    supabase.from("crop_year").select("id", { count: "exact", head: true }).eq("field_id", fieldId),
+  ]);
+  const uses = [
+    splitCount ? `${splitCount} transaction${splitCount === 1 ? "" : "s"}` : null,
+    activityCount ? `${activityCount} logged activit${activityCount === 1 ? "y" : "ies"}` : null,
+    cropYearCount ? `${cropYearCount} crop year record${cropYearCount === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
+  if (uses.length > 0) {
+    throw new Error(`Can't delete this field — it still has ${uses.join(" and ")} tied to it. Those would need to move to another field (or be deleted) first.`);
+  }
+  const { error } = await supabase.from("field").delete().eq("id", fieldId).eq("farm_business_id", farm.id);
+  if (error) throw new Error(error.message);
+}
+
 export async function listCropYears(fieldId?: string): Promise<CropYear[]> {
   const { supabase, farm } = await ctx();
   let q = supabase.from("crop_year").select("id, field_id, planted_acres, actual_yield, yield_unit, crop:crop_id(name), tax_year:tax_year_id(year, farm_business_id)");

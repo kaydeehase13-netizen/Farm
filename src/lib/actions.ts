@@ -314,6 +314,12 @@ export async function createFieldsForImportAction(names: { name: string; acres?:
   return created;
 }
 
+/** Deletes a field. repo.deleteField refuses (with a specific reason) if any transactions, activities, or crop years still reference it. */
+export async function deleteFieldAction(fieldId: string) {
+  await repo.deleteField(fieldId);
+  revalidatePath("/fields");
+}
+
 export async function createFieldActivity(formData: FormData) {
   const farm = await getFarm();
   const activityType = str(formData, "activityType") as any;

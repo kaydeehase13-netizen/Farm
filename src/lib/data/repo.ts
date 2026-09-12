@@ -42,6 +42,11 @@ export async function createField(input: Parameters<typeof demo.createField>[0])
   return demo.createField(input);
 }
 
+export async function deleteField(fieldId: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteField(fieldId);
+  return demo.deleteField(fieldId);
+}
+
 export async function listVendors() {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listVendors();
   return demo.listVendors();

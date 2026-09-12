@@ -34,6 +34,25 @@ export function createField(input: Omit<import("@/types/domain").Field, "id" | "
   });
 }
 
+/** Mirrors the Supabase version's guard: refuse when transactions, logged activities, or crop years still reference this field. */
+export function deleteField(fieldId: string) {
+  const db = getDB();
+  const splitCount = db.transactions.reduce((n, t) => n + t.splits.filter((s) => s.fieldId === fieldId).length, 0);
+  const activityCount = db.activities.filter((a) => a.fieldId === fieldId).length;
+  const cropYearCount = db.cropYears.filter((c) => c.fieldId === fieldId).length;
+  const uses = [
+    splitCount ? `${splitCount} transaction${splitCount === 1 ? "" : "s"}` : null,
+    activityCount ? `${activityCount} logged activit${activityCount === 1 ? "y" : "ies"}` : null,
+    cropYearCount ? `${cropYearCount} crop year record${cropYearCount === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
+  if (uses.length > 0) {
+    throw new Error(`Can't delete this field — it still has ${uses.join(" and ")} tied to it. Those would need to move to another field (or be deleted) first.`);
+  }
+  mutate((db) => {
+    db.fields = db.fields.filter((f) => f.id !== fieldId);
+  });
+}
+
 export function listCropYears(fieldId?: string) {
   const db = getDB();
   return fieldId ? db.cropYears.filter((c) => c.fieldId === fieldId) : db.cropYears;

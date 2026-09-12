@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getField, fieldProfitability, listActivities, listCropYears, getFarm } from "@/lib/data/repo";
 import { PageHeader, StatCard, money, moneyPrecise } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
+import { DeleteFieldButton } from "@/components/fields/delete-field-button";
 
 export default async function FieldDetailPage({
   params,
@@ -35,9 +36,12 @@ export default async function FieldDetailPage({
         title={field.name}
         description={`${field.acres} acres · ${field.ownership.replace("_", " ")} · ${field.county ?? ""} County ${field.fsaFarmNumber ? `· FSA Farm ${field.fsaFarmNumber}` : ""} · Viewing ${taxYear}`}
         action={
-          <Link prefetch={false} href={`/fields/activities/new?fieldId=${fieldId}`} className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">
-            + Log Field Activity
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link prefetch={false} href={`/fields/activities/new?fieldId=${fieldId}`} className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">
+              + Log Field Activity
+            </Link>
+            <DeleteFieldButton fieldId={fieldId} fieldName={field.name} />
+          </div>
         }
       />
 
