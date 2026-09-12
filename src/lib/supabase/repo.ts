@@ -83,11 +83,22 @@ export async function createField(input: Omit<Field, "id" | "farmBusinessId">): 
  */
 export async function deleteField(fieldId: string): Promise<void> {
   const { supabase, farm } = await ctx();
-  const [{ count: splitCount }, { count: activityCount }, { count: cropYearCount }] = await Promise.all([
+  const [splitRes, activityRes, cropYearRes] = await Promise.all([
     supabase.from("transaction_split").select("id", { count: "exact", head: true }).eq("field_id", fieldId),
     supabase.from("activity").select("id", { count: "exact", head: true }).eq("field_id", fieldId),
     supabase.from("crop_year").select("id", { count: "exact", head: true }).eq("field_id", fieldId),
   ]);
+  // Surface a real query failure (bad RLS policy, dropped column, etc.) as a
+  // readable message instead of letting it fall through as a blank/garbage
+  // count — an unchecked query error here previously showed up to Kaydee as
+  // a cryptic "Minified React error #441" with no actionable detail.
+  const queryError = splitRes.error ?? activityRes.error ?? cropYearRes.error;
+  if (queryError) {
+    throw new Error(`Couldn't check what's tied to this field before deleting it: ${queryError.message}`);
+  }
+  const splitCount = splitRes.count ?? 0;
+  const activityCount = activityRes.count ?? 0;
+  const cropYearCount = cropYearRes.count ?? 0;
   const uses = [
     splitCount ? `${splitCount} transaction${splitCount === 1 ? "" : "s"}` : null,
     activityCount ? `${activityCount} logged activit${activityCount === 1 ? "y" : "ies"}` : null,
