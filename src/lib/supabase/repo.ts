@@ -1012,16 +1012,25 @@ export async function repairActivityProductDetails(activityId: string, details: 
  */
 export async function deleteAllActivities(): Promise<{ deletedCount: number }> {
   const { supabase, farm } = await ctx();
-  const { data: rows } = await supabase.from("activity").select("id").eq("farm_business_id", farm.id);
-  const activityIds = (rows ?? []).map((r: any) => r.id);
-  if (activityIds.length === 0) return { deletedCount: 0 };
-  await supabase.from("spray_product_line").delete().in("activity_id", activityIds);
-  await supabase.from("fertilizer_product_line").delete().in("activity_id", activityIds);
-  await supabase.from("planting_activity_detail").delete().in("activity_id", activityIds);
-  await supabase.from("harvest_activity_detail").delete().in("activity_id", activityIds);
-  const { error } = await supabase.from("activity").delete().in("id", activityIds);
+  const { count, error: countError } = await supabase
+    .from("activity")
+    .select("id", { count: "exact", head: true })
+    .eq("farm_business_id", farm.id);
+  if (countError) throw new Error(`Couldn't count existing activities: ${countError.message}`);
+  const deletedCount = count ?? 0;
+  if (deletedCount === 0) return { deletedCount: 0 };
+  // spray_product_line, fertilizer_product_line, planting_activity_detail, and
+  // harvest_activity_detail all reference activity(id) with ON DELETE CASCADE
+  // (see 0001_core_schema.sql), so deleting the activity rows alone is enough
+  // to clean up their product/detail lines too — no need to delete each of
+  // those four tables separately first. Filtering by farm_business_id directly
+  // also avoids building a delete request with every activity's id crammed
+  // into one query, which is what was causing this to fail outright once
+  // there were more than a few hundred activities on the farm (the request
+  // became too large and the whole call errored out).
+  const { error } = await supabase.from("activity").delete().eq("farm_business_id", farm.id);
   if (error) throw new Error(error.message);
-  return { deletedCount: activityIds.length };
+  return { deletedCount };
 }
 
 export async function getActivity(activityId: string): Promise<Activity | null> {
