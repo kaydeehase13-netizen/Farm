@@ -481,6 +481,13 @@ export function fieldProductUsage(fieldId: string, taxYear: number) {
     .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
 }
 
+/** Demo-mode mirror of the Supabase deleteAllActivities. */
+export function deleteAllActivities(): { deletedCount: number } {
+  const count = getDB().activities.length;
+  mutate((db) => { db.activities = []; });
+  return { deletedCount: count };
+}
+
 export function getActivity(activityId: string) {
   return getDB().activities.find((a) => a.id === activityId) ?? null;
 }

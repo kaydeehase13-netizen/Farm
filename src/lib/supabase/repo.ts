@@ -989,6 +989,30 @@ export async function repairActivityProductDetails(activityId: string, details: 
   await writeActivityProductDetails(supabase, farm, activityId, undefined, details);
 }
 
+/**
+ * Wipes every logged/imported activity on the farm — spray/fertilizer/seed
+ * product lines and harvest detail rows included — so a messy import (e.g.
+ * one that fragmented a single tank-mix event into several duplicate rows)
+ * can be cleared before re-importing clean data. Safe to run regardless of
+ * money already allocated: Allocate Product Cost writes real, independent
+ * transactions that don't hold a live reference back to the activity row
+ * that triggered them, so deleting activities here never orphans or
+ * deletes any transaction/expense history.
+ */
+export async function deleteAllActivities(): Promise<{ deletedCount: number }> {
+  const { supabase, farm } = await ctx();
+  const { data: rows } = await supabase.from("activity").select("id").eq("farm_business_id", farm.id);
+  const activityIds = (rows ?? []).map((r: any) => r.id);
+  if (activityIds.length === 0) return { deletedCount: 0 };
+  await supabase.from("spray_product_line").delete().in("activity_id", activityIds);
+  await supabase.from("fertilizer_product_line").delete().in("activity_id", activityIds);
+  await supabase.from("planting_activity_detail").delete().in("activity_id", activityIds);
+  await supabase.from("harvest_activity_detail").delete().in("activity_id", activityIds);
+  const { error } = await supabase.from("activity").delete().in("id", activityIds);
+  if (error) throw new Error(error.message);
+  return { deletedCount: activityIds.length };
+}
+
 export async function getActivity(activityId: string): Promise<Activity | null> {
   const { supabase, farm } = await ctx();
   const { data } = await supabase.from("activity").select("id, field_id, farm_business_id, activity_type, acres, field:field_id(name)").eq("id", activityId).eq("farm_business_id", farm.id).maybeSingle();

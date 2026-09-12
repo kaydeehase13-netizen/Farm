@@ -1,11 +1,13 @@
 import Link from "next/link";
-import { listFields } from "@/lib/data/repo";
+import { listFields, listActivities } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { BulkFieldImport } from "@/components/fields/bulk-field-import";
 import { DeleteAllFieldsButton } from "@/components/fields/delete-all-fields-button";
+import { DeleteAllActivitiesButton } from "@/components/fields/delete-all-activities-button";
 
 export default async function BulkAddFieldsPage() {
   const fields = await listFields();
+  const activities = await listActivities({});
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -14,6 +16,7 @@ export default async function BulkAddFieldsPage() {
         description="Add many fields at once from a boundary report, instead of one at a time."
       />
 
+      <DeleteAllActivitiesButton activityCount={activities.length} />
       <DeleteAllFieldsButton fieldCount={fields.length} />
 
       <BulkFieldImport existingFieldNames={fields.map((f) => f.name)} />

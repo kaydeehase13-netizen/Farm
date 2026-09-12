@@ -327,6 +327,13 @@ export async function deleteAllFieldsAction() {
   return result;
 }
 
+/** Wipes every logged/imported activity on the farm so a clean re-import can start from scratch. Never touches transactions/expenses already recorded. */
+export async function deleteAllActivitiesAction() {
+  const result = await repo.deleteAllActivities();
+  revalidatePath("/fields");
+  return result;
+}
+
 /** Powers the field detail page's "Product Usage & Cost" panel: total quantity used per product this year, plus its allocated dollar cost when one has been recorded. */
 export async function fieldProductUsageAction(fieldId: string, taxYear: number) {
   return repo.fieldProductUsage(fieldId, taxYear);
