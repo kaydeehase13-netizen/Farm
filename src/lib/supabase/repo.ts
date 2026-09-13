@@ -221,34 +221,72 @@ export async function fieldProductUsage(fieldId: string, taxYear: number): Promi
  * the farm total for that product.
  */
 export async function farmProductUsage(taxYear: number): Promise<FieldProductUsage[]> {
-  const [activities, txns] = await Promise.all([
-    listActivities({ year: taxYear }),
+  const { supabase, farm } = await ctx();
+  const yearStart = `${taxYear}-01-01`;
+  const yearEnd = `${taxYear + 1}-01-01`;
+
+  // Three narrow, type-specific queries instead of listActivities' full
+  // 5-way join across every activity on the farm. That join (built for a
+  // single field or a single activity's detail page) returns every
+  // spray/fertilizer/planting/harvest column for every activity regardless
+  // of type — fine at field scale, but at farm scale for a full year (a
+  // large farm easily has 1,000+ activities) it's the same oversized-query
+  // problem that crashed the Bulk Add Fields page before countActivities()
+  // replaced it. Each of these only touches the one child table it needs,
+  // filtered directly on the joined activity's farm/date rather than
+  // building an .in() id list.
+  const [sprayRes, fertRes, plantRes, txns] = await Promise.all([
+    supabase.from("spray_product_line")
+      .select("quantity_used, quantity_unit, product:product_id(name), activity:activity_id!inner(activity_date, acres, field_id, field:field_id(name), farm_business_id)")
+      .eq("activity.farm_business_id", farm.id).gte("activity.activity_date", yearStart).lt("activity.activity_date", yearEnd),
+    supabase.from("fertilizer_product_line")
+      .select("quantity_used, quantity_unit, product:product_id(name), activity:activity_id!inner(activity_date, acres, field_id, field:field_id(name), farm_business_id)")
+      .eq("activity.farm_business_id", farm.id).gte("activity.activity_date", yearStart).lt("activity.activity_date", yearEnd),
+    supabase.from("activity")
+      .select("activity_date, acres, field_id, field:field_id(name), planting_activity_detail(seeding_rate, seed_product:seed_product_id(name))")
+      .eq("farm_business_id", farm.id).eq("activity_type", "plant")
+      .gte("activity_date", yearStart).lt("activity_date", yearEnd),
     listTransactions({ taxYear }),
   ]);
 
   const seenSignatures = new Set<string>();
   const usage = new Map<string, { category: FieldProductUsage["category"]; productName: string; totalQuantity: number; unit?: string; fieldNames: Set<string> }>();
 
-  function addLine(category: FieldProductUsage["category"], productName: string | undefined, quantity: number | undefined, unit: string | undefined, a: Activity) {
+  function addLine(category: FieldProductUsage["category"], productName: string | undefined, quantity: number | undefined, unit: string | undefined, sig: { activityDate?: string; acres?: number | null; fieldId?: string | null; fieldName?: string }) {
     if (!productName || !productName.trim()) return;
-    const sig = [a.fieldId ?? "", a.activityDate, a.activityType, a.acres ?? "", productName.trim().toLowerCase(), quantity ?? "", unit ?? ""].join("|");
-    if (seenSignatures.has(sig)) return;
-    seenSignatures.add(sig);
     const key = `${category}|${productName.trim().toLowerCase()}`;
+    const signature = [sig.fieldId ?? "", sig.activityDate ?? "", category, sig.acres ?? "", productName.trim().toLowerCase(), quantity ?? "", unit ?? ""].join("|");
+    if (seenSignatures.has(signature)) return;
+    seenSignatures.add(signature);
     const existing = usage.get(key);
     const qty = quantity ?? 0;
     if (existing) {
       existing.totalQuantity += qty;
-      if (a.fieldName) existing.fieldNames.add(a.fieldName);
+      if (sig.fieldName) existing.fieldNames.add(sig.fieldName);
     } else {
-      usage.set(key, { category, productName: productName.trim(), totalQuantity: qty, unit, fieldNames: new Set(a.fieldName ? [a.fieldName] : []) });
+      usage.set(key, { category, productName: productName.trim(), totalQuantity: qty, unit, fieldNames: new Set(sig.fieldName ? [sig.fieldName] : []) });
     }
   }
 
-  for (const a of activities) {
-    for (const p of a.sprayProducts ?? []) addLine("Chemical", p.productName, p.quantityUsed, p.quantityUnit, a);
-    for (const p of a.fertilizerProducts ?? []) addLine("Fertilizer", p.productName, p.quantityUsed, p.quantityUnit, a);
-    if (a.seedProductName) addLine("Seed", a.seedProductName, a.seedingRate && a.acres ? a.seedingRate * a.acres : undefined, "units", a);
+  for (const r of (sprayRes.data ?? []) as any[]) {
+    const a = Array.isArray(r.activity) ? r.activity[0] : r.activity;
+    addLine("Chemical", r.product?.name, r.quantity_used != null ? Number(r.quantity_used) : undefined, r.quantity_unit,
+      { activityDate: a?.activity_date, acres: a?.acres != null ? Number(a.acres) : null, fieldId: a?.field_id, fieldName: a?.field?.name });
+  }
+  for (const r of (fertRes.data ?? []) as any[]) {
+    const a = Array.isArray(r.activity) ? r.activity[0] : r.activity;
+    addLine("Fertilizer", r.product?.name, r.quantity_used != null ? Number(r.quantity_used) : undefined, r.quantity_unit,
+      { activityDate: a?.activity_date, acres: a?.acres != null ? Number(a.acres) : null, fieldId: a?.field_id, fieldName: a?.field?.name });
+  }
+  for (const r of (plantRes.data ?? []) as any[]) {
+    const planting = Array.isArray(r.planting_activity_detail) ? r.planting_activity_detail[0] : r.planting_activity_detail;
+    const seedName = planting?.seed_product?.name;
+    const acres = r.acres != null ? Number(r.acres) : undefined;
+    const seedingRate = planting?.seeding_rate != null ? Number(planting.seeding_rate) : undefined;
+    if (seedName) {
+      addLine("Seed", seedName, seedingRate && acres ? seedingRate * acres : undefined, "units",
+        { activityDate: r.activity_date, acres, fieldId: r.field_id, fieldName: r.field?.name });
+    }
   }
 
   function allocatedCostFor(productName: string): number | null {
