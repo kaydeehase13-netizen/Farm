@@ -1499,11 +1499,20 @@ export async function allocateProductCostAction(input: {
   }
 
   // Proportional split (excluded fields get $0 and don't share in the
-  // pool), with any rounding remainder folded into the largest-usage
+  // pool), with any rounding remainder folded into the SMALLEST-usage
   // included field so the allocations add up to exactly what was paid.
+  // lastIncludedId must be picked AFTER sorting — it was previously taken
+  // from includedUsage's pre-sort (Map insertion) order, so whichever
+  // field happened to land last there (unrelated to its actual usage
+  // share) got treated as "last" mid-way through the sorted loop below:
+  // it absorbed nearly the entire remaining budget as a "remainder" while
+  // every field processed after it in the loop still got its normal
+  // proportional share on top — allocating way more in total than was
+  // actually paid, and wildly overstating that one field's cost.
   fieldsUsage.sort((a, b) => b.usage - a.usage);
   let allocatedSoFar = 0;
-  const lastIncludedId = includedUsage.length ? includedUsage[includedUsage.length - 1].fieldId : undefined;
+  const sortedIncluded = fieldsUsage.filter((f) => !excluded.has(f.fieldId));
+  const lastIncludedId = sortedIncluded.length ? sortedIncluded[sortedIncluded.length - 1].fieldId : undefined;
   const allocations: { fieldId: string; fieldName: string; usage: number; unit?: string; amount: number; excluded: boolean }[] = [];
   for (const f of fieldsUsage) {
     if (excluded.has(f.fieldId)) {
