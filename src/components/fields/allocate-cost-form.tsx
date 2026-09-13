@@ -194,7 +194,13 @@ export function AllocateCostForm({
       </label>
 
       {isLookingUp && <p className="text-xs text-charcoal/45">Checking for an existing entry…</p>}
-      {!isLookingUp && found && (
+      {!isLookingUp && found && found.alreadyAllocated && (
+        <p className="text-xs text-forest bg-forest/5 border border-forest/20 rounded-lg p-3">
+          &quot;{productName}&quot; in {year} is already allocated across {found.count} field{found.count === 1 ? "" : "s"}, totaling {money(found.totalAmount)} — pre-filled below.
+          You don&apos;t need to remove anything first: allocating again will replace that existing split with a fresh one, and you&apos;ll get the checkboxes below to uncheck any field afterward.
+        </p>
+      )}
+      {!isLookingUp && found && !found.alreadyAllocated && (
         <p className="text-xs text-forest bg-forest/5 border border-forest/20 rounded-lg p-3">
           Found {found.count} existing expense{found.count === 1 ? "" : "s"} already entered for &quot;{productName}&quot; in {year}, totaling {money(found.totalAmount)} — pre-filled below.
           Allocating will replace {found.count === 1 ? "it" : "them"} with the per-field split instead of adding a new expense on top.

@@ -1388,9 +1388,19 @@ async function findUnallocatedProductTransactions(year: number, productName: str
 }
 
 export async function findUnallocatedProductCostAction(input: { year: number; productName: string }): Promise<{
-  count: number; totalAmount: number; vendorName?: string; transactionDate?: string; farmCategoryId?: string;
+  count: number; totalAmount: number; vendorName?: string; transactionDate?: string; farmCategoryId?: string; alreadyAllocated: boolean;
 } | null> {
-  const matches = await findUnallocatedProductTransactions(input.year, input.productName);
+  // Check both shapes something already-entered can be in: one lump expense
+  // that's never been split (from New Transaction or the Excel import), or
+  // a prior run of this same allocation already split per field — either
+  // way, pre-fill from it instead of asking for the total to be retyped,
+  // and allocateProductCostAction will replace it with the fresh split
+  // rather than adding to it.
+  const [unallocated, alreadySplit] = await Promise.all([
+    findUnallocatedProductTransactions(input.year, input.productName),
+    findFieldAllocatedProductTransactions(input.year, input.productName),
+  ]);
+  const matches = unallocated.length > 0 ? unallocated : alreadySplit;
   if (matches.length === 0) return null;
   const withCategory = matches.find((t) => t.farmCategoryId);
   const latest = matches.slice().sort((a, b) => a.transactionDate.localeCompare(b.transactionDate)).at(-1);
@@ -1400,6 +1410,7 @@ export async function findUnallocatedProductCostAction(input: { year: number; pr
     vendorName: matches[0].vendorName,
     transactionDate: latest?.transactionDate,
     farmCategoryId: withCategory?.farmCategoryId,
+    alreadyAllocated: unallocated.length === 0 && alreadySplit.length > 0,
   };
 }
 
