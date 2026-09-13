@@ -56,29 +56,7 @@ export default async function ReportsPage() {
         <p className="text-sm text-charcoal/55 mb-4">
           Pick which year to export before downloading — it doesn&apos;t have to match whatever year you&apos;re currently viewing elsewhere in the app.
         </p>
-        <ExportYearPicker years={years} defaultYear={taxYear}>
-          {(exportYear) => (
-            <>
-              <div className="flex gap-2 mb-4">
-                <a href={`/api/export/cpa-workbook?type=full&taxYear=${exportYear}`} className="card px-4 py-2 text-sm font-medium hover:border-forest">Full Excel Workbook</a>
-                <a href={`/api/export/field-report?taxYear=${exportYear}`} className="card px-4 py-2 text-sm font-medium hover:border-forest">Field Report</a>
-              </div>
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {QUICK_EXPORTS.map((e) => (
-                  <a
-                    key={e.scope}
-                    href={`/api/export/cpa-workbook?type=${e.scope}&taxYear=${exportYear}`}
-                    className="card p-5 hover:border-forest transition-colors block"
-                  >
-                    <div className="font-semibold text-forest">{e.title}</div>
-                    <p className="text-sm text-charcoal/55 mt-1">{e.desc}</p>
-                    <div className="mt-3 text-xs font-medium text-forest">DOWNLOAD .XLSX</div>
-                  </a>
-                ))}
-              </div>
-            </>
-          )}
-        </ExportYearPicker>
+        <ExportYearPicker years={years} defaultYear={taxYear} quickExports={QUICK_EXPORTS} />
       </div>
     </div>
   );
