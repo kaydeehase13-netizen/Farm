@@ -7,6 +7,7 @@ import { deleteAllActivitiesAction } from "@/lib/actions";
 export function DeleteAllActivitiesButton({ activityCount }: { activityCount: number }) {
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<{ deletedCount: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   function handleDeleteAll() {
@@ -17,10 +18,15 @@ export function DeleteAllActivitiesButton({ activityCount }: { activityCount: nu
     )
       return;
     setResult(null);
+    setError(null);
     startTransition(async () => {
-      const res = await deleteAllActivitiesAction();
-      setResult(res);
-      router.refresh();
+      try {
+        const res = await deleteAllActivitiesAction();
+        setResult(res);
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't delete these activities.");
+      }
     });
   }
 
@@ -48,6 +54,7 @@ export function DeleteAllActivitiesButton({ activityCount }: { activityCount: nu
           {result.deletedCount === 0 ? "No activity records to delete." : `Deleted ${result.deletedCount} activity record${result.deletedCount === 1 ? "" : "s"}.`}
         </p>
       )}
+      {error && <p className="mt-3 text-sm text-status-red">{error}</p>}
     </div>
   );
 }
