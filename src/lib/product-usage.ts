@@ -1,5 +1,14 @@
 import type { Activity } from "@/types/domain";
 
+/** Every crop name planted anywhere across field activities, any year — for Allocate Grain Sale's autocomplete. */
+export function distinctCropNames(activities: Activity[]): string[] {
+  const names = new Set<string>();
+  for (const a of activities) {
+    if (a.activityType === "plant" && a.seedProductName) names.add(a.seedProductName);
+  }
+  return Array.from(names).sort();
+}
+
 /** Every distinct product name used anywhere across field activities, any year. */
 export function distinctProductNames(activities: Activity[]): string[] {
   const names = new Set<string>();

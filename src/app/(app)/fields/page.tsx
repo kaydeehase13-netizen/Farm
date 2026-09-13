@@ -22,6 +22,7 @@ export default async function FieldsPage() {
             <Link prefetch={false} href="/fields/bulk-add" className="card px-4 py-2 text-sm font-medium hover:border-forest">Bulk Add Fields</Link>
             <Link prefetch={false} href="/fields/import" className="card px-4 py-2 text-sm font-medium hover:border-forest">Import Activities</Link>
             <Link prefetch={false} href="/fields/allocate-cost" className="card px-4 py-2 text-sm font-medium hover:border-forest">Allocate Product Cost</Link>
+            <Link prefetch={false} href="/fields/allocate-income" className="card px-4 py-2 text-sm font-medium hover:border-forest">Allocate Grain Sale</Link>
             <a href={`/api/export/field-report?taxYear=${taxYear}`} className="card px-4 py-2 text-sm font-medium hover:border-forest">Export Field Report</a>
           </div>
         }

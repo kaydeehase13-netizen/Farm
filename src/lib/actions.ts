@@ -1664,6 +1664,190 @@ export async function allocateProductCostAction(input: {
 }
 
 // -----------------------------------------------------------------------
+// Allocate Grain Sale by Field Yield — the income-side twin of Allocate
+// Product Cost. Same shape (enter one total, split it across fields, an
+// exclude checkbox + reallocate to refresh) but weighted by each field's
+// harvested bushels instead of its product usage, and creating INCOME
+// transactions instead of expense ones.
+// -----------------------------------------------------------------------
+
+async function findUnallocatedIncomeTransactions(year: number, cropName: string) {
+  const needle = cropName.trim().toLowerCase();
+  if (!needle) return [];
+  const txns = await repo.listTransactions({ taxYear: year, type: "income" });
+  return txns.filter((t) => {
+    if (!transactionMatchesProduct(t, needle)) return false;
+    return !t.splits.some((s) => s.targetType === "field");
+  });
+}
+
+/** Existing per-field allocations from a prior allocateGrainSaleAction run for this crop/year — the ones a reallocation replaces. */
+async function findFieldAllocatedIncomeTransactions(year: number, cropName: string) {
+  const needle = cropName.trim().toLowerCase();
+  if (!needle) return [];
+  const txns = await repo.listTransactions({ taxYear: year, type: "income" });
+  const prefix = `${needle} — sold, allocated by yield`;
+  return txns.filter((t) => (t.description ?? "").toLowerCase().startsWith(prefix) && t.splits.some((s) => s.targetType === "field"));
+}
+
+export async function findUnallocatedGrainSaleAction(input: { year: number; cropName: string }): Promise<{
+  count: number; totalAmount: number; vendorName?: string; transactionDate?: string; farmCategoryId?: string; alreadyAllocated: boolean;
+} | null> {
+  const [unallocated, alreadySplit] = await Promise.all([
+    findUnallocatedIncomeTransactions(input.year, input.cropName),
+    findFieldAllocatedIncomeTransactions(input.year, input.cropName),
+  ]);
+  const matches = unallocated.length > 0 ? unallocated : alreadySplit;
+  if (matches.length === 0) return null;
+  const withCategory = matches.find((t) => t.farmCategoryId);
+  const latest = matches.slice().sort((a, b) => a.transactionDate.localeCompare(b.transactionDate)).at(-1);
+  return {
+    count: matches.length,
+    totalAmount: matches.reduce((s, t) => s + t.amount, 0),
+    vendorName: matches[0].vendorName,
+    transactionDate: latest?.transactionDate,
+    farmCategoryId: withCategory?.farmCategoryId,
+    alreadyAllocated: unallocated.length === 0 && alreadySplit.length > 0,
+  };
+}
+
+export async function allocateGrainSaleAction(input: {
+  year: number;
+  cropName: string;
+  totalAmount: number;
+  farmCategoryId: string;
+  vendorName?: string;
+  transactionDate?: string;
+  /** Fields to leave out of the split entirely (e.g. that field's grain is stored separately, not part of this sale) — they get $0 instead of their yield share. */
+  excludeFieldIds?: string[];
+}) {
+  const farm = await getFarm();
+  const needle = input.cropName.trim().toLowerCase();
+  if (!needle) throw new Error("Enter a crop name to allocate.");
+  if (!(input.totalAmount > 0)) throw new Error("Enter the total amount you were paid.");
+  const excluded = new Set(input.excludeFieldIds ?? []);
+
+  const activities = await repo.listActivities({ year: input.year });
+
+  // A harvest activity on its own doesn't carry a crop name — AgFiniti's
+  // own report lists the crop once per section, not per field row (see
+  // build_import_csv.py), and that name never made it onto the Activity
+  // record. So "which fields grew this crop" is answered by the PLANTING
+  // activity's seed product name instead (e.g. "Corn (mixed varieties)"),
+  // matched loosely (contains, not exact) since that name is AgFiniti's
+  // own crop label, not necessarily exactly what gets typed here. A
+  // field's harvested bushels = its logged yield (bu/ac) × its acres; a
+  // field that planted the crop but has no harvest yield logged yet is
+  // left out rather than guessed at.
+  const plantedFieldIds = new Set(
+    activities
+      .filter((a) => a.activityType === "plant" && a.seedProductName && a.seedProductName.trim().toLowerCase().includes(needle))
+      .map((a) => a.fieldId)
+      .filter((id): id is string => !!id)
+  );
+
+  const usageByField = new Map<string, { fieldName: string; usage: number; unit?: string }>();
+  for (const a of activities) {
+    if (a.activityType !== "harvest" || !a.fieldId || !plantedFieldIds.has(a.fieldId)) continue;
+    if (a.yieldAmount == null || !a.acres) continue;
+    const bushels = a.yieldAmount * a.acres;
+    if (!(bushels > 0)) continue;
+    const unit = (a.yieldUnit ?? "bu/ac").replace(/\/\s*ac(re)?s?$/i, "").trim() || "bu";
+    const existing = usageByField.get(a.fieldId);
+    if (existing) existing.usage += bushels;
+    else usageByField.set(a.fieldId, { fieldName: a.fieldName ?? "Field", usage: bushels, unit });
+  }
+
+  const fieldsUsage = Array.from(usageByField.entries()).map(([fieldId, v]) => ({ fieldId, ...v }));
+  const includedUsage = fieldsUsage.filter((f) => !excluded.has(f.fieldId));
+  const totalUsage = includedUsage.reduce((s, f) => s + f.usage, 0);
+
+  if (fieldsUsage.length === 0 || totalUsage <= 0) {
+    return {
+      allocated: false as const,
+      message: excluded.size > 0 && fieldsUsage.length > 0
+        ? "Every field with a logged harvest is excluded — nothing left to allocate. Include at least one field."
+        : `No logged harvest yield in ${input.year} for a crop matching "${input.cropName}". Check that both a planting activity (for the crop name) and a harvest activity (for yield) are logged for at least one field.`,
+    };
+  }
+
+  const transactionDate = input.transactionDate || `${input.year}-12-31`;
+
+  // Same reconciliation as allocateProductCostAction: replace whatever's
+  // already on file for this crop/year (a lump income entry from New
+  // Transaction or the Excel import, or a prior run's per-field split)
+  // instead of stacking a new one on top.
+  const existing = await findUnallocatedIncomeTransactions(input.year, input.cropName);
+  const existingFieldSplits = await findFieldAllocatedIncomeTransactions(input.year, input.cropName);
+  for (const t of [...existing, ...existingFieldSplits]) {
+    await repo.deleteTransaction(t.id);
+  }
+
+  // Same proportional-split-with-remainder logic as allocateProductCostAction
+  // (see the comment there for the rounding bug this guards against):
+  // lastIncludedId is picked AFTER sorting by usage descending, not before.
+  fieldsUsage.sort((a, b) => b.usage - a.usage);
+  let allocatedSoFar = 0;
+  const sortedIncluded = fieldsUsage.filter((f) => !excluded.has(f.fieldId));
+  const lastIncludedId = sortedIncluded.length ? sortedIncluded[sortedIncluded.length - 1].fieldId : undefined;
+  const allocations: { fieldId: string; fieldName: string; usage: number; unit?: string; amount: number; excluded: boolean }[] = [];
+  for (const f of fieldsUsage) {
+    if (excluded.has(f.fieldId)) {
+      allocations.push({ fieldId: f.fieldId, fieldName: f.fieldName, usage: f.usage, unit: f.unit, amount: 0, excluded: true });
+      continue;
+    }
+    const isLast = f.fieldId === lastIncludedId;
+    const amount = isLast
+      ? Math.round((input.totalAmount - allocatedSoFar) * 100) / 100
+      : Math.round(input.totalAmount * (f.usage / totalUsage) * 100) / 100;
+    allocatedSoFar += amount;
+    allocations.push({ fieldId: f.fieldId, fieldName: f.fieldName, usage: f.usage, unit: f.unit, amount, excluded: false });
+  }
+
+  for (const a of allocations) {
+    if (a.excluded || a.amount <= 0) continue;
+    await repo.createTransaction({
+      farmBusinessId: farm.id,
+      taxYear: input.year,
+      transactionType: "income",
+      status: "categorized",
+      transactionDate,
+      vendorName: input.vendorName,
+      description: `${input.cropName} — sold, allocated by yield (${a.fieldName})`,
+      amount: a.amount,
+      productName: input.cropName,
+      farmCategoryId: input.farmCategoryId,
+      isPersonalExcluded: false,
+      cpaFlag: false,
+      syncStatus: "synced",
+      splits: [{
+        targetType: "field", fieldId: a.fieldId, allocationMethod: "quantity",
+        allocatedAmount: a.amount, farmCategoryId: input.farmCategoryId,
+        notes: a.unit ? `${a.usage.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${a.unit} harvested` : undefined,
+      }],
+    });
+  }
+
+  revalidatePath("/fields");
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
+
+  return {
+    allocated: true as const,
+    cropName: input.cropName,
+    totalAmount: input.totalAmount,
+    year: input.year,
+    farmCategoryId: input.farmCategoryId,
+    vendorName: input.vendorName,
+    transactionDate,
+    replacedCount: existing.length + existingFieldSplits.length,
+    allocations,
+  };
+}
+
+// -----------------------------------------------------------------------
 // Excel bulk import — one .xlsx download+upload flow each for allocating
 // product costs across fields, income, and expenses (the "receipts"
 // import: for expenses you want logged fast without a photo).
