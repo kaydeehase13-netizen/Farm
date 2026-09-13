@@ -261,7 +261,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
     // limit. Batches never split a field/date/type group's rows apart
     // (chunkRows only starts a new batch at a group boundary) since those
     // rows are meant to land in ONE combined activity together.
-    const batches = chunkRows(finalRows, 120);
+    const batches = chunkRows(finalRows, 40);
     let combined = { imported: 0, repaired: 0, failed: 0, errors: [] as string[], skippedDuplicates: 0 };
     for (let i = 0; i < batches.length; i++) {
       setImportProgress({ done: i, total: batches.length });
