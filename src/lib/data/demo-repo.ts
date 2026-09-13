@@ -617,6 +617,56 @@ export function repairActivityProductDetails(activityId: string, details: {
   });
 }
 
+/** Demo-mode mirror of the Supabase adjustInventory. */
+export function adjustInventory(inventoryItemId: string, quantityChange: number, note?: string) {
+  mutate((db) => {
+    const item = db.inventoryItems.find((i) => i.id === inventoryItemId);
+    if (!item) return;
+    item.quantityOnHand = Math.max(0, item.quantityOnHand + quantityChange);
+    db.inventoryMovements.push({
+      id: randomUUID(), inventoryItemId: item.id, movementType: "adjustment",
+      quantity: quantityChange, note, createdAt: new Date().toISOString(),
+    });
+  });
+}
+
+/** Demo-mode mirror of the Supabase recordInventoryPurchase. */
+export function recordInventoryPurchase(input: {
+  productName: string;
+  category: "chemical" | "fertilizer" | "seed" | "feed" | "veterinary" | "fuel" | "parts_supplies" | "other";
+  quantity: number;
+  unit: string;
+  totalCost: number;
+  note?: string;
+}) {
+  const name = input.productName.trim();
+  if (!name || !(input.quantity > 0) || !input.unit) return;
+  mutate((db) => {
+    let product = db.products.find((p) => p.name === name);
+    if (!product) {
+      product = { id: randomUUID(), farmBusinessId: FARM.id, category: input.category, name, defaultUnit: input.unit };
+      db.products.push(product);
+    }
+    const unitCost = input.totalCost / input.quantity;
+    let item = db.inventoryItems.find((i) => i.productId === product!.id && i.unit === input.unit);
+    if (!item) {
+      item = {
+        id: randomUUID(), farmBusinessId: FARM.id, productId: product.id, productName: product.name,
+        category: product.category, unit: input.unit, quantityOnHand: input.quantity, averageUnitCost: unitCost,
+      };
+      db.inventoryItems.push(item);
+    } else {
+      const newQty = item.quantityOnHand + input.quantity;
+      item.averageUnitCost = newQty > 0 ? (item.quantityOnHand * item.averageUnitCost + input.quantity * unitCost) / newQty : unitCost;
+      item.quantityOnHand = newQty;
+    }
+    db.inventoryMovements.push({
+      id: randomUUID(), inventoryItemId: item.id, movementType: "purchase",
+      quantity: input.quantity, unitCost, note: input.note, createdAt: new Date().toISOString(),
+    });
+  });
+}
+
 export function listCustomers() {
   return getDB().customers;
 }

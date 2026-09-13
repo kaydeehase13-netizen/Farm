@@ -1452,6 +1452,85 @@ export async function listPayments(): Promise<Payment[]> {
   }));
 }
 
+/**
+ * Records a chemical/fertilizer/seed purchase: adds the purchased quantity
+ * onto the matching inventory item (creating it if this is the first time
+ * this product/unit has been bought) and blends the new receipt's per-unit
+ * price into a running weighted-average cost — so two AMS receipts at
+ * $0.45/lb and $0.35/lb don't require picking one price, they just both
+ * count toward one blended average cost per lb on hand. Usage already
+ * decrements this same inventory item automatically (writeActivityProductDetails,
+ * every time a spray/fertilizer product line is recorded on an activity) —
+ * this is the other half, for the purchase side.
+ */
+export async function recordInventoryPurchase(input: {
+  productName: string;
+  category: "chemical" | "fertilizer" | "seed" | "feed" | "veterinary" | "fuel" | "parts_supplies" | "other";
+  quantity: number;
+  unit: string;
+  totalCost: number;
+  note?: string;
+}): Promise<void> {
+  const name = input.productName.trim();
+  if (!name || !(input.quantity > 0) || !input.unit) return;
+  const { supabase, farm } = await ctx();
+
+  const { data: existingProduct, error: findErr } = await supabase.from("product").select("id")
+    .eq("farm_business_id", farm.id).eq("name", name).maybeSingle();
+  if (findErr) throw new Error(`Looking up product "${name}": ${findErr.message}`);
+  let productId = existingProduct?.id;
+  if (!productId) {
+    const { data: created, error } = await supabase.from("product")
+      .insert({ farm_business_id: farm.id, category: input.category, name, default_unit: input.unit })
+      .select("id").single();
+    if (error) throw new Error(`Creating product "${name}": ${error.message}`);
+    productId = created?.id;
+  }
+  if (!productId) throw new Error(`Could not resolve a product id for "${name}".`);
+
+  const { data: item, error: itemErr } = await supabase.from("inventory_item")
+    .select("id, quantity_on_hand, average_unit_cost")
+    .eq("farm_business_id", farm.id).eq("product_id", productId).eq("unit", input.unit).maybeSingle();
+  if (itemErr) throw new Error(`Looking up inventory for "${name}": ${itemErr.message}`);
+
+  const unitCost = input.totalCost / input.quantity;
+  let inventoryItemId: string | undefined = item?.id;
+  if (!inventoryItemId) {
+    const { data: created, error } = await supabase.from("inventory_item")
+      .insert({ farm_business_id: farm.id, product_id: productId, unit: input.unit, quantity_on_hand: input.quantity, average_unit_cost: unitCost })
+      .select("id").single();
+    if (error) throw new Error(`Creating inventory item for "${name}": ${error.message}`);
+    inventoryItemId = created?.id;
+  } else {
+    const oldQty = Number(item?.quantity_on_hand ?? 0);
+    const oldAvg = Number(item?.average_unit_cost ?? 0);
+    const newQty = oldQty + input.quantity;
+    const newAvg = newQty > 0 ? (oldQty * oldAvg + input.quantity * unitCost) / newQty : unitCost;
+    const { error } = await supabase.from("inventory_item")
+      .update({ quantity_on_hand: newQty, average_unit_cost: newAvg })
+      .eq("id", inventoryItemId);
+    if (error) throw new Error(`Updating inventory item for "${name}": ${error.message}`);
+  }
+
+  const { error: moveErr } = await supabase.from("inventory_movement")
+    .insert({ inventory_item_id: inventoryItemId, movement_type: "purchase", quantity: input.quantity, unit_cost: unitCost, note: input.note ?? null });
+  if (moveErr) throw new Error(`Recording inventory movement for "${name}": ${moveErr.message}`);
+}
+
+/** Manual correction (recount, spillage, damage) — used by the Inventory Adjustment page. */
+export async function adjustInventory(inventoryItemId: string, quantityChange: number, note?: string): Promise<void> {
+  const { supabase } = await ctx();
+  const { data: item, error: itemErr } = await supabase.from("inventory_item")
+    .select("quantity_on_hand").eq("id", inventoryItemId).maybeSingle();
+  if (itemErr) throw new Error(`Looking up inventory item: ${itemErr.message}`);
+  const newQty = Math.max(0, Number(item?.quantity_on_hand ?? 0) + quantityChange);
+  const { error } = await supabase.from("inventory_item").update({ quantity_on_hand: newQty }).eq("id", inventoryItemId);
+  if (error) throw new Error(`Updating inventory item: ${error.message}`);
+  const { error: moveErr } = await supabase.from("inventory_movement")
+    .insert({ inventory_item_id: inventoryItemId, movement_type: "adjustment", quantity: quantityChange, note: note ?? null });
+  if (moveErr) throw new Error(`Recording inventory adjustment: ${moveErr.message}`);
+}
+
 export async function listInventory(): Promise<InventoryItem[]> {
   const { supabase, farm } = await ctx();
   const { data } = await supabase.from("inventory_item").select("*, product:product_id(name, category)").eq("farm_business_id", farm.id);

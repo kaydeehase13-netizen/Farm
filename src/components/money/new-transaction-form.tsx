@@ -2,6 +2,8 @@
 
 import { useId, useMemo, useState } from "react";
 
+const UNIT_OPTIONS = ["lbs", "gal", "oz", "qt", "ton", "bags", "units", "each"];
+
 type LineType = "income" | "expense";
 type SplitLine = { key: string; type: LineType; farmCategoryId: string; amount: string };
 
@@ -15,6 +17,8 @@ export function NewTransactionForm({
 }) {
   const [type, setType] = useState<"income" | "expense">(defaultType);
   const [amount, setAmount] = useState("");
+  const [productName, setProductName] = useState("");
+  const [purchaseQuantity, setPurchaseQuantity] = useState("");
   const [splitting, setSplitting] = useState(false);
   const [splitError, setSplitError] = useState<string | null>(null);
   const makeKey = useId();
@@ -113,13 +117,38 @@ export function NewTransactionForm({
 
       {!splitting && type === "expense" && (
         <Field label="Product / Variety (optional)">
-          <input name="productName" placeholder="e.g. DeKalb 63-91, Roundup PowerMax" className="input" />
+          <input
+            name="productName" placeholder="e.g. DeKalb 63-91, Roundup PowerMax, AMS" className="input"
+            value={productName} onChange={(e) => setProductName(e.target.value)}
+          />
         </Field>
       )}
       {!splitting && type === "expense" && (
         <p className="text-xs text-charcoal/50 -mt-2">
           For a Seed, Chemical, or Fertilizer expense: fill this in along with a field above and it&apos;s automatically tagged
           into that field&apos;s activity record too — no need to enter it twice.
+        </p>
+      )}
+      {!splitting && type === "expense" && productName.trim() && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Quantity Purchased (optional)">
+            <input
+              type="number" step="0.01" name="purchaseQuantity" placeholder="e.g. 2040" className="input"
+              value={purchaseQuantity} onChange={(e) => setPurchaseQuantity(e.target.value)}
+            />
+          </Field>
+          <Field label="Unit">
+            <select name="purchaseUnit" className="input" defaultValue={UNIT_OPTIONS[0]}>
+              {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </Field>
+        </div>
+      )}
+      {!splitting && type === "expense" && productName.trim() && purchaseQuantity && (
+        <p className="text-xs text-charcoal/50 -mt-2">
+          Adds {purchaseQuantity || "0"} to &quot;{productName}&quot; in Inventory at
+          {" "}${amountNum && Number(purchaseQuantity) ? (amountNum / Number(purchaseQuantity)).toFixed(4) : "0.00"}/unit for this receipt
+          (blended with whatever&apos;s already on hand) — leave quantity blank if you don&apos;t want this tracked in Inventory.
         </p>
       )}
 

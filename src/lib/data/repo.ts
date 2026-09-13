@@ -85,6 +85,23 @@ export async function recordFieldSale(input: {
   return demo.recordFieldSale(input);
 }
 
+export async function adjustInventory(inventoryItemId: string, quantityChange: number, note?: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).adjustInventory(inventoryItemId, quantityChange, note);
+  return demo.adjustInventory(inventoryItemId, quantityChange, note);
+}
+
+export async function recordInventoryPurchase(input: {
+  productName: string;
+  category: "chemical" | "fertilizer" | "seed" | "feed" | "veterinary" | "fuel" | "parts_supplies" | "other";
+  quantity: number;
+  unit: string;
+  totalCost: number;
+  note?: string;
+}) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).recordInventoryPurchase(input);
+  return demo.recordInventoryPurchase(input);
+}
+
 export async function listVendors() {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listVendors();
   return demo.listVendors();

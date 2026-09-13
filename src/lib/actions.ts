@@ -107,6 +107,8 @@ export async function createExpenseOrIncome(formData: FormData) {
 
   const farmCategoryId = str(formData, "farmCategoryId");
   const productName = str(formData, "productName");
+  const purchaseQuantity = num(formData, "purchaseQuantity");
+  const purchaseUnit = str(formData, "purchaseUnit");
 
   await repo.createTransaction({
     farmBusinessId: farm.id,
@@ -138,8 +140,39 @@ export async function createExpenseOrIncome(formData: FormData) {
     await tagFieldActivityFromProduct({ fieldId, farmCategoryId, productName, activityDate: transactionDate });
   }
 
+  if (type === "expense" && productName && purchaseQuantity && purchaseQuantity > 0 && purchaseUnit) {
+    try {
+      await repo.recordInventoryPurchase({
+        productName,
+        category: await productCategoryFromFarmCategory(farmCategoryId),
+        quantity: purchaseQuantity,
+        unit: purchaseUnit,
+        totalCost: amount,
+        note: `Purchase — ${description ?? productName} (${transactionDate})`,
+      });
+      revalidatePath("/more/inventory");
+    } catch {
+      // Never let the inventory side-effect fail the transaction save itself
+      // — the money side is already recorded either way.
+    }
+  }
+
   revalidatePath("/money/transactions");
   revalidatePath("/home");
+}
+
+/** Maps a farm category (by name — same "Seed"/"Chemical"/"Fertilizer" match as tagFieldActivityFromProduct) to the inventory product category. */
+async function productCategoryFromFarmCategory(farmCategoryId?: string): Promise<"chemical" | "fertilizer" | "seed" | "feed" | "veterinary" | "fuel" | "parts_supplies" | "other"> {
+  if (!farmCategoryId) return "other";
+  const farmCategories = await repo.listFarmCategories();
+  const name = (farmCategories.find((c) => c.id === farmCategoryId)?.name ?? "").toLowerCase();
+  if (name.includes("seed")) return "seed";
+  if (name.includes("chemical")) return "chemical";
+  if (name.includes("fertilizer")) return "fertilizer";
+  if (name.includes("feed")) return "feed";
+  if (name.includes("fuel")) return "fuel";
+  if (name.includes("vet")) return "veterinary";
+  return "other";
 }
 
 /**
@@ -1120,22 +1153,10 @@ export async function toggleCpaReviewAction(formData: FormData) {
 }
 
 export async function adjustInventoryAction(formData: FormData) {
-  const { mutate } = await import("@/lib/data/store");
-  const { randomUUID } = await import("node:crypto");
-  mutate((db) => {
-    const item = db.inventoryItems.find((i) => i.id === str(formData, "inventoryItemId"));
-    if (!item) return;
-    const qty = num(formData, "quantity") ?? 0;
-    item.quantityOnHand += qty;
-    db.inventoryMovements.push({
-      id: randomUUID(),
-      inventoryItemId: item.id,
-      movementType: "adjustment",
-      quantity: qty,
-      note: str(formData, "note"),
-      createdAt: new Date().toISOString(),
-    });
-  });
+  const inventoryItemId = str(formData, "inventoryItemId");
+  if (!inventoryItemId) return;
+  const qty = num(formData, "quantity") ?? 0;
+  await repo.adjustInventory(inventoryItemId, qty, str(formData, "note"));
   revalidatePath("/more/inventory");
 }
 
