@@ -25,6 +25,8 @@ export function AllocateCostForm({
   const [result, setResult] = useState<Result | null>(null);
   const [found, setFound] = useState<Awaited<ReturnType<typeof findUnallocatedProductCostAction>> | null>(null);
   const [isLookingUp, startLookup] = useTransition();
+  const [excludedFieldIds, setExcludedFieldIds] = useState<Set<string>>(new Set());
+  const [isReallocating, setIsReallocating] = useState(false);
 
   const yearOptions = years.includes(year) ? years : [...years, year].sort((a, b) => b - a);
 
@@ -53,6 +55,7 @@ export function AllocateCostForm({
     setSaving(true);
     setError(null);
     setResult(null);
+    setExcludedFieldIds(new Set());
     try {
       const res = await allocateProductCostAction({
         year, productName, totalAmount: Number(totalAmount), farmCategoryId,
@@ -66,13 +69,46 @@ export function AllocateCostForm({
     }
   }
 
+  function toggleFieldExcluded(fieldId: string) {
+    setExcludedFieldIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(fieldId)) next.delete(fieldId); else next.add(fieldId);
+      return next;
+    });
+  }
+
+  // Re-runs the allocation with whatever fields are now unchecked (e.g. "I
+  // didn't pay for the seed on this field") excluded from the split — same
+  // total amount, category, vendor, and date as before, just recomputed
+  // over the remaining fields. allocateProductCostAction tears down the
+  // prior per-field split first, so this is a true refresh, not a second
+  // set of expenses stacked on top.
+  async function reallocate() {
+    if (!result?.allocated) return;
+    setIsReallocating(true);
+    setError(null);
+    try {
+      const res = await allocateProductCostAction({
+        year: result.year, productName: result.productName, totalAmount: result.totalAmount,
+        farmCategoryId: result.farmCategoryId, vendorName: result.vendorName, transactionDate: result.transactionDate,
+        excludeFieldIds: Array.from(excludedFieldIds),
+      });
+      setResult(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong reallocating this cost.");
+    } finally {
+      setIsReallocating(false);
+    }
+  }
+
   if (result?.allocated) {
-    const totalUsage = result.allocations.reduce((s, a) => s + a.usage, 0);
+    const includedUsage = result.allocations.filter((a) => !a.excluded);
+    const totalUsage = includedUsage.reduce((s, a) => s + a.usage, 0);
     return (
       <div className="card p-6 space-y-4">
         <div className="text-3xl">✅</div>
         <div className="font-medium text-forest">
-          Allocated {money(result.totalAmount)} of {result.productName} across {result.allocations.length} field{result.allocations.length === 1 ? "" : "s"} for {result.year}
+          Allocated {money(result.totalAmount)} of {result.productName} across {includedUsage.length} field{includedUsage.length === 1 ? "" : "s"} for {result.year}
         </div>
         {result.replacedCount > 0 && (
           <p className="text-xs text-charcoal/50">
@@ -84,22 +120,42 @@ export function AllocateCostForm({
             Heads up — the matching activity entries didn&apos;t all use the same unit (e.g. some in gallons, some in ounces), so the usage numbers below are added together as-is. Double check the split makes sense.
           </p>
         )}
+        <p className="text-xs text-charcoal/45">
+          Uncheck a field if you didn&apos;t actually pay for its seed/chemical/fertilizer (free, carryover, gifted) — it drops to $0 and the {money(result.totalAmount)} you did pay gets reallocated across whatever&apos;s still checked, in the same usage proportions.
+        </p>
         <div className="space-y-1.5">
-          {result.allocations.map((a) => (
-            <div key={a.fieldId} className="flex items-center justify-between text-sm border-b border-charcoal/10 last:border-0 pb-1.5 last:pb-0">
-              <div>
-                <div className="font-medium">{a.fieldName}</div>
-                <div className="text-xs text-charcoal/50">{a.usage.toLocaleString()} {a.unit ?? ""} · {totalUsage > 0 ? Math.round((a.usage / totalUsage) * 100) : 0}% of usage</div>
-              </div>
-              <div className="font-medium">{money(a.amount)}</div>
-            </div>
-          ))}
+          {result.allocations.map((a) => {
+            const checked = !excludedFieldIds.has(a.fieldId);
+            return (
+              <label key={a.fieldId} className="flex items-center justify-between text-sm border-b border-charcoal/10 last:border-0 pb-1.5 last:pb-0 cursor-pointer">
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" checked={checked} onChange={() => toggleFieldExcluded(a.fieldId)} />
+                  <div>
+                    <div className={`font-medium ${!checked ? "line-through text-charcoal/40" : ""}`}>{a.fieldName}</div>
+                    <div className="text-xs text-charcoal/50">
+                      {a.usage.toLocaleString()} {a.unit ?? ""}
+                      {checked && totalUsage > 0 && ` · ${Math.round((a.usage / totalUsage) * 100)}% of usage`}
+                      {!checked && " · excluded — didn't pay for this one"}
+                    </div>
+                  </div>
+                </div>
+                <div className={`font-medium ${!checked ? "text-charcoal/40" : ""}`}>{money(a.amount)}</div>
+              </label>
+            );
+          })}
         </div>
         <div className="flex gap-2 pt-2">
-          <Link prefetch={false} href="/fields" className="bg-wheat text-forest font-semibold px-5 py-2.5 rounded-lg flex-1 text-center">Back to Fields</Link>
           <button
-            onClick={() => { setResult(null); setProductName(""); setTotalAmount(""); }}
-            className="card px-5 py-2.5 text-sm font-medium hover:border-forest flex-1"
+            onClick={reallocate}
+            disabled={isReallocating}
+            className="bg-forest text-white px-5 py-2.5 rounded-lg font-medium flex-1 hover:bg-forest-light disabled:opacity-50"
+          >
+            {isReallocating ? "Reallocating…" : "Refresh / Reallocate"}
+          </button>
+          <Link prefetch={false} href="/fields" className="bg-wheat text-forest font-semibold px-5 py-2.5 rounded-lg text-center">Back to Fields</Link>
+          <button
+            onClick={() => { setResult(null); setProductName(""); setTotalAmount(""); setExcludedFieldIds(new Set()); }}
+            className="card px-5 py-2.5 text-sm font-medium hover:border-forest"
           >
             Allocate Another
           </button>

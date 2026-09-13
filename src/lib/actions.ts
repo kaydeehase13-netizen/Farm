@@ -1403,6 +1403,15 @@ export async function findUnallocatedProductCostAction(input: { year: number; pr
   };
 }
 
+/** Existing per-field allocations from a prior allocateProductCostAction run for this product/year — the ones a reallocation replaces. */
+async function findFieldAllocatedProductTransactions(year: number, productName: string) {
+  const needle = productName.trim().toLowerCase();
+  if (!needle) return [];
+  const txns = await repo.listTransactions({ taxYear: year, type: "expense" });
+  const prefix = `${needle} — allocated by usage`;
+  return txns.filter((t) => (t.description ?? "").toLowerCase().startsWith(prefix) && t.splits.some((s) => s.targetType === "field"));
+}
+
 export async function allocateProductCostAction(input: {
   year: number;
   productName: string;
@@ -1410,11 +1419,14 @@ export async function allocateProductCostAction(input: {
   farmCategoryId: string;
   vendorName?: string;
   transactionDate?: string;
+  /** Fields to leave out of the split entirely (e.g. free/carryover seed) — they get $0 instead of their usage share. */
+  excludeFieldIds?: string[];
 }) {
   const farm = await getFarm();
   const needle = input.productName.trim().toLowerCase();
   if (!needle) throw new Error("Enter a product name to allocate.");
   if (!(input.totalAmount > 0)) throw new Error("Enter the total amount you paid.");
+  const excluded = new Set(input.excludeFieldIds ?? []);
 
   const activities = await repo.listActivities({ year: input.year });
 
@@ -1447,44 +1459,56 @@ export async function allocateProductCostAction(input: {
   }
 
   const fieldsUsage = Array.from(usageByField.entries()).map(([fieldId, v]) => ({ fieldId, ...v }));
-  const totalUsage = fieldsUsage.reduce((s, f) => s + f.usage, 0);
+  const includedUsage = fieldsUsage.filter((f) => !excluded.has(f.fieldId));
+  const totalUsage = includedUsage.reduce((s, f) => s + f.usage, 0);
 
   if (fieldsUsage.length === 0 || totalUsage <= 0) {
     return {
       allocated: false as const,
-      message: `No logged activity in ${input.year} used a product matching "${input.productName}". Check the spelling against what's on the field activity history, or log/import the activity first.`,
+      message: excluded.size > 0 && fieldsUsage.length > 0
+        ? "Every field with logged usage is excluded — nothing left to allocate. Include at least one field."
+        : `No logged activity in ${input.year} used a product matching "${input.productName}". Check the spelling against what's on the field activity history, or log/import the activity first.`,
     };
   }
 
   const transactionDate = input.transactionDate || `${input.year}-12-31`;
 
-  // Replace whatever's already on file for this product/year as one lump
-  // general-overhead expense (from New Transaction or the Excel import)
-  // instead of creating brand-new expenses alongside it — otherwise the
-  // same purchase gets counted twice: once as the original entry, once
-  // per field here.
+  // Replace whatever's already on file for this product/year — both a lump
+  // general-overhead expense (from New Transaction or the Excel import) and
+  // any per-field split from a PRIOR run of this action — instead of
+  // creating brand-new expenses alongside them. The second part is what
+  // makes "reallocate" work: running this again with a field newly
+  // excluded (free/carryover seed) or a corrected total tears down the old
+  // per-field split and rebuilds it fresh, rather than leaving stale
+  // amounts from before sitting alongside the new ones.
   const existing = await findUnallocatedProductTransactions(input.year, input.productName);
-  for (const t of existing) {
+  const existingFieldSplits = await findFieldAllocatedProductTransactions(input.year, input.productName);
+  for (const t of [...existing, ...existingFieldSplits]) {
     await repo.deleteTransaction(t.id);
   }
 
-  // Proportional split, with any rounding remainder folded into the
-  // largest-usage field so the allocations add up to exactly what was paid.
+  // Proportional split (excluded fields get $0 and don't share in the
+  // pool), with any rounding remainder folded into the largest-usage
+  // included field so the allocations add up to exactly what was paid.
   fieldsUsage.sort((a, b) => b.usage - a.usage);
   let allocatedSoFar = 0;
-  const allocations: { fieldId: string; fieldName: string; usage: number; unit?: string; amount: number }[] = [];
-  for (let i = 0; i < fieldsUsage.length; i++) {
-    const f = fieldsUsage[i];
-    const isLast = i === fieldsUsage.length - 1;
+  const lastIncludedId = includedUsage.length ? includedUsage[includedUsage.length - 1].fieldId : undefined;
+  const allocations: { fieldId: string; fieldName: string; usage: number; unit?: string; amount: number; excluded: boolean }[] = [];
+  for (const f of fieldsUsage) {
+    if (excluded.has(f.fieldId)) {
+      allocations.push({ fieldId: f.fieldId, fieldName: f.fieldName, usage: f.usage, unit: f.unit, amount: 0, excluded: true });
+      continue;
+    }
+    const isLast = f.fieldId === lastIncludedId;
     const amount = isLast
       ? Math.round((input.totalAmount - allocatedSoFar) * 100) / 100
       : Math.round(input.totalAmount * (f.usage / totalUsage) * 100) / 100;
     allocatedSoFar += amount;
-    allocations.push({ fieldId: f.fieldId, fieldName: f.fieldName, usage: f.usage, unit: f.unit, amount });
+    allocations.push({ fieldId: f.fieldId, fieldName: f.fieldName, usage: f.usage, unit: f.unit, amount, excluded: false });
   }
 
   for (const a of allocations) {
-    if (a.amount <= 0) continue;
+    if (a.excluded || a.amount <= 0) continue;
     await repo.createTransaction({
       farmBusinessId: farm.id,
       taxYear: input.year,
@@ -1515,7 +1539,10 @@ export async function allocateProductCostAction(input: {
     productName: input.productName,
     totalAmount: input.totalAmount,
     year: input.year,
-    replacedCount: existing.length,
+    farmCategoryId: input.farmCategoryId,
+    vendorName: input.vendorName,
+    transactionDate,
+    replacedCount: existing.length + existingFieldSplits.length,
     unmatchedUnits,
     allocations,
   };
