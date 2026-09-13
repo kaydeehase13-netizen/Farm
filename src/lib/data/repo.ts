@@ -200,6 +200,11 @@ export async function listActivities(filters: Parameters<typeof demo.listActivit
   return demo.listActivities(filters);
 }
 
+export async function countActivities() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).countActivities();
+  return demo.countActivities();
+}
+
 export async function createActivity(input: Omit<Activity, "id" | "createdAt">) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createActivity(input);
   return demo.createActivity(input);

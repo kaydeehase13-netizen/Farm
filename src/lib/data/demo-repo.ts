@@ -433,6 +433,11 @@ export function listActivities(filters: { fieldId?: string; activityType?: strin
   return [...rows].sort((a, b) => b.activityDate.localeCompare(a.activityDate));
 }
 
+/** Demo-mode mirror of the Supabase countActivities. */
+export function countActivities(): number {
+  return getDB().activities.length;
+}
+
 /** Demo-mode mirror of the Supabase fieldProductUsage. */
 export function fieldProductUsage(fieldId: string, taxYear: number) {
   const activities = listActivities({ fieldId, year: taxYear });

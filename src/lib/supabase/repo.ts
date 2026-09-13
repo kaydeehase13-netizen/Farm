@@ -859,6 +859,25 @@ export async function confirmReceipt(id: string, patch: Partial<Receipt> & { cre
   return null;
 }
 
+/**
+ * Just the number of activities on the farm — for places (like the bulk-add
+ * page's "Clear All Field Activity" button) that only need a count to show
+ * or gate on. Deliberately avoids listActivities' full join across
+ * spray/fertilizer/planting/harvest detail tables: on a farm with hundreds
+ * or thousands of activities, fetching every row with all those joins just
+ * to read `.length` is the kind of oversized query that can time out or
+ * blow past a response-size limit and crash the whole page.
+ */
+export async function countActivities(): Promise<number> {
+  const { supabase, farm } = await ctx();
+  const { count, error } = await supabase
+    .from("activity")
+    .select("id", { count: "exact", head: true })
+    .eq("farm_business_id", farm.id);
+  if (error) throw new Error(`Couldn't count activities: ${error.message}`);
+  return count ?? 0;
+}
+
 export async function listActivities(filters: { fieldId?: string; activityType?: string; customerId?: string; year?: number } = {}): Promise<Activity[]> {
   const { supabase, farm } = await ctx();
   let q = supabase.from("activity").select("*, field:field_id(name), customer_field:customer_field_id(name), spray_product_line(*, product:product_id(name, epa_registration_number)), fertilizer_product_line(*, product:product_id(name)), planting_activity_detail(seeding_rate, seed_product:seed_product_id(name)), harvest_activity_detail(yield_amount, yield_unit, moisture_pct)")
