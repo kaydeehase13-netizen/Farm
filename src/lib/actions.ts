@@ -1364,6 +1364,44 @@ export async function createDocumentAction(formData: FormData) {
  * (imported or hand-entered) actually used. This is how a lump-sum invoice
  * becomes real per-field cost without having to do the math by hand.
  */
+/**
+ * Finds expense transactions already on file for this product/year that
+ * haven't been split across fields yet — i.e. whatever landed as one lump
+ * "general farm overhead" entry from Money → New Transaction or the
+ * Expenses Excel import (matched the same way the usage reports match
+ * cost: description starting with "ProductName —"). allocateProductCostAction
+ * uses this to replace those with the real per-field split instead of
+ * creating brand-new expenses on top of them, which would double-count the
+ * purchase — and the form uses it to pre-fill Total Amount/Vendor/Date/
+ * Category instead of asking for everything to be retyped.
+ */
+async function findUnallocatedProductTransactions(year: number, productName: string) {
+  const needle = productName.trim().toLowerCase();
+  if (!needle) return [];
+  const txns = await repo.listTransactions({ taxYear: year, type: "expense" });
+  return txns.filter((t) => {
+    const desc = (t.description ?? "").toLowerCase();
+    if (!desc.startsWith(`${needle} —`) && !desc.startsWith(`${needle} -`)) return false;
+    return !t.splits.some((s) => s.targetType === "field");
+  });
+}
+
+export async function findUnallocatedProductCostAction(input: { year: number; productName: string }): Promise<{
+  count: number; totalAmount: number; vendorName?: string; transactionDate?: string; farmCategoryId?: string;
+} | null> {
+  const matches = await findUnallocatedProductTransactions(input.year, input.productName);
+  if (matches.length === 0) return null;
+  const withCategory = matches.find((t) => t.farmCategoryId);
+  const latest = matches.slice().sort((a, b) => a.transactionDate.localeCompare(b.transactionDate)).at(-1);
+  return {
+    count: matches.length,
+    totalAmount: matches.reduce((s, t) => s + t.amount, 0),
+    vendorName: matches[0].vendorName,
+    transactionDate: latest?.transactionDate,
+    farmCategoryId: withCategory?.farmCategoryId,
+  };
+}
+
 export async function allocateProductCostAction(input: {
   year: number;
   productName: string;
@@ -1418,6 +1456,16 @@ export async function allocateProductCostAction(input: {
 
   const transactionDate = input.transactionDate || `${input.year}-12-31`;
 
+  // Replace whatever's already on file for this product/year as one lump
+  // general-overhead expense (from New Transaction or the Excel import)
+  // instead of creating brand-new expenses alongside it — otherwise the
+  // same purchase gets counted twice: once as the original entry, once
+  // per field here.
+  const existing = await findUnallocatedProductTransactions(input.year, input.productName);
+  for (const t of existing) {
+    await repo.deleteTransaction(t.id);
+  }
+
   // Proportional split, with any rounding remainder folded into the
   // largest-usage field so the allocations add up to exactly what was paid.
   fieldsUsage.sort((a, b) => b.usage - a.usage);
@@ -1465,6 +1513,7 @@ export async function allocateProductCostAction(input: {
     productName: input.productName,
     totalAmount: input.totalAmount,
     year: input.year,
+    replacedCount: existing.length,
     unmatchedUnits,
     allocations,
   };

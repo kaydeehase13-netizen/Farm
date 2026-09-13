@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
-import { allocateProductCostAction } from "@/lib/actions";
+import { allocateProductCostAction, findUnallocatedProductCostAction } from "@/lib/actions";
 
 type Result = Awaited<ReturnType<typeof allocateProductCostAction>>;
 
@@ -23,8 +23,30 @@ export function AllocateCostForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
+  const [found, setFound] = useState<Awaited<ReturnType<typeof findUnallocatedProductCostAction>> | null>(null);
+  const [isLookingUp, startLookup] = useTransition();
 
   const yearOptions = years.includes(year) ? years : [...years, year].sort((a, b) => b - a);
+
+  // As soon as a product name (and year) are entered, check whether it's
+  // already been logged as a lump expense via New Transaction or the
+  // Expenses Excel import — if so, pre-fill everything from that instead of
+  // asking for it to be retyped, and allocateProductCostAction will replace
+  // that entry with the real per-field split rather than double-counting it.
+  function lookup(nextProductName: string, nextYear: number) {
+    const name = nextProductName.trim();
+    if (!name) { setFound(null); return; }
+    startLookup(async () => {
+      const match = await findUnallocatedProductCostAction({ year: nextYear, productName: name });
+      setFound(match);
+      if (match) {
+        setTotalAmount(String(match.totalAmount));
+        if (match.vendorName) setVendorName(match.vendorName);
+        if (match.transactionDate) setTransactionDate(match.transactionDate);
+        if (match.farmCategoryId) setFarmCategoryId(match.farmCategoryId);
+      }
+    });
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -52,6 +74,11 @@ export function AllocateCostForm({
         <div className="font-medium text-forest">
           Allocated {money(result.totalAmount)} of {result.productName} across {result.allocations.length} field{result.allocations.length === 1 ? "" : "s"} for {result.year}
         </div>
+        {result.replacedCount > 0 && (
+          <p className="text-xs text-charcoal/50">
+            Replaced {result.replacedCount} existing expense{result.replacedCount === 1 ? "" : "s"} already on file for {result.productName} with this per-field split, so it isn&apos;t counted twice.
+          </p>
+        )}
         {result.unmatchedUnits && (
           <p className="text-xs text-status-amber">
             Heads up — the matching activity entries didn&apos;t all use the same unit (e.g. some in gallons, some in ounces), so the usage numbers below are added together as-is. Double check the split makes sense.
@@ -90,7 +117,7 @@ export function AllocateCostForm({
 
       <label className="block">
         <div className="text-sm font-medium text-charcoal/70 mb-1">Tax Year</div>
-        <select className="input" value={year} onChange={(e) => setYear(Number(e.target.value))}>
+        <select className="input" value={year} onChange={(e) => { const y = Number(e.target.value); setYear(y); lookup(productName, y); }}>
           {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
       </label>
@@ -100,6 +127,7 @@ export function AllocateCostForm({
         <input
           list="product-names" className="input" value={productName}
           onChange={(e) => setProductName(e.target.value)}
+          onBlur={(e) => lookup(e.target.value, year)}
           placeholder="Must match the product name on your logged/imported field activities"
           required
         />
@@ -108,6 +136,14 @@ export function AllocateCostForm({
         </datalist>
         <p className="text-xs text-charcoal/45 mt-1">Match it to what shows up in a field&apos;s Activity History — e.g. the exact brand/product name from your equipment import.</p>
       </label>
+
+      {isLookingUp && <p className="text-xs text-charcoal/45">Checking for an existing entry…</p>}
+      {!isLookingUp && found && (
+        <p className="text-xs text-forest bg-forest/5 border border-forest/20 rounded-lg p-3">
+          Found {found.count} existing expense{found.count === 1 ? "" : "s"} already entered for &quot;{productName}&quot; in {year}, totaling {money(found.totalAmount)} — pre-filled below.
+          Allocating will replace {found.count === 1 ? "it" : "them"} with the per-field split instead of adding a new expense on top.
+        </p>
+      )}
 
       <label className="block">
         <div className="text-sm font-medium text-charcoal/70 mb-1">Total Amount Paid</div>

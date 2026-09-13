@@ -1044,15 +1044,21 @@ async function writeActivityProductDetails(
       productId = prod?.id;
     }
     if (!productId) throw new Error(`Product "${line.productName}" — could not resolve a product id.`);
-    const { data: item } = await supabase.from("inventory_item").select("id, quantity_on_hand, average_unit_cost")
+    // Inventory on-hand/cost is computed fresh in listInventory() from the
+    // full inventory_movement ledger (every purchase and use, in whatever
+    // order they were actually entered) rather than trusted off a running
+    // total on this row — a running total silently went stale whenever a
+    // purchase was logged after the usage it should have covered (a very
+    // normal order: apply the chemical, buy the replacement receipt weeks
+    // later). This just needs the item to exist so the movement below has
+    // somewhere to attach.
+    const { data: item } = await supabase.from("inventory_item").select("id")
       .eq("farm_business_id", farm.id).eq("product_id", productId).eq("unit", line.quantityUnit).maybeSingle();
     let inventoryItemId = item?.id;
     if (!inventoryItemId) {
       const { data: created, error: invErr } = await supabase.from("inventory_item").insert({ farm_business_id: farm.id, product_id: productId, unit: line.quantityUnit, quantity_on_hand: 0 }).select("id").single();
       if (invErr) throw new Error(`Inventory item for "${line.productName}": ${invErr.message}`);
       inventoryItemId = created?.id;
-    } else {
-      await supabase.from("inventory_item").update({ quantity_on_hand: Math.max(0, Number(item?.quantity_on_hand ?? 0) - line.quantityUsed) }).eq("id", inventoryItemId);
     }
     const { error: lineErr } = await supabase.from(table).insert({ activity_id: activityId, product_id: productId, rate: line.rate, rate_unit: line.rateUnit, quantity_used: line.quantityUsed, quantity_unit: line.quantityUnit });
     if (lineErr) throw new Error(`${table} for "${line.productName}": ${lineErr.message}`);
@@ -1489,7 +1495,7 @@ export async function recordInventoryPurchase(input: {
   if (!productId) throw new Error(`Could not resolve a product id for "${name}".`);
 
   const { data: item, error: itemErr } = await supabase.from("inventory_item")
-    .select("id, quantity_on_hand, average_unit_cost")
+    .select("id")
     .eq("farm_business_id", farm.id).eq("product_id", productId).eq("unit", input.unit).maybeSingle();
   if (itemErr) throw new Error(`Looking up inventory for "${name}": ${itemErr.message}`);
 
@@ -1497,21 +1503,15 @@ export async function recordInventoryPurchase(input: {
   let inventoryItemId: string | undefined = item?.id;
   if (!inventoryItemId) {
     const { data: created, error } = await supabase.from("inventory_item")
-      .insert({ farm_business_id: farm.id, product_id: productId, unit: input.unit, quantity_on_hand: input.quantity, average_unit_cost: unitCost })
+      .insert({ farm_business_id: farm.id, product_id: productId, unit: input.unit, quantity_on_hand: 0 })
       .select("id").single();
     if (error) throw new Error(`Creating inventory item for "${name}": ${error.message}`);
     inventoryItemId = created?.id;
-  } else {
-    const oldQty = Number(item?.quantity_on_hand ?? 0);
-    const oldAvg = Number(item?.average_unit_cost ?? 0);
-    const newQty = oldQty + input.quantity;
-    const newAvg = newQty > 0 ? (oldQty * oldAvg + input.quantity * unitCost) / newQty : unitCost;
-    const { error } = await supabase.from("inventory_item")
-      .update({ quantity_on_hand: newQty, average_unit_cost: newAvg })
-      .eq("id", inventoryItemId);
-    if (error) throw new Error(`Updating inventory item for "${name}": ${error.message}`);
   }
-
+  // On-hand quantity and average cost are both computed fresh from the full
+  // inventory_movement ledger in listInventory() — this just records the
+  // movement itself (see writeActivityProductDetails for why nothing here
+  // maintains a running total).
   const { error: moveErr } = await supabase.from("inventory_movement")
     .insert({ inventory_item_id: inventoryItemId, movement_type: "purchase", quantity: input.quantity, unit_cost: unitCost, note: input.note ?? null });
   if (moveErr) throw new Error(`Recording inventory movement for "${name}": ${moveErr.message}`);
@@ -1519,22 +1519,65 @@ export async function recordInventoryPurchase(input: {
 
 /** Manual correction (recount, spillage, damage) — used by the Inventory Adjustment page. */
 export async function adjustInventory(inventoryItemId: string, quantityChange: number, note?: string): Promise<void> {
-  const { supabase } = await ctx();
+  const { supabase, farm } = await ctx();
   const { data: item, error: itemErr } = await supabase.from("inventory_item")
-    .select("quantity_on_hand").eq("id", inventoryItemId).maybeSingle();
+    .select("id").eq("id", inventoryItemId).eq("farm_business_id", farm.id).maybeSingle();
   if (itemErr) throw new Error(`Looking up inventory item: ${itemErr.message}`);
-  const newQty = Math.max(0, Number(item?.quantity_on_hand ?? 0) + quantityChange);
-  const { error } = await supabase.from("inventory_item").update({ quantity_on_hand: newQty }).eq("id", inventoryItemId);
-  if (error) throw new Error(`Updating inventory item: ${error.message}`);
+  if (!item) throw new Error("That inventory item couldn't be found.");
+  // Recorded as a movement only — see listInventory() for why nothing here
+  // maintains a separate running quantity_on_hand column.
   const { error: moveErr } = await supabase.from("inventory_movement")
     .insert({ inventory_item_id: inventoryItemId, movement_type: "adjustment", quantity: quantityChange, note: note ?? null });
   if (moveErr) throw new Error(`Recording inventory adjustment: ${moveErr.message}`);
 }
 
+/**
+ * On-hand quantity and average cost are both computed fresh from the full
+ * inventory_movement ledger every time this is read, rather than trusted
+ * off a running total on inventory_item — a running total updated at
+ * write-time silently goes stale the moment a purchase and its matching
+ * usage get entered out of chronological order (buy AMS in spring, but
+ * only log/import the spray record that used it weeks later, or vice
+ * versa), which is the normal case, not an edge case. Summing the ledger
+ * on read means it's always correct no matter what order things were
+ * entered in. Quantity = every movement (purchase +, use -, adjustment
+ * either way) added up; average cost = the quantity-weighted average of
+ * unit_cost across only the incoming (purchase) movements, since usage/
+ * adjustment movements don't carry a price.
+ */
 export async function listInventory(): Promise<InventoryItem[]> {
   const { supabase, farm } = await ctx();
-  const { data } = await supabase.from("inventory_item").select("*, product:product_id(name, category)").eq("farm_business_id", farm.id);
-  return (data ?? []).map((i: any): InventoryItem => ({ id: i.id, farmBusinessId: i.farm_business_id, productId: i.product_id, productName: i.product?.name ?? "Product", category: i.product?.category ?? "other", unit: i.unit, quantityOnHand: Number(i.quantity_on_hand), averageUnitCost: Number(i.average_unit_cost ?? 0), reorderThreshold: i.reorder_threshold != null ? Number(i.reorder_threshold) : undefined }));
+  const { data: items } = await supabase.from("inventory_item")
+    .select("id, product_id, unit, reorder_threshold, product:product_id(name, category)")
+    .eq("farm_business_id", farm.id);
+  if (!items || items.length === 0) return [];
+
+  const ids = items.map((i: any) => i.id);
+  const { data: movements } = await supabase.from("inventory_movement")
+    .select("inventory_item_id, quantity, unit_cost").in("inventory_item_id", ids);
+
+  const totals = new Map<string, { qty: number; costWeightedQty: number; costTotal: number }>();
+  for (const m of movements ?? []) {
+    const t = totals.get(m.inventory_item_id) ?? { qty: 0, costWeightedQty: 0, costTotal: 0 };
+    const qty = Number(m.quantity);
+    t.qty += qty;
+    if (qty > 0 && m.unit_cost != null) {
+      t.costTotal += qty * Number(m.unit_cost);
+      t.costWeightedQty += qty;
+    }
+    totals.set(m.inventory_item_id, t);
+  }
+
+  return items.map((i: any): InventoryItem => {
+    const t = totals.get(i.id);
+    return {
+      id: i.id, farmBusinessId: farm.id, productId: i.product_id, productName: i.product?.name ?? "Product",
+      category: i.product?.category ?? "other", unit: i.unit,
+      quantityOnHand: t ? Math.round(t.qty * 1000) / 1000 : 0,
+      averageUnitCost: t && t.costWeightedQty > 0 ? t.costTotal / t.costWeightedQty : 0,
+      reorderThreshold: i.reorder_threshold != null ? Number(i.reorder_threshold) : undefined,
+    };
+  });
 }
 
 export async function listInventoryMovements(itemId?: string) {
