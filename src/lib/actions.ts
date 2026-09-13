@@ -8,6 +8,7 @@ import * as repo from "@/lib/data/repo";
 import { getFarm } from "@/lib/data/repo";
 import { scanReceiptImage } from "@/lib/receipt-ocr";
 import { duplicateKey } from "@/lib/duplicate-key";
+import { seedQuantityInUnits } from "@/lib/seed-units";
 
 /** Switch which tax year the app is currently displaying (Transactions, Reports, Home, etc). */
 export async function setViewTaxYearAction(formData: FormData) {
@@ -1440,7 +1441,8 @@ export async function allocateProductCostAction(input: {
       if (p.productName.trim().toLowerCase() === needle) addUsage(a.fieldId, a.fieldName, p.quantityUsed, p.quantityUnit);
     }
     if (a.seedProductName && a.seedProductName.trim().toLowerCase() === needle) {
-      addUsage(a.fieldId, a.fieldName, (a.seedingRate ?? 0) * (a.acres ?? 0), "units");
+      const { quantity, unit } = seedQuantityInUnits(a.seedProductName, (a.seedingRate ?? 0) * (a.acres ?? 0));
+      addUsage(a.fieldId, a.fieldName, quantity ?? 0, unit);
     }
   }
 

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServerSupabaseClient } from "./server";
 import { requireActiveFarm } from "./auth";
 import { taxCategoryScheduleType } from "@/lib/tax-categories";
+import { seedQuantityInUnits } from "@/lib/seed-units";
 import type {
   Field, CropYear, Transaction, TransactionSplit, Receipt, Activity, Customer,
   CustomerField, Job, Invoice, Payment, Asset, AssetRepair, MileageTrip,
@@ -184,7 +185,11 @@ export async function fieldProductUsage(fieldId: string, taxYear: number): Promi
   for (const a of activities) {
     for (const p of a.sprayProducts ?? []) addLine("Chemical", p.productName, p.quantityUsed, p.quantityUnit, a);
     for (const p of a.fertilizerProducts ?? []) addLine("Fertilizer", p.productName, p.quantityUsed, p.quantityUnit, a);
-    if (a.seedProductName) addLine("Seed", a.seedProductName, a.seedingRate && a.acres ? a.seedingRate * a.acres : undefined, "units", a);
+    if (a.seedProductName) {
+      const rawSeeds = a.seedingRate && a.acres ? a.seedingRate * a.acres : undefined;
+      const { quantity, unit } = seedQuantityInUnits(a.seedProductName, rawSeeds);
+      addLine("Seed", a.seedProductName, quantity, unit, a);
+    }
   }
 
   const fieldName = field?.name ?? "";
@@ -284,7 +289,9 @@ export async function farmProductUsage(taxYear: number): Promise<FieldProductUsa
     const acres = r.acres != null ? Number(r.acres) : undefined;
     const seedingRate = planting?.seeding_rate != null ? Number(planting.seeding_rate) : undefined;
     if (seedName) {
-      addLine("Seed", seedName, seedingRate && acres ? seedingRate * acres : undefined, "units",
+      const rawSeeds = seedingRate && acres ? seedingRate * acres : undefined;
+      const { quantity, unit } = seedQuantityInUnits(seedName, rawSeeds);
+      addLine("Seed", seedName, quantity, unit,
         { activityDate: r.activity_date, acres, fieldId: r.field_id, fieldName: r.field?.name });
     }
   }
