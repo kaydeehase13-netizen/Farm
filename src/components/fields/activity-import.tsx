@@ -8,6 +8,31 @@ import type { Field } from "@/types/domain";
 
 const CREATE_NEW = "__create_new__";
 
+/**
+ * Splits import rows into fixed-size batches, one importActivitiesAction
+ * call per batch, without ever splitting one field/date/type group's rows
+ * (e.g. all the chemicals in one tank mix) across two batches — a new
+ * batch only starts once the size threshold is hit AND the group key
+ * changes, so a group that pushes slightly past `size` still finishes
+ * intact in the batch it started in.
+ */
+function chunkRows<T extends { fieldId: string; activityDate?: string; activityType: string }>(rows: T[], size: number): T[][] {
+  const batches: T[][] = [];
+  let current: T[] = [];
+  let lastKey: string | null = null;
+  for (const r of rows) {
+    const key = `${r.fieldId}|${r.activityDate}|${r.activityType}`;
+    if (current.length >= size && key !== lastKey) {
+      batches.push(current);
+      current = [];
+    }
+    current.push(r);
+    lastKey = key;
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
 const ACTIVITY_TYPES: { value: string; label: string }[] = [
   { value: "plant", label: "Plant" }, { value: "spray", label: "Spray" },
   { value: "fertilize", label: "Fertilize" }, { value: "harvest", label: "Harvest" },
@@ -97,6 +122,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
   const [fieldValueMap, setFieldValueMap] = useState<Record<string, string>>({});
   const [typeValueMap, setTypeValueMap] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
   const [result, setResult] = useState<{ imported: number; repaired?: number; failed: number; errors: string[]; createdFieldNames: string[]; skippedDuplicates?: number } | null>(null);
 
   function handleFile(file: File) {
@@ -223,8 +249,33 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
     }
 
     const finalRows = buildRows(resolvedFieldMap, resolvedNameById);
-    const res = await importActivitiesAction(finalRows);
-    setResult({ ...res, createdFieldNames });
+
+    // A large import (a full season's worth of spray/fertilize events, each
+    // exploded into several rows — one per chemical in the tank mix — can
+    // easily be 500-1000+ rows) sent as one importActivitiesAction call used
+    // to silently run out of time partway through: the server function has
+    // a hard time limit, there was nothing to stop the whole request from
+    // exceeding it, and whatever hadn't been processed yet was just gone —
+    // no error, no report, just fewer activities than the file actually had.
+    // Splitting into fixed-size batches keeps each request well inside that
+    // limit. Batches never split a field/date/type group's rows apart
+    // (chunkRows only starts a new batch at a group boundary) since those
+    // rows are meant to land in ONE combined activity together.
+    const batches = chunkRows(finalRows, 120);
+    let combined = { imported: 0, repaired: 0, failed: 0, errors: [] as string[], skippedDuplicates: 0 };
+    for (let i = 0; i < batches.length; i++) {
+      setImportProgress({ done: i, total: batches.length });
+      const res = await importActivitiesAction(batches[i]);
+      combined = {
+        imported: combined.imported + res.imported,
+        repaired: combined.repaired + res.repaired,
+        failed: combined.failed + res.failed,
+        errors: [...combined.errors, ...res.errors],
+        skippedDuplicates: combined.skippedDuplicates + res.skippedDuplicates,
+      };
+    }
+    setImportProgress(null);
+    setResult({ ...combined, createdFieldNames });
     setImporting(false);
     setStep("done");
   }
@@ -340,7 +391,9 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
             onClick={runImport}
             className="bg-forest text-white px-5 py-2.5 rounded-lg font-medium w-full hover:bg-forest-light disabled:opacity-40"
           >
-            {importing ? "Importing…" : `Import ${previewCounts.ready} Activities`}
+            {importing
+              ? (importProgress ? `Importing… (batch ${importProgress.done + 1} of ${importProgress.total})` : "Importing…")
+              : `Import ${previewCounts.ready} Activities`}
           </button>
         </div>
       </div>
