@@ -25,6 +25,12 @@ export function AllocateCostForm({
   const [result, setResult] = useState<Result | null>(null);
   const [found, setFound] = useState<Awaited<ReturnType<typeof findUnallocatedProductCostAction>> | null>(null);
   const [isLookingUp, startLookup] = useTransition();
+  // True while Total Amount Paid still holds the auto-filled figure,
+  // untouched by hand — cleared as soon as the field is edited. A prior bug
+  // once wrote inflated per-field amounts to the database, and the
+  // auto-fill sums whatever's actually on file, so it can silently repeat
+  // a bad number back without anyone noticing unless it's flagged clearly.
+  const [amountVerified, setAmountVerified] = useState(true);
   const [excludedFieldIds, setExcludedFieldIds] = useState<Set<string>>(new Set());
   const [isReallocating, setIsReallocating] = useState(false);
 
@@ -43,9 +49,12 @@ export function AllocateCostForm({
       setFound(match);
       if (match) {
         setTotalAmount(String(match.totalAmount));
+        setAmountVerified(false);
         if (match.vendorName) setVendorName(match.vendorName);
         if (match.transactionDate) setTransactionDate(match.transactionDate);
         if (match.farmCategoryId) setFarmCategoryId(match.farmCategoryId);
+      } else {
+        setAmountVerified(true);
       }
     });
   }
@@ -195,21 +204,33 @@ export function AllocateCostForm({
 
       {isLookingUp && <p className="text-xs text-charcoal/45">Checking for an existing entry…</p>}
       {!isLookingUp && found && found.alreadyAllocated && (
-        <p className="text-xs text-forest bg-forest/5 border border-forest/20 rounded-lg p-3">
-          &quot;{productName}&quot; in {year} is already allocated across {found.count} field{found.count === 1 ? "" : "s"}, totaling {money(found.totalAmount)} — pre-filled below.
-          You don&apos;t need to remove anything first: allocating again will replace that existing split with a fresh one, and you&apos;ll get the checkboxes below to uncheck any field afterward.
+        <p className="text-xs text-status-amber bg-status-amber/10 border border-status-amber/30 rounded-lg p-3">
+          ⚠️ &quot;{productName}&quot; in {year} is already allocated across {found.count} field{found.count === 1 ? "" : "s"}, adding up to {money(found.totalAmount)} — pre-filled below, but{" "}
+          <strong>check that number against your receipt before allocating.</strong> It&apos;s a sum of whatever&apos;s already on file for this product, so if an earlier allocation was ever wrong, this pulls the wrong total forward too.
+          You don&apos;t need to remove anything first — just fix the amount below if it&apos;s off, then allocate; it&apos;ll replace the existing split either way.
         </p>
       )}
       {!isLookingUp && found && !found.alreadyAllocated && (
-        <p className="text-xs text-forest bg-forest/5 border border-forest/20 rounded-lg p-3">
-          Found {found.count} existing expense{found.count === 1 ? "" : "s"} already entered for &quot;{productName}&quot; in {year}, totaling {money(found.totalAmount)} — pre-filled below.
-          Allocating will replace {found.count === 1 ? "it" : "them"} with the per-field split instead of adding a new expense on top.
+        <p className="text-xs text-status-amber bg-status-amber/10 border border-status-amber/30 rounded-lg p-3">
+          ⚠️ Found {found.count} existing expense{found.count === 1 ? "" : "s"} already entered for &quot;{productName}&quot; in {year}, totaling {money(found.totalAmount)} — pre-filled below, but{" "}
+          <strong>double-check it against your receipt.</strong> Allocating will replace {found.count === 1 ? "it" : "them"} with the per-field split instead of adding a new expense on top.
         </p>
       )}
 
       <label className="block">
-        <div className="text-sm font-medium text-charcoal/70 mb-1">Total Amount Paid</div>
-        <input type="number" step="0.01" min="0" className="input" value={totalAmount} onChange={(e) => setTotalAmount(e.target.value)} required placeholder="12500.00" />
+        <div className="text-sm font-medium text-charcoal/70 mb-1">
+          Total Amount Paid{!amountVerified && <span className="text-status-amber font-normal"> — auto-filled, please verify</span>}
+        </div>
+        <input
+          type="number" step="0.01" min="0"
+          className={`input ${!amountVerified ? "border-status-amber bg-status-amber/5" : ""}`}
+          value={totalAmount}
+          onChange={(e) => { setTotalAmount(e.target.value); setAmountVerified(true); }}
+          required placeholder="12500.00"
+        />
+        {!amountVerified && (
+          <p className="text-xs text-status-amber mt-1">This came from adding up existing records, not from you — confirm it matches your receipt before continuing.</p>
+        )}
       </label>
 
       <label className="block">
