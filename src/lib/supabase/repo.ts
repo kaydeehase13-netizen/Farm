@@ -145,6 +145,25 @@ export interface FieldProductUsage {
 }
 
 /**
+ * A transaction counts as "for this product" if its dedicated Product Name
+ * field matches exactly (set by New Transaction or Excel import — the
+ * reliable signal once it's there) OR its free-text description starts with
+ * "<product> —"/"<product> -" (the older convention, and still how
+ * allocateProductCostAction stamps its own per-field split transactions).
+ * Checking productName first matters when someone bought the same real
+ * product under a different label than the field activities use for it
+ * (an invoice says "Sterling Blue", the imported spray record calls the
+ * same chemical "Veritas") — renaming just the Product Name field on that
+ * transaction is then enough to make it match, without needing the
+ * description to read a particular way too.
+ */
+function transactionMatchesProductName(t: { productName?: string; description?: string }, needleLower: string): boolean {
+  if ((t.productName ?? "").trim().toLowerCase() === needleLower) return true;
+  const desc = (t.description ?? "").toLowerCase();
+  return desc.startsWith(`${needleLower} —`) || desc.startsWith(`${needleLower} -`);
+}
+
+/**
  * "How much of X did this field use, and what did that cost" — grouped by
  * product, for the field's Product Usage & Cost panel. Quantities come from
  * logged/imported activities; cost comes from Allocate Product Cost entries
@@ -199,8 +218,7 @@ export async function fieldProductUsage(fieldId: string, taxYear: number): Promi
     let found = false;
     for (const t of txns) {
       if (t.transactionType !== "expense") continue;
-      const desc = (t.description ?? "").toLowerCase();
-      if (!desc.startsWith(`${needle} —`) && !desc.startsWith(`${needle} -`)) continue;
+      if (!transactionMatchesProductName(t, needle)) continue;
       for (const s of t.splits) {
         if (s.fieldId !== fieldId) continue;
         total += s.allocatedAmount;
@@ -302,8 +320,7 @@ export async function farmProductUsage(taxYear: number): Promise<FieldProductUsa
     let found = false;
     for (const t of txns) {
       if (t.transactionType !== "expense") continue;
-      const desc = (t.description ?? "").toLowerCase();
-      if (!desc.startsWith(`${needle} —`) && !desc.startsWith(`${needle} -`)) continue;
+      if (!transactionMatchesProductName(t, needle)) continue;
       for (const s of t.splits) {
         total += s.allocatedAmount;
         found = true;

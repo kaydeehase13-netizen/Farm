@@ -1274,6 +1274,39 @@ export async function updateTransactionVendorAction(transactionId: string, vendo
 }
 
 /**
+ * Renaming a transaction's Product Name (and, since the free-text
+ * description is what Allocate Product Cost and the product-usage reports
+ * actually match against — see allocatedCostFor in supabase/repo.ts — the
+ * description too) is how a transaction entered under one name gets fixed
+ * to match a different name the field activities use for the same real
+ * product (e.g. an invoice says "Sterling Blue" but the field's spray
+ * record, imported from equipment data, calls it "Veritas" — same
+ * chemical, different label). Without this, that transaction just sits
+ * there uncounted by any per-field/farm-wide product cost total, silently
+ * missing from the rollup that's supposed to include it.
+ */
+export async function updateTransactionProductAction(transactionId: string, productName: string) {
+  const name = productName.trim();
+  await repo.updateTransaction(transactionId, { productName: name || undefined });
+  revalidatePath("/money/transactions");
+  revalidatePath("/fields");
+  revalidatePath("/fields/allocate-cost");
+  revalidatePath("/reports");
+  revalidatePath("/reports/products");
+  revalidatePath("/home");
+}
+
+export async function updateTransactionDescriptionAction(transactionId: string, description: string) {
+  await repo.updateTransaction(transactionId, { description: description.trim() || undefined });
+  revalidatePath("/money/transactions");
+  revalidatePath("/fields");
+  revalidatePath("/fields/allocate-cost");
+  revalidatePath("/reports");
+  revalidatePath("/reports/products");
+  revalidatePath("/home");
+}
+
+/**
  * "Omit" = mark a transaction as personal / not a farm expense, excluding it
  * from income, expense, and tax-readiness totals without deleting it — the
  * record stays for reference, it just stops counting. Un-omitting puts it
@@ -1414,13 +1447,28 @@ export async function createDocumentAction(formData: FormData) {
  * purchase — and the form uses it to pre-fill Total Amount/Vendor/Date/
  * Category instead of asking for everything to be retyped.
  */
+/**
+ * A transaction counts as "for this product" if either its dedicated
+ * Product Name field matches exactly (the New Transaction form and Excel
+ * import both set this — the reliable signal once it's there), or its
+ * free-text description starts with "<product> —"/"<product> -" (the
+ * older convention, still how allocateProductCostAction's own per-field
+ * split transactions are written). Checking productName first means a
+ * transaction someone typed a real Product Name into gets matched
+ * regardless of what the description happens to say.
+ */
+function transactionMatchesProduct(t: { productName?: string; description?: string }, needle: string) {
+  if ((t.productName ?? "").trim().toLowerCase() === needle) return true;
+  const desc = (t.description ?? "").toLowerCase();
+  return desc.startsWith(`${needle} —`) || desc.startsWith(`${needle} -`);
+}
+
 async function findUnallocatedProductTransactions(year: number, productName: string) {
   const needle = productName.trim().toLowerCase();
   if (!needle) return [];
   const txns = await repo.listTransactions({ taxYear: year, type: "expense" });
   return txns.filter((t) => {
-    const desc = (t.description ?? "").toLowerCase();
-    if (!desc.startsWith(`${needle} —`) && !desc.startsWith(`${needle} -`)) return false;
+    if (!transactionMatchesProduct(t, needle)) return false;
     return !t.splits.some((s) => s.targetType === "field");
   });
 }

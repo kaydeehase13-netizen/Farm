@@ -8,6 +8,7 @@ import {
   bulkAssignFieldAction, bulkUpdateCategoryAction, recategorizeTransactionAction,
   updateTransactionDateAction, setTransactionOmittedAction, deleteTransactionAction,
   markTransactionDuplicateAction, updateTransactionVendorAction, duplicateTransactionToCategoryAction,
+  updateTransactionProductAction, updateTransactionDescriptionAction,
 } from "@/lib/actions";
 
 export function TransactionsTable({
@@ -16,6 +17,8 @@ export function TransactionsTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
   const [editingVendorId, setEditingVendorId] = useState<string | null>(null);
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [editingDescriptionId, setEditingDescriptionId] = useState<string | null>(null);
   const [dupingId, setDupingId] = useState<string | null>(null);
   const allSelected = selected.size > 0 && selected.size === transactions.length;
 
@@ -82,6 +85,16 @@ export function TransactionsTable({
     setEditingVendorId(null);
     if (name === (t.vendorName ?? "")) return;
     startTransition(() => updateTransactionVendorAction(t.id, name));
+  }
+  function saveProduct(t: Transaction, name: string) {
+    setEditingProductId(null);
+    if (name === (t.productName ?? "")) return;
+    startTransition(() => updateTransactionProductAction(t.id, name));
+  }
+  function saveDescription(t: Transaction, description: string) {
+    setEditingDescriptionId(null);
+    if (description === (t.description ?? "")) return;
+    startTransition(() => updateTransactionDescriptionAction(t.id, description));
   }
   function toggleOmitted(t: Transaction) {
     const nowOmitted = !t.isPersonalExcluded;
@@ -198,7 +211,62 @@ export function TransactionsTable({
                       </button>
                     </div>
                   )}
-                  <div className="text-charcoal/50 text-xs">{t.description}</div>
+                  {editingDescriptionId === t.id ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      defaultValue={t.description ?? ""}
+                      placeholder="Description"
+                      className="border rounded px-1.5 py-0.5 bg-white text-xs w-full max-w-[220px]"
+                      disabled={isPending}
+                      onBlur={(e) => saveDescription(t, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+                        if (e.key === "Escape") setEditingDescriptionId(null);
+                      }}
+                    />
+                  ) : (
+                    <div className="text-charcoal/50 text-xs group flex items-center gap-1.5">
+                      <span>{t.description || <span className="italic text-charcoal/35">Add description…</span>}</span>
+                      <button
+                        type="button"
+                        onClick={() => setEditingDescriptionId(t.id)}
+                        className="text-charcoal/35 hover:text-forest text-xs opacity-0 group-hover:opacity-100"
+                        title="Edit description"
+                      >
+                        ✎
+                      </button>
+                    </div>
+                  )}
+                  {editingProductId === t.id ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      defaultValue={t.productName ?? ""}
+                      placeholder="Product name (must match how it's used on Fields to allocate/roll up cost)"
+                      className="border rounded px-1.5 py-0.5 bg-white text-xs w-full max-w-[220px] mt-0.5"
+                      disabled={isPending}
+                      onBlur={(e) => saveProduct(t, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+                        if (e.key === "Escape") setEditingProductId(null);
+                      }}
+                    />
+                  ) : (
+                    <div className="text-xs group flex items-center gap-1.5 mt-0.5">
+                      <span className={t.productName ? "text-charcoal/50" : "text-charcoal/35 italic"}>
+                        {t.productName ? `Product: ${t.productName}` : "Add product name…"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEditingProductId(t.id)}
+                        className="text-charcoal/35 hover:text-forest text-xs opacity-0 group-hover:opacity-100"
+                        title="Edit product name — this is what Allocate Cost and product reports match on"
+                      >
+                        ✎
+                      </button>
+                    </div>
+                  )}
                   {t.isDuplicateExcluded && (
                     <div className="text-status-amber text-xs mt-0.5">Duplicate — not counted{t.duplicateNote ? `: ${t.duplicateNote}` : ""}</div>
                   )}
