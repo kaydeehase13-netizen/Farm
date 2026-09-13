@@ -1,11 +1,13 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getField, fieldProfitability, listActivities, listCropYears, getFarm, fieldProductUsage, listFarmCategories } from "@/lib/data/repo";
+import { getField, fieldProfitability, listActivities, listCropYears, getFarm, fieldProductUsage, listFarmCategories, listFieldOverheadAllocations } from "@/lib/data/repo";
 import { PageHeader, StatCard, money, moneyPrecise } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 import { DeleteFieldButton } from "@/components/fields/delete-field-button";
 import { ProductUsagePanel } from "@/components/fields/product-usage-panel";
 import { HarvestActivityEditor } from "@/components/fields/harvest-activity-editor";
+import { FieldOwnershipEditor } from "@/components/fields/field-ownership-editor";
+import { FieldOverheadPanel } from "@/components/fields/field-overhead-panel";
 
 export default async function FieldDetailPage({
   params,
@@ -26,6 +28,7 @@ export default async function FieldDetailPage({
   const cropYears = await listCropYears(fieldId);
   const productUsage = await fieldProductUsage(fieldId, taxYear);
   const farmCategories = await listFarmCategories();
+  const overheadAllocations = await listFieldOverheadAllocations(fieldId, taxYear);
 
   const expenseRows: [string, number][] = ([
     ["Seed", profit.expenseSeed], ["Fertilizer", profit.expenseFertilizer], ["Chemical", profit.expenseChemical],
@@ -38,7 +41,7 @@ export default async function FieldDetailPage({
     <div>
       <PageHeader
         title={field.name}
-        description={`${field.acres} acres · ${field.ownership.replace("_", " ")} · ${field.county ?? ""} County ${field.fsaFarmNumber ? `· FSA Farm ${field.fsaFarmNumber}` : ""} · Viewing ${taxYear}`}
+        description={`${field.acres} acres · ${field.county ?? ""} County ${field.fsaFarmNumber ? `· FSA Farm ${field.fsaFarmNumber}` : ""} · Viewing ${taxYear}`}
         action={
           <div className="flex items-center gap-3">
             <Link prefetch={false} href={`/fields/activities/new?fieldId=${fieldId}`} className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">
@@ -49,15 +52,24 @@ export default async function FieldDetailPage({
         }
       />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <div className="mb-4 text-sm text-charcoal/60">
+        Ownership: <FieldOwnershipEditor fieldId={fieldId} ownership={field.ownership} />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
         <StatCard label="Income" value={money(profit.income)} sub={moneyPrecise(profit.incomePerAcre) + "/ac"} />
         <StatCard label="Total Expense" value={money(profit.totalExpense)} sub={moneyPrecise(profit.expensePerAcre) + "/ac"} />
+        {profit.totalOverhead > 0 && <StatCard label="Overhead (margin only)" value={money(profit.totalOverhead)} />}
         <StatCard label="Margin" value={money(profit.margin)} tone={profit.margin >= 0 ? "green" : "red"} />
         <StatCard label="Margin / Acre" value={moneyPrecise(profit.marginPerAcre)} tone={profit.marginPerAcre >= 0 ? "green" : "red"} />
       </div>
 
       <div className="mb-6">
         <ProductUsagePanel usage={productUsage} taxYear={taxYear} />
+      </div>
+
+      <div className="mb-6">
+        <FieldOverheadPanel fieldId={fieldId} taxYear={taxYear} allocations={overheadAllocations} />
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">

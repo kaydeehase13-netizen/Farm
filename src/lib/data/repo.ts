@@ -42,6 +42,11 @@ export async function createField(input: Parameters<typeof demo.createField>[0])
   return demo.createField(input);
 }
 
+export async function updateField(fieldId: string, patch: Parameters<typeof demo.updateField>[1]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).updateField(fieldId, patch);
+  return demo.updateField(fieldId, patch);
+}
+
 export async function deleteField(fieldId: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteField(fieldId);
   return demo.deleteField(fieldId);
@@ -369,6 +374,19 @@ export async function scanTaxOpportunities(taxYear: number) {
 export async function fieldProfitability(fieldId: string, taxYear: number) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).fieldProfitability(fieldId, taxYear);
   return demo.fieldProfitability(fieldId, taxYear);
+}
+
+export async function listFieldOverheadAllocations(fieldId: string, taxYear: number) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listFieldOverheadAllocations(fieldId, taxYear);
+  return demo.listFieldOverheadAllocations(fieldId, taxYear);
+}
+export async function createFieldOverheadAllocation(input: Parameters<typeof demo.createFieldOverheadAllocation>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createFieldOverheadAllocation(input);
+  return demo.createFieldOverheadAllocation(input);
+}
+export async function deleteFieldOverheadAllocation(id: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteFieldOverheadAllocation(id);
+  return demo.deleteFieldOverheadAllocation(id);
 }
 export async function allFieldProfitability(taxYear: number) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).allFieldProfitability(taxYear);

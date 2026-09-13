@@ -357,6 +357,25 @@ export async function createFieldsForImportAction(names: { name: string; acres?:
   return created;
 }
 
+/** Edits an existing field's details — most importantly ownership, which every field defaults to "owned" at creation with no other way to correct. */
+export async function updateFieldAction(fieldId: string, formData: FormData) {
+  await repo.updateField(fieldId, {
+    name: str(formData, "name"),
+    acres: num(formData, "acres") ?? undefined,
+    tillableAcres: num(formData, "tillableAcres"),
+    ownership: (str(formData, "ownership") ?? undefined) as any,
+    landownerName: str(formData, "landownerName"),
+    county: str(formData, "county"),
+    fsaFarmNumber: str(formData, "fsaFarmNumber"),
+    fsaTractNumber: str(formData, "fsaTractNumber"),
+    fsaFieldNumber: str(formData, "fsaFieldNumber"),
+    irrigated: str(formData, "irrigated") === "on",
+    notes: str(formData, "notes"),
+  });
+  revalidatePath("/fields");
+  revalidatePath(`/fields/${fieldId}`);
+}
+
 /** Deletes a field. repo.deleteField refuses (with a specific reason) if any transactions, activities, or crop years still reference it. */
 export async function deleteFieldAction(fieldId: string) {
   await repo.deleteField(fieldId);
@@ -1845,6 +1864,34 @@ export async function allocateGrainSaleAction(input: {
     replacedCount: existing.length + existingFieldSplits.length,
     allocations,
   };
+}
+
+/**
+ * Records a manual, non-tax overhead figure (insurance, equipment ownership
+ * cost, or equipment repairs/maintenance) against one field for one year, so
+ * that field's displayed margin can reflect a fair share of overhead the
+ * farm pays for elsewhere. This is NOT a transaction and never touches
+ * Schedule F, the dashboard income/expense totals, or any tax export — see
+ * supabase/migrations/0028_field_overhead_allocation.sql. Deliberately
+ * opt-in per field: nothing here is auto-applied to every field.
+ */
+export async function createFieldOverheadAllocationAction(input: {
+  fieldId: string;
+  taxYear: number;
+  category: "insurance" | "equipment_ownership" | "equipment_repairs";
+  amount: number;
+  note?: string;
+}) {
+  if (!(input.amount > 0)) throw new Error("Enter an amount greater than zero.");
+  await repo.createFieldOverheadAllocation(input);
+  revalidatePath("/fields");
+  revalidatePath(`/fields/${input.fieldId}`);
+}
+
+export async function deleteFieldOverheadAllocationAction(id: string, fieldId: string) {
+  await repo.deleteFieldOverheadAllocation(id);
+  revalidatePath("/fields");
+  revalidatePath(`/fields/${fieldId}`);
 }
 
 // -----------------------------------------------------------------------

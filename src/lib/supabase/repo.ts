@@ -8,6 +8,7 @@ import type {
   CustomerField, Job, Invoice, Payment, Asset, AssetRepair, MileageTrip,
   LivestockGroup, LivestockTransaction, Loan, InventoryItem, DocumentRecord,
   TaxOpportunity, TaxQuestion, FarmCategory, FieldProfitability,
+  FieldOverheadAllocation, FieldOverheadCategory,
 } from "@/types/domain";
 import type { DB } from "@/lib/data/store";
 
@@ -72,6 +73,31 @@ export async function createField(input: Omit<Field, "id" | "farmBusinessId">): 
     .select("*")
     .single();
   if (error || !data) throw new Error(error?.message ?? "Could not create field");
+  return mapField(data);
+}
+
+export async function updateField(fieldId: string, patch: Partial<Omit<Field, "id" | "farmBusinessId">>): Promise<Field> {
+  const { supabase, farm } = await ctx();
+  const update: Record<string, unknown> = {};
+  if (patch.name !== undefined) update.name = patch.name;
+  if (patch.acres !== undefined) update.acres = patch.acres;
+  if (patch.tillableAcres !== undefined) update.tillable_acres = patch.tillableAcres ?? null;
+  if (patch.ownership !== undefined) update.ownership = patch.ownership;
+  if (patch.landownerName !== undefined) update.landowner_name = patch.landownerName ?? null;
+  if (patch.county !== undefined) update.county = patch.county ?? null;
+  if (patch.fsaFarmNumber !== undefined) update.fsa_farm_number = patch.fsaFarmNumber ?? null;
+  if (patch.fsaTractNumber !== undefined) update.fsa_tract_number = patch.fsaTractNumber ?? null;
+  if (patch.fsaFieldNumber !== undefined) update.fsa_field_number = patch.fsaFieldNumber ?? null;
+  if (patch.irrigated !== undefined) update.irrigated = patch.irrigated;
+  if (patch.notes !== undefined) update.notes = patch.notes ?? null;
+  const { data, error } = await supabase
+    .from("field")
+    .update(update)
+    .eq("id", fieldId)
+    .eq("farm_business_id", farm.id)
+    .select("*")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Could not update field");
   return mapField(data);
 }
 
@@ -1835,14 +1861,88 @@ export async function createTaxQuestion(question: string, _raisedByName: string)
   return data;
 }
 
+// --- Field overhead allocation (manual, non-tax, margin-only) ---
+
+function mapFieldOverheadAllocation(r: any): FieldOverheadAllocation {
+  return {
+    id: r.id,
+    farmBusinessId: r.farm_business_id,
+    fieldId: r.field_id,
+    taxYear: r.tax_year,
+    category: r.category,
+    amount: Number(r.amount),
+    note: r.note ?? undefined,
+    createdAt: r.created_at,
+  };
+}
+
+export async function listFieldOverheadAllocations(fieldId: string, taxYear: number): Promise<FieldOverheadAllocation[]> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase
+    .from("field_overhead_allocation")
+    .select("*")
+    .eq("farm_business_id", farm.id)
+    .eq("field_id", fieldId)
+    .eq("tax_year", taxYear)
+    .order("created_at");
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(mapFieldOverheadAllocation);
+}
+
+export async function createFieldOverheadAllocation(input: {
+  fieldId: string;
+  taxYear: number;
+  category: FieldOverheadCategory;
+  amount: number;
+  note?: string;
+}): Promise<FieldOverheadAllocation> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase
+    .from("field_overhead_allocation")
+    .insert({
+      farm_business_id: farm.id,
+      field_id: input.fieldId,
+      tax_year: input.taxYear,
+      category: input.category,
+      amount: input.amount,
+      note: input.note ?? null,
+    })
+    .select("*")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Could not save this overhead amount.");
+  return mapFieldOverheadAllocation(data);
+}
+
+export async function deleteFieldOverheadAllocation(id: string): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const { error } = await supabase.from("field_overhead_allocation").delete().eq("id", id).eq("farm_business_id", farm.id);
+  if (error) throw new Error(error.message);
+}
+
+function overheadMapForFields(rows: FieldOverheadAllocation[]): Map<string, { insurance: number; equipment_ownership: number; equipment_repairs: number }> {
+  const map = new Map<string, { insurance: number; equipment_ownership: number; equipment_repairs: number }>();
+  for (const o of rows) {
+    const entry = map.get(o.fieldId) ?? { insurance: 0, equipment_ownership: 0, equipment_repairs: 0 };
+    entry[o.category] += o.amount;
+    map.set(o.fieldId, entry);
+  }
+  return map;
+}
+
 // --- Aggregate / calculated ---
 
 export async function fieldProfitability(fieldId: string, taxYear: number): Promise<FieldProfitability> {
-  const [field, txns, categories] = await Promise.all([getField(fieldId), listTransactions({ taxYear }), listFarmCategories()]);
+  const [field, txns, categories, overhead] = await Promise.all([
+    getField(fieldId),
+    listTransactions({ taxYear }),
+    listFarmCategories(),
+    listFieldOverheadAllocations(fieldId, taxYear),
+  ]);
   return computeFieldProfitability(
     field ?? ({ id: fieldId, name: "Unknown", acres: 0 } as Field),
     txns,
-    bucketMapFromCategories(categories)
+    bucketMapFromCategories(categories),
+    overheadMapForFields(overhead)
   );
 }
 
@@ -1862,12 +1962,19 @@ function bucketMapFromCategories(categories: FarmCategory[]): Record<string, str
   return bucketByCategory;
 }
 
-function computeFieldProfitability(field: Field, txns: Transaction[], bucketByCategory: Record<string, string>): FieldProfitability {
+function computeFieldProfitability(
+  field: Field,
+  txns: Transaction[],
+  bucketByCategory: Record<string, string>,
+  overheadByField?: Map<string, { insurance: number; equipment_ownership: number; equipment_repairs: number }>
+): FieldProfitability {
   const result: FieldProfitability = {
     fieldId: field.id, fieldName: field.name, acres: field.acres, cropName: undefined,
     income: 0, expenseSeed: 0, expenseFertilizer: 0, expenseChemical: 0, expenseFuel: 0, expenseRent: 0,
     expenseInsurance: 0, expenseCustomWork: 0, expenseHarvest: 0, expenseDrying: 0, expenseTrucking: 0,
-    expenseOther: 0, totalExpense: 0, margin: 0, incomePerAcre: 0, expensePerAcre: 0, marginPerAcre: 0,
+    expenseOther: 0, totalExpense: 0,
+    overheadInsurance: 0, overheadEquipmentOwnership: 0, overheadEquipmentRepairs: 0, totalOverhead: 0,
+    margin: 0, incomePerAcre: 0, expensePerAcre: 0, marginPerAcre: 0,
   };
   for (const t of txns) {
     for (const s of t.splits) {
@@ -1883,10 +1990,19 @@ function computeFieldProfitability(field: Field, txns: Transaction[], bucketByCa
   result.totalExpense = result.expenseSeed + result.expenseFertilizer + result.expenseChemical + result.expenseFuel +
     result.expenseRent + result.expenseInsurance + result.expenseCustomWork + result.expenseHarvest +
     result.expenseDrying + result.expenseTrucking + result.expenseOther;
-  result.margin = result.income - result.totalExpense;
+
+  const overhead = overheadByField?.get(field.id);
+  if (overhead) {
+    result.overheadInsurance = overhead.insurance;
+    result.overheadEquipmentOwnership = overhead.equipment_ownership;
+    result.overheadEquipmentRepairs = overhead.equipment_repairs;
+  }
+  result.totalOverhead = result.overheadInsurance + result.overheadEquipmentOwnership + result.overheadEquipmentRepairs;
+
+  result.margin = result.income - result.totalExpense - result.totalOverhead;
   const acres = result.acres || 1;
   result.incomePerAcre = round2(result.income / acres);
-  result.expensePerAcre = round2(result.totalExpense / acres);
+  result.expensePerAcre = round2((result.totalExpense + result.totalOverhead) / acres);
   result.marginPerAcre = round2(result.margin / acres);
   return result;
 }
@@ -1905,13 +2021,14 @@ export async function allFieldProfitability(taxYear: number) {
   const yearStart = `${taxYear}-01-01`;
   const yearEnd = `${taxYear + 1}-01-01`;
 
-  const [fields, txns, categories, cropYearRes, activityRes] = await Promise.all([
+  const [fields, txns, categories, cropYearRes, activityRes, overheadRes] = await Promise.all([
     listFields(),
     listTransactions({ taxYear }),
     listFarmCategories(),
     supabase.from("crop_year").select("field_id, tax_year:tax_year_id(year, farm_business_id)"),
     supabase.from("activity").select("field_id").eq("farm_business_id", farm.id)
       .not("field_id", "is", null).gte("activity_date", yearStart).lt("activity_date", yearEnd),
+    supabase.from("field_overhead_allocation").select("*").eq("farm_business_id", farm.id).eq("tax_year", taxYear),
   ]);
 
   // Which fields were actually used this year — a crop planted, an activity
@@ -1925,7 +2042,8 @@ export async function allFieldProfitability(taxYear: number) {
   for (const t of txns) for (const s of t.splits) if (s.fieldId && s.allocatedAmount !== 0) usedIds.add(s.fieldId);
 
   const bucketByCategory = bucketMapFromCategories(categories);
-  return fields.filter((f) => usedIds.has(f.id)).map((f) => computeFieldProfitability(f, txns, bucketByCategory));
+  const overheadByField = overheadMapForFields((overheadRes.data ?? []).map(mapFieldOverheadAllocation));
+  return fields.filter((f) => usedIds.has(f.id)).map((f) => computeFieldProfitability(f, txns, bucketByCategory, overheadByField));
 }
 
 function round2(n: number) { return Math.round(n * 100) / 100; }

@@ -6,6 +6,7 @@ import type {
   InventoryItem, InventoryMovement, Activity, Customer, CustomerField, Job,
   Invoice, Payment, Asset, AssetRepair, MileageTrip, LivestockGroup,
   LivestockTransaction, Loan, DocumentRecord, TaxOpportunity, TaxQuestion,
+  FieldOverheadAllocation,
 } from "@/types/domain";
 
 // -----------------------------------------------------------------------
@@ -50,6 +51,7 @@ export interface DB {
   documents: DocumentRecord[];
   taxOpportunities: TaxOpportunity[];
   taxQuestions: TaxQuestion[];
+  fieldOverheadAllocations: FieldOverheadAllocation[];
 }
 
 function freshSeed(): DB {
@@ -78,6 +80,7 @@ function freshSeed(): DB {
     documents: structuredClone(seed.DOCUMENTS),
     taxOpportunities: structuredClone(seed.TAX_OPPORTUNITIES),
     taxQuestions: structuredClone(seed.TAX_QUESTIONS),
+    fieldOverheadAllocations: [],
   };
 }
 
@@ -91,6 +94,8 @@ function load(): DB {
   try {
     if (fs.existsSync(DB_FILE)) {
       cache = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+      // Back-compat: older cached db.json files predate this key.
+      if (!cache!.fieldOverheadAllocations) cache!.fieldOverheadAllocations = [];
       return cache!;
     }
   } catch {

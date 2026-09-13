@@ -34,6 +34,15 @@ export function createField(input: Omit<import("@/types/domain").Field, "id" | "
   });
 }
 
+export function updateField(fieldId: string, patch: Partial<Omit<import("@/types/domain").Field, "id" | "farmBusinessId">>) {
+  return mutate((db) => {
+    const field = db.fields.find((f) => f.id === fieldId);
+    if (!field) throw new Error("Field not found.");
+    Object.assign(field, patch);
+    return field;
+  });
+}
+
 /** Mirrors the Supabase version's guard: refuse when transactions, logged activities, or crop years still reference this field. */
 export function deleteField(fieldId: string) {
   const db = getDB();
@@ -961,6 +970,39 @@ const EXPENSE_BUCKETS: Record<string, keyof Omit<FieldProfitability, "fieldId" |
   "cat-trucking": "expenseTrucking",
 };
 
+export function listFieldOverheadAllocations(fieldId: string, taxYear: number): import("@/types/domain").FieldOverheadAllocation[] {
+  return getDB().fieldOverheadAllocations.filter((o) => o.fieldId === fieldId && o.taxYear === taxYear);
+}
+
+export function createFieldOverheadAllocation(input: {
+  fieldId: string;
+  taxYear: number;
+  category: import("@/types/domain").FieldOverheadCategory;
+  amount: number;
+  note?: string;
+}): import("@/types/domain").FieldOverheadAllocation {
+  return mutate((db) => {
+    const record: import("@/types/domain").FieldOverheadAllocation = {
+      id: randomUUID(),
+      farmBusinessId: FARM.id,
+      fieldId: input.fieldId,
+      taxYear: input.taxYear,
+      category: input.category,
+      amount: input.amount,
+      note: input.note,
+      createdAt: new Date().toISOString(),
+    };
+    db.fieldOverheadAllocations.push(record);
+    return record;
+  });
+}
+
+export function deleteFieldOverheadAllocation(id: string): void {
+  mutate((db) => {
+    db.fieldOverheadAllocations = db.fieldOverheadAllocations.filter((o) => o.id !== id);
+  });
+}
+
 export function fieldProfitability(fieldId: string, taxYear: number): FieldProfitability {
   const db = getDB();
   const field = db.fields.find((f) => f.id === fieldId)!;
@@ -971,8 +1013,9 @@ export function fieldProfitability(fieldId: string, taxYear: number): FieldProfi
     fieldId, fieldName: field?.name ?? "Unknown", acres: field?.acres ?? 0, cropName: cropYear?.cropName,
     income: 0, expenseSeed: 0, expenseFertilizer: 0, expenseChemical: 0, expenseFuel: 0,
     expenseRent: 0, expenseInsurance: 0, expenseCustomWork: 0, expenseHarvest: 0,
-    expenseDrying: 0, expenseTrucking: 0, expenseOther: 0, totalExpense: 0, margin: 0,
-    incomePerAcre: 0, expensePerAcre: 0, marginPerAcre: 0,
+    expenseDrying: 0, expenseTrucking: 0, expenseOther: 0, totalExpense: 0,
+    overheadInsurance: 0, overheadEquipmentOwnership: 0, overheadEquipmentRepairs: 0, totalOverhead: 0,
+    margin: 0, incomePerAcre: 0, expensePerAcre: 0, marginPerAcre: 0,
   };
 
   for (const txn of relevantTxns) {
@@ -991,10 +1034,18 @@ export function fieldProfitability(fieldId: string, taxYear: number): FieldProfi
   result.totalExpense = result.expenseSeed + result.expenseFertilizer + result.expenseChemical +
     result.expenseFuel + result.expenseRent + result.expenseInsurance + result.expenseCustomWork +
     result.expenseHarvest + result.expenseDrying + result.expenseTrucking + result.expenseOther;
-  result.margin = result.income - result.totalExpense;
+
+  for (const o of listFieldOverheadAllocations(fieldId, taxYear)) {
+    if (o.category === "insurance") result.overheadInsurance += o.amount;
+    else if (o.category === "equipment_ownership") result.overheadEquipmentOwnership += o.amount;
+    else if (o.category === "equipment_repairs") result.overheadEquipmentRepairs += o.amount;
+  }
+  result.totalOverhead = result.overheadInsurance + result.overheadEquipmentOwnership + result.overheadEquipmentRepairs;
+
+  result.margin = result.income - result.totalExpense - result.totalOverhead;
   const acres = result.acres || 1;
   result.incomePerAcre = round2(result.income / acres);
-  result.expensePerAcre = round2(result.totalExpense / acres);
+  result.expensePerAcre = round2((result.totalExpense + result.totalOverhead) / acres);
   result.marginPerAcre = round2(result.margin / acres);
   return result;
 }

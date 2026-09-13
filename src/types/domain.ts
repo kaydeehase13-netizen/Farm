@@ -413,6 +413,28 @@ export interface TaxQuestion {
   createdAt: string;
 }
 
+export type FieldOverheadCategory = "insurance" | "equipment_ownership" | "equipment_repairs";
+
+/**
+ * A manual, per-field dollar figure for costs that are real farm expenses but
+ * aren't naturally tied to one field on their own (insurance premiums,
+ * equipment ownership cost, equipment repairs/maintenance). This is NOT a
+ * transaction — it never touches Schedule F, the dashboard income/expense
+ * totals, or any tax export. It only reduces the DISPLAYED per-field margin,
+ * so a field's profitability reflects a fair share of overhead the farm
+ * already pays for elsewhere. Opt-in per field, per year, per category.
+ */
+export interface FieldOverheadAllocation {
+  id: string;
+  farmBusinessId: string;
+  fieldId: string;
+  taxYear: number;
+  category: FieldOverheadCategory;
+  amount: number;
+  note?: string;
+  createdAt: string;
+}
+
 export interface FieldProfitability {
   fieldId: string;
   fieldName: string;
@@ -431,6 +453,11 @@ export interface FieldProfitability {
   expenseTrucking: number;
   expenseOther: number;
   totalExpense: number;
+  /** Manual, non-tax overhead allocations (see FieldOverheadAllocation) — reduces margin only, never totalExpense. */
+  overheadInsurance: number;
+  overheadEquipmentOwnership: number;
+  overheadEquipmentRepairs: number;
+  totalOverhead: number;
   margin: number;
   incomePerAcre: number;
   expensePerAcre: number;
