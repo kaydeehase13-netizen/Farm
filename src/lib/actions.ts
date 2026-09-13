@@ -495,10 +495,11 @@ function groupImportRows(rows: ImportRow[]) {
   return order.map((key) => groups.get(key)!);
 }
 
-export async function importActivitiesAction(rows: ImportRow[]) {
+export async function importActivitiesAction(rows: ImportRow[], options?: { replaceOnMismatch?: boolean }) {
   const farm = await getFarm();
   let imported = 0;
   let repaired = 0;
+  let replaced = 0;
   let skippedDuplicates = 0;
   const errors: string[] = [];
   const groupedRows = groupImportRows(rows);
@@ -572,9 +573,45 @@ export async function importActivitiesAction(rows: ImportRow[]) {
       const rowProductKey = productKeyOf(productLines.map((p) => p.productName));
       const exactDuplicate = candidates.find((c) => c.hasProductInfo && c.productKey === rowProductKey);
       const brokenCandidate = !exactDuplicate ? candidates.find((c) => !c.hasProductInfo && !c.claimed) : undefined;
+      // Same date/type/acres/yield as something already on file, but a
+      // DIFFERENT set of products — e.g. re-importing a corrected split of
+      // an event AgFiniti's own report only logged as generic "N". Left to
+      // the normal path below this would just create a second activity
+      // alongside the wrong one (a real duplicate application, doubled
+      // costs, doubled inventory usage). Opt-in via options.replaceOnMismatch
+      // so a normal import never silently deletes something on its own.
+      const mismatchCandidate = options?.replaceOnMismatch && !exactDuplicate && !brokenCandidate
+        ? candidates.find((c) => c.hasProductInfo && c.productKey !== rowProductKey && !c.claimed)
+        : undefined;
 
       if (exactDuplicate) {
         skippedDuplicates++;
+        continue;
+      }
+      if (mismatchCandidate && productLines.length) {
+        await repo.deleteActivity(mismatchCandidate.activityId);
+        mismatchCandidate.claimed = true;
+        const created = await repo.createActivity({
+          farmBusinessId: farm.id,
+          activityType: row.activityType as any,
+          fieldId: row.fieldId,
+          fieldName: row.fieldName,
+          activityDate: row.activityDate,
+          acres: row.acres ?? undefined,
+          applicatorName: row.applicatorName ?? undefined,
+          sprayProducts: isSpray && productLines.length ? productLines : undefined,
+          fertilizerProducts: isFertilize && productLines.length ? productLines : undefined,
+          seedProductName: row.activityType === "plant" ? (row.productName ?? undefined) : undefined,
+          seedingRate: row.activityType === "plant" ? (row.rate ?? undefined) : undefined,
+          yieldAmount: row.yieldAmount ?? undefined,
+          yieldUnit: row.yieldUnit ?? undefined,
+          moisturePct: row.moisturePct ?? undefined,
+          notes: row.notes ?? undefined,
+          syncStatus: "synced",
+        });
+        const newEntry: Seen = { activityId: created.id, hasProductInfo: productLines.length > 0, productKey: rowProductKey, claimed: true };
+        candidates.push(newEntry);
+        replaced++;
         continue;
       }
       if (brokenCandidate && productLines.length) {
@@ -619,7 +656,8 @@ export async function importActivitiesAction(rows: ImportRow[]) {
   revalidatePath("/fields");
   revalidatePath("/fields/allocate-cost");
   revalidatePath("/home");
-  return { imported, repaired, failed: errors.length, errors, skippedDuplicates };
+  revalidatePath("/more/inventory");
+  return { imported, repaired, replaced, failed: errors.length, errors, skippedDuplicates };
 }
 
 export async function createReceiptAction(formData: FormData) {

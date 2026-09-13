@@ -1144,6 +1144,22 @@ export async function repairActivityProductDetails(activityId: string, details: 
  * that triggered them, so deleting activities here never orphans or
  * deletes any transaction/expense history.
  */
+/**
+ * Deletes a single activity — spray/fertilizer/seed/harvest detail rows
+ * cascade (same FK setup as deleteAllActivities), and any inventory_movement
+ * that pointed at it just has related_activity_id set to null (migration
+ * 0027) rather than blocking the delete. Used by importActivitiesAction's
+ * "replace" mode to swap a mis-imported activity (e.g. one AgFiniti only
+ * logged as generic "N") for a corrected one with the real named products,
+ * without leaving the old one behind as a duplicate.
+ */
+export async function deleteActivity(id: string): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase.from("activity").delete().eq("id", id).eq("farm_business_id", farm.id).select("id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("That activity couldn't be deleted — it may already be gone.");
+}
+
 export async function deleteAllActivities(): Promise<{ deletedCount: number }> {
   const { supabase, farm } = await ctx();
   const { count, error: countError } = await supabase

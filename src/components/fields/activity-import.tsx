@@ -123,7 +123,8 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
   const [typeValueMap, setTypeValueMap] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
-  const [result, setResult] = useState<{ imported: number; repaired?: number; failed: number; errors: string[]; createdFieldNames: string[]; skippedDuplicates?: number } | null>(null);
+  const [replaceOnMismatch, setReplaceOnMismatch] = useState(false);
+  const [result, setResult] = useState<{ imported: number; repaired?: number; replaced?: number; failed: number; errors: string[]; createdFieldNames: string[]; skippedDuplicates?: number } | null>(null);
 
   function handleFile(file: File) {
     setFileName(file.name);
@@ -262,13 +263,14 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
     // (chunkRows only starts a new batch at a group boundary) since those
     // rows are meant to land in ONE combined activity together.
     const batches = chunkRows(finalRows, 40);
-    let combined = { imported: 0, repaired: 0, failed: 0, errors: [] as string[], skippedDuplicates: 0 };
+    let combined = { imported: 0, repaired: 0, replaced: 0, failed: 0, errors: [] as string[], skippedDuplicates: 0 };
     for (let i = 0; i < batches.length; i++) {
       setImportProgress({ done: i, total: batches.length });
-      const res = await importActivitiesAction(batches[i]);
+      const res = await importActivitiesAction(batches[i], { replaceOnMismatch });
       combined = {
         imported: combined.imported + res.imported,
         repaired: combined.repaired + res.repaired,
+        replaced: combined.replaced + (res.replaced ?? 0),
         failed: combined.failed + res.failed,
         errors: [...combined.errors, ...res.errors],
         skippedDuplicates: combined.skippedDuplicates + res.skippedDuplicates,
@@ -379,6 +381,23 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
           ))}
         </div>
         <div className="card p-6">
+          <label className="flex items-start gap-2 mb-3 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={replaceOnMismatch}
+              onChange={(e) => setReplaceOnMismatch(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium">Replace existing activities with different products</span>
+              <span className="block text-xs text-charcoal/50">
+                Normally a row that matches an existing activity on date/field/type/acres but lists different
+                products is added as a separate new activity. Check this when you&apos;re re-importing a correction
+                (e.g. replacing a generic product AgFiniti only logged in aggregate with the real named products) —
+                the old activity is deleted and this one takes its place instead of sitting alongside it.
+              </span>
+            </span>
+          </label>
           <div className="text-sm font-medium mb-1">{previewCounts.ready} of {rows.length} rows ready to import</div>
           {previewCounts.willCreate > 0 && (
             <p className="text-xs text-status-amber mb-1">
@@ -404,6 +423,11 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
     <div className="card p-6 text-center space-y-3">
       <div className="text-3xl">✅</div>
       <div className="font-medium text-forest">Imported {result?.imported ?? 0} activities</div>
+      {result && !!result.replaced && (
+        <div className="text-left text-sm bg-wheat/30 border border-wheat rounded-lg p-3 text-charcoal/70">
+          Replaced {result.replaced} activit{result.replaced === 1 ? "y" : "ies"} that were already on file with the corrected version from this file — the old one was deleted so nothing&apos;s duplicated.
+        </div>
+      )}
       {result && !!result.repaired && (
         <div className="text-left text-sm bg-wheat/30 border border-wheat rounded-lg p-3 text-charcoal/70">
           Filled in the missing product/rate/quantity details on {result.repaired} activity{result.repaired === 1 ? "" : "ies"} that were already on file but were missing them — this is what's used to allocate product cost by field, so those fields' allocations should work now.

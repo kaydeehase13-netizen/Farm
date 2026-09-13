@@ -57,6 +57,11 @@ export async function deleteAllActivities() {
   return demo.deleteAllActivities();
 }
 
+export async function deleteActivity(activityId: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteActivity(activityId);
+  return demo.deleteActivity(activityId);
+}
+
 export async function fieldProductUsage(fieldId: string, taxYear: number) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).fieldProductUsage(fieldId, taxYear);
   return demo.fieldProductUsage(fieldId, taxYear);

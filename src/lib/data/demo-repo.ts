@@ -537,6 +537,11 @@ export function farmProductUsage(taxYear: number) {
     .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
 }
 
+/** Demo-mode mirror of the Supabase deleteActivity. */
+export function deleteActivity(activityId: string): void {
+  mutate((db) => { db.activities = db.activities.filter((a) => a.id !== activityId); });
+}
+
 /** Demo-mode mirror of the Supabase deleteAllActivities. */
 export function deleteAllActivities(): { deletedCount: number } {
   const count = getDB().activities.length;
