@@ -115,10 +115,12 @@ export function NewTransactionForm({
         </Field>
       )}
 
-      {!splitting && type === "expense" && (
-        <Field label="Product / Variety (optional)">
+      {!splitting && (
+        <Field label={type === "expense" ? "Product / Variety (optional)" : "Crop / Product Sold (optional)"}>
           <input
-            name="productName" placeholder="e.g. DeKalb 63-91, Roundup PowerMax, AMS" className="input"
+            name="productName"
+            placeholder={type === "expense" ? "e.g. DeKalb 63-91, Roundup PowerMax, AMS" : "e.g. Corn, Soybeans, Milo"}
+            className="input"
             value={productName} onChange={(e) => setProductName(e.target.value)}
           />
         </Field>
@@ -129,17 +131,17 @@ export function NewTransactionForm({
           into that field&apos;s activity record too — no need to enter it twice.
         </p>
       )}
-      {!splitting && type === "expense" && productName.trim() && (
+      {!splitting && productName.trim() && (
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Quantity Purchased (optional)">
+          <Field label={type === "expense" ? "Quantity Purchased (optional)" : "Bushels / Quantity Sold (optional)"}>
             <input
-              type="number" step="0.01" name="purchaseQuantity" placeholder="e.g. 2040" className="input"
+              type="number" step="0.01" name="purchaseQuantity" placeholder={type === "expense" ? "e.g. 2040" : "e.g. 4500"} className="input"
               value={purchaseQuantity} onChange={(e) => setPurchaseQuantity(e.target.value)}
             />
           </Field>
           <Field label="Unit">
-            <select name="purchaseUnit" className="input" defaultValue={UNIT_OPTIONS[0]}>
-              {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+            <select name="purchaseUnit" className="input" defaultValue={type === "expense" ? UNIT_OPTIONS[0] : "bu"}>
+              {(type === "expense" ? UNIT_OPTIONS : ["bu", "cwt", "ton", "lbs", "bales", "units"]).map((u) => <option key={u} value={u}>{u}</option>)}
             </select>
           </Field>
         </div>
@@ -149,6 +151,13 @@ export function NewTransactionForm({
           Adds {purchaseQuantity || "0"} to &quot;{productName}&quot; in Inventory at
           {" "}${amountNum && Number(purchaseQuantity) ? (amountNum / Number(purchaseQuantity)).toFixed(4) : "0.00"}/unit for this receipt
           (blended with whatever&apos;s already on hand) — leave quantity blank if you don&apos;t want this tracked in Inventory.
+        </p>
+      )}
+      {!splitting && type === "income" && productName.trim() && purchaseQuantity && (
+        <p className="text-xs text-charcoal/50 -mt-2">
+          That&apos;s ${amountNum && Number(purchaseQuantity) ? (amountNum / Number(purchaseQuantity)).toFixed(2) : "0.00"} per unit for this sale.
+          This is a sale record only — it&apos;s not linked to Inventory or to the field&apos;s logged harvest yield, since actual bushels sold
+          can differ from bushels harvested (grain sold later out of the bin, blended across fields, etc.).
         </p>
       )}
 

@@ -110,6 +110,15 @@ export async function createExpenseOrIncome(formData: FormData) {
   const productName = str(formData, "productName");
   const purchaseQuantity = num(formData, "purchaseQuantity");
   const purchaseUnit = str(formData, "purchaseUnit");
+  // A grain/crop sale (type income) has no Inventory concept the way a
+  // purchase does — there's no "harvest inventory" ledger this quantity
+  // feeds — so unlike the expense side, the bushels/quantity typed in has
+  // nowhere structured to live. Folding it into the description keeps it
+  // visible on the transaction (and in a $/bu sense, reconstructable) rather
+  // than silently discarding a number the form asked for and the user typed in.
+  const descriptionWithQuantity = type === "income" && purchaseQuantity && purchaseQuantity > 0 && purchaseUnit && description
+    ? `${description} (${purchaseQuantity} ${purchaseUnit})`
+    : description;
 
   await repo.createTransaction({
     farmBusinessId: farm.id,
@@ -119,7 +128,7 @@ export async function createExpenseOrIncome(formData: FormData) {
     transactionDate,
     vendorName: str(formData, "vendorName"),
     customerId: str(formData, "customerId"),
-    description,
+    description: descriptionWithQuantity,
     amount,
     salesTax,
     paymentMethod: str(formData, "paymentMethod"),
