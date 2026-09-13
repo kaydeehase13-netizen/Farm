@@ -101,6 +101,7 @@ export function ExcelBulkImportPreview({
                   <th></th><th>Row</th><th>Date</th>
                   {preview.transactionType === "expense" && <th>Vendor</th>}
                   <th>Description</th><th>Category</th><th className="text-right">Amount</th>
+                  {preview.transactionType === "expense" && <th>Product / Qty / Unit</th>}
                 </tr>
               </thead>
               <tbody>
@@ -160,10 +161,34 @@ export function ExcelBulkImportPreview({
                           onChange={(e) => updateRow(idx, { amount: e.target.value ? Number(e.target.value) : undefined })}
                         />
                       </td>
+                      {preview.transactionType === "expense" && (
+                        <td>
+                          <div className="flex gap-1 items-center">
+                            <input
+                              type="text" placeholder="Product" title="Product / Variety"
+                              className="border rounded px-1.5 py-1 bg-white text-sm w-24"
+                              value={r.productName ?? ""}
+                              onChange={(e) => updateRow(idx, { productName: e.target.value || undefined })}
+                            />
+                            <input
+                              type="number" step="0.01" placeholder="Qty" title="Quantity Purchased"
+                              className="border rounded px-1.5 py-1 bg-white text-sm w-16"
+                              value={r.purchaseQuantity ?? ""}
+                              onChange={(e) => updateRow(idx, { purchaseQuantity: e.target.value ? Number(e.target.value) : undefined })}
+                            />
+                            <input
+                              type="text" placeholder="Unit" title="Unit"
+                              className="border rounded px-1.5 py-1 bg-white text-sm w-14"
+                              value={r.purchaseUnit ?? ""}
+                              onChange={(e) => updateRow(idx, { purchaseUnit: e.target.value || undefined })}
+                            />
+                          </div>
+                        </td>
+                      )}
                     </tr>
                     {r.warning && (
                       <tr>
-                        <td colSpan={preview.transactionType === "expense" ? 7 : 6} className="text-xs text-status-amber pt-0 pb-2">
+                        <td colSpan={preview.transactionType === "expense" ? 8 : 6} className="text-xs text-status-amber pt-0 pb-2">
                           Row {r.row}: {r.warning}
                         </td>
                       </tr>

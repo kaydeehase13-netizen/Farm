@@ -1492,6 +1492,10 @@ export interface BulkImportDraftRow {
   /** Unchecked by default when this looks like it's missing required fields or duplicates something already on file — the user can still check it back on. */
   include: boolean;
   warning?: string;
+  /** Expense import only: when Product/Quantity/Unit are all filled in, the committed row also adds this purchase to Inventory. */
+  productName?: string;
+  purchaseQuantity?: number;
+  purchaseUnit?: string;
 }
 export interface BulkImportPreview {
   transactionType: "income" | "expense";
@@ -1712,6 +1716,9 @@ async function bulkImportPreview(formData: FormData, transactionType: "income" |
     const farmCategoryId = await matchCategoryId(categoryName, categories);
     const description = toText(r["Description"]) ?? (transactionType === "income" ? toText(r["Customer (optional)"]) : undefined);
     const vendorName = transactionType === "expense" ? toText(r["Vendor"]) : undefined;
+    const productName = transactionType === "expense" ? toText(r["Product / Variety (optional)"]) : undefined;
+    const purchaseQuantity = transactionType === "expense" ? toNumber(r["Quantity Purchased (optional)"]) : undefined;
+    const purchaseUnit = transactionType === "expense" ? toText(r["Unit (optional)"]) : undefined;
 
     let warning: string | undefined;
     let include = true;
@@ -1732,6 +1739,7 @@ async function bulkImportPreview(formData: FormData, transactionType: "income" |
     rows.push({
       row: rowNum, transactionDate, amount, vendorName, description, farmCategoryId,
       originalCategoryName: categoryName, include, warning,
+      productName, purchaseQuantity, purchaseUnit,
     });
   }
 
@@ -1787,6 +1795,22 @@ async function bulkImportCommit(rows: BulkImportDraftRow[], transactionType: "in
           syncStatus: "synced",
           splits: [{ targetType: "general_overhead", allocationMethod: "manual", allocatedAmount: r.amount, farmCategoryId: r.farmCategoryId }],
         });
+
+        if (transactionType === "expense" && r.productName && r.purchaseQuantity && r.purchaseQuantity > 0 && r.purchaseUnit) {
+          try {
+            await repo.recordInventoryPurchase({
+              productName: r.productName,
+              category: await productCategoryFromFarmCategory(r.farmCategoryId),
+              quantity: r.purchaseQuantity,
+              unit: r.purchaseUnit,
+              totalCost: r.amount,
+              note: `Purchase — ${description} (${r.transactionDate})`,
+            });
+          } catch {
+            // Never let the inventory side-effect fail the transaction import itself.
+          }
+        }
+
         return { row: r.row, ok: true, message: "Imported." };
       } catch (e: any) {
         return { row: r.row, ok: false, message: e?.message ?? "Failed to import." };
@@ -1798,6 +1822,7 @@ async function bulkImportCommit(rows: BulkImportDraftRow[], transactionType: "in
 
   revalidatePath("/money/transactions");
   revalidatePath("/home");
+  revalidatePath("/more/inventory");
   return { total: toImport.length, imported, failed: toImport.length - imported, results };
 }
 
