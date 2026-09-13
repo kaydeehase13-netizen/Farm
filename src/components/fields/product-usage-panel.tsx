@@ -11,14 +11,22 @@ function money(n: number) {
  * it). This is the "how much 28/thio did I use, and what did it cost"
  * breakdown, as opposed to the category-level $ totals in Expense Breakdown.
  */
-export function ProductUsagePanel({ usage, taxYear }: { usage: FieldProductUsage[]; taxYear: number }) {
+export function ProductUsagePanel({
+  usage,
+  taxYear,
+  title = "Product Usage & Cost",
+}: {
+  usage: FieldProductUsage[];
+  taxYear: number;
+  title?: string;
+}) {
   if (usage.length === 0) return null;
 
   const categories: FieldProductUsage["category"][] = ["Seed", "Fertilizer", "Chemical"];
 
   return (
     <div className="card p-5">
-      <div className="text-sm font-semibold text-forest mb-1">Product Usage &amp; Cost ({taxYear})</div>
+      <div className="text-sm font-semibold text-forest mb-1">{title} ({taxYear})</div>
       <p className="text-xs text-charcoal/50 mb-3">
         Totals from logged/imported field activity. A product shows &quot;not yet allocated&quot; until you use{" "}
         <a href="/fields/allocate-cost" className="text-forest hover:underline">Allocate Product Cost</a> to attach what you actually paid for it.
@@ -41,6 +49,7 @@ export function ProductUsagePanel({ usage, taxYear }: { usage: FieldProductUsage
                       <div className="font-medium">{r.productName}</div>
                       <div className="text-xs text-charcoal/50">
                         {r.totalQuantity.toLocaleString(undefined, { maximumFractionDigits: 2 })} {r.unit ?? ""} used
+                        {r.fieldCount != null && r.fieldCount > 0 && ` · ${r.fieldCount} field${r.fieldCount === 1 ? "" : "s"}`}
                       </div>
                     </div>
                     <div className="text-right">

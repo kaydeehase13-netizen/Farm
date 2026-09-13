@@ -7,6 +7,7 @@ const REPORTS = [
   { title: "Income Summary", desc: "Income by source and category", href: "/money/transactions?type=income" },
   { title: "Expense Summary", desc: "Expenses by category", href: "/money/transactions?type=expense" },
   { title: "Field Profitability", desc: "Income, expense and margin per field", href: "/fields" },
+  { title: "Chemical & Seed Usage", desc: "Every product used farm-wide, quantities and cost", href: "/reports/products" },
   { title: "Cost / Revenue / Margin per Acre", desc: "Per-acre economics by field", href: "/fields" },
   { title: "Custom Job Profitability", desc: "Revenue vs. direct cost by job", href: "/work/jobs" },
   { title: "Outstanding Invoices", desc: "Unpaid & overdue customer balances", href: "/work/invoices" },

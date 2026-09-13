@@ -139,6 +139,8 @@ export interface FieldProductUsage {
   totalQuantity: number;
   unit?: string;
   allocatedCost: number | null;
+  /** Farm-wide usage only: how many distinct fields this product was used on. */
+  fieldCount?: number;
 }
 
 /**
@@ -205,6 +207,68 @@ export async function fieldProductUsage(fieldId: string, taxYear: number): Promi
 
   return Array.from(usage.values())
     .map((u) => ({ ...u, allocatedCost: allocatedCostFor(u.productName) }))
+    .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
+}
+
+/**
+ * The farm-wide twin of fieldProductUsage — every chemical, fertilizer, and
+ * seed used across ALL fields for a tax year, with its total quantity and
+ * (once allocated) total dollar cost, so "what did I use and spend on
+ * chemical/seed this year" doesn't require adding up every field's panel by
+ * hand. Same de-dup-by-signature and description-matching logic as
+ * fieldProductUsage, just farm-wide: cost sums every matching split
+ * regardless of which field it landed on, since together those splits ARE
+ * the farm total for that product.
+ */
+export async function farmProductUsage(taxYear: number): Promise<FieldProductUsage[]> {
+  const [activities, txns] = await Promise.all([
+    listActivities({ year: taxYear }),
+    listTransactions({ taxYear }),
+  ]);
+
+  const seenSignatures = new Set<string>();
+  const usage = new Map<string, { category: FieldProductUsage["category"]; productName: string; totalQuantity: number; unit?: string; fieldNames: Set<string> }>();
+
+  function addLine(category: FieldProductUsage["category"], productName: string | undefined, quantity: number | undefined, unit: string | undefined, a: Activity) {
+    if (!productName || !productName.trim()) return;
+    const sig = [a.fieldId ?? "", a.activityDate, a.activityType, a.acres ?? "", productName.trim().toLowerCase(), quantity ?? "", unit ?? ""].join("|");
+    if (seenSignatures.has(sig)) return;
+    seenSignatures.add(sig);
+    const key = `${category}|${productName.trim().toLowerCase()}`;
+    const existing = usage.get(key);
+    const qty = quantity ?? 0;
+    if (existing) {
+      existing.totalQuantity += qty;
+      if (a.fieldName) existing.fieldNames.add(a.fieldName);
+    } else {
+      usage.set(key, { category, productName: productName.trim(), totalQuantity: qty, unit, fieldNames: new Set(a.fieldName ? [a.fieldName] : []) });
+    }
+  }
+
+  for (const a of activities) {
+    for (const p of a.sprayProducts ?? []) addLine("Chemical", p.productName, p.quantityUsed, p.quantityUnit, a);
+    for (const p of a.fertilizerProducts ?? []) addLine("Fertilizer", p.productName, p.quantityUsed, p.quantityUnit, a);
+    if (a.seedProductName) addLine("Seed", a.seedProductName, a.seedingRate && a.acres ? a.seedingRate * a.acres : undefined, "units", a);
+  }
+
+  function allocatedCostFor(productName: string): number | null {
+    const needle = productName.trim().toLowerCase();
+    let total = 0;
+    let found = false;
+    for (const t of txns) {
+      if (t.transactionType !== "expense") continue;
+      const desc = (t.description ?? "").toLowerCase();
+      if (!desc.startsWith(`${needle} —`) && !desc.startsWith(`${needle} -`)) continue;
+      for (const s of t.splits) {
+        total += s.allocatedAmount;
+        found = true;
+      }
+    }
+    return found ? total : null;
+  }
+
+  return Array.from(usage.values())
+    .map((u) => ({ category: u.category, productName: u.productName, totalQuantity: u.totalQuantity, unit: u.unit, allocatedCost: allocatedCostFor(u.productName), fieldCount: u.fieldNames.size }))
     .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
 }
 

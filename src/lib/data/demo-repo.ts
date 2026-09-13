@@ -486,6 +486,57 @@ export function fieldProductUsage(fieldId: string, taxYear: number) {
     .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
 }
 
+/** Demo-mode mirror of the Supabase farmProductUsage. */
+export function farmProductUsage(taxYear: number) {
+  const activities = listActivities({ year: taxYear });
+  const txns = listTransactions({ taxYear });
+
+  const seenSignatures = new Set<string>();
+  const usage = new Map<string, { category: "Seed" | "Fertilizer" | "Chemical"; productName: string; totalQuantity: number; unit?: string; fieldNames: Set<string> }>();
+
+  function addLine(category: "Seed" | "Fertilizer" | "Chemical", productName: string | undefined, quantity: number | undefined, unit: string | undefined, a: Activity) {
+    if (!productName || !productName.trim()) return;
+    const sig = [a.fieldId ?? "", a.activityDate, a.activityType, a.acres ?? "", productName.trim().toLowerCase(), quantity ?? "", unit ?? ""].join("|");
+    if (seenSignatures.has(sig)) return;
+    seenSignatures.add(sig);
+    const key = `${category}|${productName.trim().toLowerCase()}`;
+    const existing = usage.get(key);
+    const qty = quantity ?? 0;
+    if (existing) {
+      existing.totalQuantity += qty;
+      if (a.fieldName) existing.fieldNames.add(a.fieldName);
+    } else {
+      usage.set(key, { category, productName: productName.trim(), totalQuantity: qty, unit, fieldNames: new Set(a.fieldName ? [a.fieldName] : []) });
+    }
+  }
+
+  for (const a of activities) {
+    for (const p of a.sprayProducts ?? []) addLine("Chemical", p.productName, p.quantityUsed, p.quantityUnit, a);
+    for (const p of a.fertilizerProducts ?? []) addLine("Fertilizer", p.productName, p.quantityUsed, p.quantityUnit, a);
+    if (a.seedProductName) addLine("Seed", a.seedProductName, a.seedingRate && a.acres ? a.seedingRate * a.acres : undefined, "units", a);
+  }
+
+  function allocatedCostFor(productName: string): number | null {
+    const needle = productName.trim().toLowerCase();
+    let total = 0;
+    let found = false;
+    for (const t of txns) {
+      if (t.transactionType !== "expense") continue;
+      const desc = (t.description ?? "").toLowerCase();
+      if (!desc.startsWith(`${needle} —`) && !desc.startsWith(`${needle} -`)) continue;
+      for (const s of t.splits) {
+        total += s.allocatedAmount;
+        found = true;
+      }
+    }
+    return found ? total : null;
+  }
+
+  return Array.from(usage.values())
+    .map((u) => ({ category: u.category, productName: u.productName, totalQuantity: u.totalQuantity, unit: u.unit, allocatedCost: allocatedCostFor(u.productName), fieldCount: u.fieldNames.size }))
+    .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
+}
+
 /** Demo-mode mirror of the Supabase deleteAllActivities. */
 export function deleteAllActivities(): { deletedCount: number } {
   const count = getDB().activities.length;

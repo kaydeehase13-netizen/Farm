@@ -62,6 +62,11 @@ export async function fieldProductUsage(fieldId: string, taxYear: number) {
   return demo.fieldProductUsage(fieldId, taxYear);
 }
 
+export async function farmProductUsage(taxYear: number) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).farmProductUsage(taxYear);
+  return demo.farmProductUsage(taxYear);
+}
+
 export async function getActivity(activityId: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).getActivity(activityId);
   return demo.getActivity(activityId);

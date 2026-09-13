@@ -339,6 +339,11 @@ export async function fieldProductUsageAction(fieldId: string, taxYear: number) 
   return repo.fieldProductUsage(fieldId, taxYear);
 }
 
+/** Powers the farm-wide Chemical & Seed Usage report: every product used across every field this year, quantities and cost totaled up. */
+export async function farmProductUsageAction(taxYear: number) {
+  return repo.farmProductUsage(taxYear);
+}
+
 /** Lets a harvest activity's yield/moisture/acres be corrected after the fact — e.g. a final scale ticket comes in different than the equipment-software estimate. */
 export async function updateActivityYieldAction(activityId: string, patch: { yieldAmount?: number | null; yieldUnit?: string | null; moisturePct?: number | null; acres?: number | null }) {
   await repo.updateActivityYield(activityId, patch);
