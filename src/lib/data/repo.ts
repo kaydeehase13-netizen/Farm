@@ -95,6 +95,11 @@ export async function recordFieldSale(input: {
   return demo.recordFieldSale(input);
 }
 
+export async function recordFieldExpense(input: Parameters<typeof demo.recordFieldExpense>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).recordFieldExpense(input);
+  return demo.recordFieldExpense(input);
+}
+
 export async function adjustInventory(inventoryItemId: string, quantityChange: number, note?: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).adjustInventory(inventoryItemId, quantityChange, note);
   return demo.adjustInventory(inventoryItemId, quantityChange, note);
@@ -387,6 +392,10 @@ export async function createFieldOverheadAllocation(input: Parameters<typeof dem
 export async function deleteFieldOverheadAllocation(id: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteFieldOverheadAllocation(id);
   return demo.deleteFieldOverheadAllocation(id);
+}
+export async function deleteFieldOverheadAllocationsForCategory(taxYear: number, category: Parameters<typeof demo.deleteFieldOverheadAllocationsForCategory>[1]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteFieldOverheadAllocationsForCategory(taxYear, category);
+  return demo.deleteFieldOverheadAllocationsForCategory(taxYear, category);
 }
 export async function allFieldProfitability(taxYear: number) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).allFieldProfitability(taxYear);

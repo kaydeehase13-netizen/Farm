@@ -8,6 +8,7 @@ import { ProductUsagePanel } from "@/components/fields/product-usage-panel";
 import { HarvestActivityEditor } from "@/components/fields/harvest-activity-editor";
 import { FieldOwnershipEditor } from "@/components/fields/field-ownership-editor";
 import { FieldOverheadPanel } from "@/components/fields/field-overhead-panel";
+import { FieldExpenseForm } from "@/components/fields/field-expense-form";
 
 export default async function FieldDetailPage({
   params,
@@ -53,7 +54,7 @@ export default async function FieldDetailPage({
       />
 
       <div className="mb-4 text-sm text-charcoal/60">
-        Ownership: <FieldOwnershipEditor fieldId={fieldId} ownership={field.ownership} />
+        Ownership: <FieldOwnershipEditor fieldId={fieldId} ownership={field.ownership} landownerName={field.landownerName} />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
@@ -86,6 +87,10 @@ export default async function FieldDetailPage({
                 <div className="w-20 text-right font-medium">{money(value)}</div>
               </div>
             ))}
+          </div>
+
+          <div className="mt-4 pt-4 border-t border-[--border-color]">
+            <FieldExpenseForm fieldId={fieldId} landownerName={field.landownerName} farmCategories={farmCategories} />
           </div>
 
           {cropYears.length > 0 && (

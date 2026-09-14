@@ -592,6 +592,34 @@ export function recordFieldSale(input: {
   });
 }
 
+/**
+ * Quick per-field expense entry — most importantly rent, which previously
+ * had no direct way to log against a field (only via New Transaction +
+ * manually splitting). Creates a REAL expense transaction split to this
+ * field, so it flows into Reports, the dashboard, and tax the same as any
+ * other expense — unlike FieldOverheadAllocation, this is a genuine
+ * deductible expense, not a margin-only overlay.
+ */
+export function recordFieldExpense(input: {
+  fieldId: string;
+  amount: number;
+  farmCategoryId: string;
+  transactionDate: string;
+  vendorName?: string;
+  description?: string;
+}) {
+  const field = getField(input.fieldId);
+  const taxYear = Number(input.transactionDate.slice(0, 4)) || FARM.currentTaxYear;
+  createTransaction({
+    farmBusinessId: FARM.id, taxYear, transactionType: "expense", status: "categorized",
+    transactionDate: input.transactionDate, vendorName: input.vendorName,
+    description: input.description || `Rent — ${field?.name ?? "field"}`,
+    amount: input.amount, farmCategoryId: input.farmCategoryId,
+    isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced",
+    splits: [{ targetType: "field", fieldId: input.fieldId, allocationMethod: "manual", allocatedAmount: input.amount, farmCategoryId: input.farmCategoryId }],
+  });
+}
+
 export function createActivity(input: Omit<Activity, "id" | "createdAt">) {
   return mutate((db) => {
     const activity: Activity = { ...input, id: randomUUID(), createdAt: new Date().toISOString() };
@@ -1000,6 +1028,15 @@ export function createFieldOverheadAllocation(input: {
 export function deleteFieldOverheadAllocation(id: string): void {
   mutate((db) => {
     db.fieldOverheadAllocations = db.fieldOverheadAllocations.filter((o) => o.id !== id);
+  });
+}
+
+/** Wipes every allocation for this (taxYear, category) across ALL fields — the "replace, don't stack" step before a fresh bulk allocation run. */
+export function deleteFieldOverheadAllocationsForCategory(taxYear: number, category: import("@/types/domain").FieldOverheadCategory): number {
+  return mutate((db) => {
+    const before = db.fieldOverheadAllocations.length;
+    db.fieldOverheadAllocations = db.fieldOverheadAllocations.filter((o) => !(o.taxYear === taxYear && o.category === category));
+    return before - db.fieldOverheadAllocations.length;
   });
 }
 

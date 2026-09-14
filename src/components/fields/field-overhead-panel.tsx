@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createFieldOverheadAllocationAction, deleteFieldOverheadAllocationAction } from "@/lib/actions";
 import { money } from "@/components/ui/stat-card";
 import type { FieldOverheadAllocation, FieldOverheadCategory } from "@/types/domain";
@@ -29,7 +30,6 @@ export function FieldOverheadPanel({
   allocations: FieldOverheadAllocation[];
 }) {
   const router = useRouter();
-  const [category, setCategory] = useState<FieldOverheadCategory>("insurance");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -45,7 +45,7 @@ export function FieldOverheadPanel({
         await createFieldOverheadAllocationAction({
           fieldId,
           taxYear,
-          category,
+          category: "insurance",
           amount: Number(amount),
           note: note || undefined,
         });
@@ -73,9 +73,9 @@ export function FieldOverheadPanel({
     <div className="card p-5">
       <div className="text-sm font-semibold text-forest mb-1">Overhead Allocated to This Field ({taxYear})</div>
       <p className="text-xs text-charcoal/50 mb-3">
-        Manual figures you enter yourself — insurance, equipment ownership cost, and equipment repairs. These aren&apos;t
-        real expenses or deductions and never change your tax totals; they only reduce this field&apos;s margin above, so
-        it reflects a fair share of overhead the farm carries. Nothing here applies to other fields automatically.
+        Manual figures — insurance, equipment ownership cost, and equipment repairs. These aren&apos;t real expenses or
+        deductions and never change your tax totals; they only reduce this field&apos;s margin above, so it reflects a
+        fair share of overhead the farm carries. Nothing here applies to other fields automatically.
       </p>
 
       {allocations.length > 0 && (
@@ -105,14 +105,11 @@ export function FieldOverheadPanel({
       )}
 
       <form onSubmit={add} className="grid grid-cols-2 gap-2 pt-3 border-t border-[--border-color]">
-        <label className="block col-span-2">
-          <div className="text-[11px] text-charcoal/50 mb-0.5">Category</div>
-          <select className="input text-sm" value={category} onChange={(e) => setCategory(e.target.value as FieldOverheadCategory)}>
-            <option value="insurance">Insurance</option>
-            <option value="equipment_ownership">Equipment — Total Cost</option>
-            <option value="equipment_repairs">Equipment — Repairs &amp; Maintenance</option>
-          </select>
-        </label>
+        <div className="col-span-2 text-[11px] text-charcoal/50">
+          Add insurance here. For equipment (ownership cost or repairs & maintenance), use{" "}
+          <Link prefetch={false} href="/fields/allocate-overhead" className="text-forest hover:underline">Allocate Equipment Cost</Link>{" "}
+          to enter one total and split it across the fields it applies to.
+        </div>
         <label className="block">
           <div className="text-[11px] text-charcoal/50 mb-0.5">Amount ($)</div>
           <input type="number" step="0.01" min="0" className="input text-sm" value={amount} onChange={(e) => setAmount(e.target.value)} required />
@@ -122,7 +119,7 @@ export function FieldOverheadPanel({
           <input className="input text-sm" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. shared w/ 3 fields" />
         </label>
         <button type="submit" disabled={isPending} className="col-span-2 text-xs font-medium bg-forest text-white px-3 py-1.5 rounded-lg hover:bg-forest-light disabled:opacity-40 mt-1">
-          {isPending ? "Saving…" : "Add"}
+          {isPending ? "Saving…" : "Add Insurance"}
         </button>
       </form>
       {error && <p className="text-xs text-status-red mt-2">{error}</p>}

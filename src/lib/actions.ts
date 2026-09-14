@@ -423,6 +423,34 @@ export async function recordFieldSaleAction(input: {
   revalidatePath("/home");
 }
 
+/**
+ * Logs a real expense against one field directly from the field page —
+ * most importantly rent, which previously had no quick way in (only New
+ * Transaction + manually splitting to a field). This is a genuine
+ * deductible expense (flows into Reports/dashboard/tax), unlike the
+ * FieldOverheadPanel entries above, which are margin-only and never touch
+ * real totals.
+ */
+export async function recordFieldExpenseAction(input: {
+  fieldId: string; amount: number; farmCategoryId: string; transactionDate: string; vendorName?: string; note?: string;
+}) {
+  if (!(input.amount > 0)) throw new Error("Enter an amount greater than zero.");
+  await repo.recordFieldExpense({
+    fieldId: input.fieldId,
+    amount: input.amount,
+    farmCategoryId: input.farmCategoryId,
+    transactionDate: input.transactionDate,
+    vendorName: input.vendorName,
+    description: input.note,
+  });
+  revalidatePath("/fields");
+  revalidatePath(`/fields/${input.fieldId}`);
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
+}
+
 export async function createFieldActivity(formData: FormData) {
   const farm = await getFarm();
   const activityType = str(formData, "activityType") as any;
@@ -1700,12 +1728,12 @@ async function findUnallocatedIncomeTransactions(year: number, cropName: string)
   });
 }
 
-/** Existing per-field allocations from a prior allocateGrainSaleAction run for this crop/year — the ones a reallocation replaces. */
-async function findFieldAllocatedIncomeTransactions(year: number, cropName: string) {
+/** Existing per-field allocations from a prior allocateGrainSaleAction/allocateCropInsuranceAction run for this crop/year — the ones a reallocation replaces. Each income kind has its own description prefix, so a grain-sale reallocation never touches a crop-insurance split (and vice versa) on the same crop/year. */
+async function findFieldAllocatedIncomeTransactions(year: number, cropName: string, prefixSuffix: string = "sold, allocated by yield") {
   const needle = cropName.trim().toLowerCase();
   if (!needle) return [];
   const txns = await repo.listTransactions({ taxYear: year, type: "income" });
-  const prefix = `${needle} — sold, allocated by yield`;
+  const prefix = `${needle} — ${prefixSuffix}`;
   return txns.filter((t) => (t.description ?? "").toLowerCase().startsWith(prefix) && t.splits.some((s) => s.targetType === "field"));
 }
 
@@ -1867,6 +1895,133 @@ export async function allocateGrainSaleAction(input: {
 }
 
 /**
+ * The crop-insurance twin of allocateGrainSaleAction, for when a settlement
+ * (an indemnity payment for a shortfall/loss) needs to be entered as real
+ * income and split across fields — same "one total, split across fields"
+ * pattern, but weighted by each field's PLANTED acres for that crop rather
+ * than bushels harvested, since an indemnity payment doesn't correlate with
+ * actual yield the way a grain sale does (a low-yield field can still be the
+ * one that triggered the payment) and acres is the only field-level number
+ * common to every insured field regardless of how the crop actually did.
+ * Uses its own description prefix ("— crop insurance payment, allocated by
+ * acres") so it never collides with an actual grain-sale split on the same
+ * crop/year — each reallocates independently.
+ */
+export async function allocateCropInsuranceAction(input: {
+  year: number;
+  cropName: string;
+  totalAmount: number;
+  farmCategoryId: string;
+  vendorName?: string;
+  transactionDate?: string;
+  excludeFieldIds?: string[];
+}) {
+  const farm = await getFarm();
+  const needle = input.cropName.trim().toLowerCase();
+  if (!needle) throw new Error("Enter a crop name to allocate.");
+  if (!(input.totalAmount > 0)) throw new Error("Enter the total insurance payment amount.");
+  const excluded = new Set(input.excludeFieldIds ?? []);
+
+  const activities = await repo.listActivities({ year: input.year });
+
+  const acresByField = new Map<string, { fieldName: string; acres: number }>();
+  for (const a of activities) {
+    if (a.activityType !== "plant" || !a.fieldId || !a.seedProductName) continue;
+    if (!a.seedProductName.trim().toLowerCase().includes(needle)) continue;
+    if (!a.acres || !(a.acres > 0)) continue;
+    const existing = acresByField.get(a.fieldId);
+    if (existing) existing.acres += a.acres;
+    else acresByField.set(a.fieldId, { fieldName: a.fieldName ?? "Field", acres: a.acres });
+  }
+
+  const fieldsUsage = Array.from(acresByField.entries()).map(([fieldId, v]) => ({ fieldId, fieldName: v.fieldName, usage: v.acres, unit: "ac" }));
+  const includedUsage = fieldsUsage.filter((f) => !excluded.has(f.fieldId));
+  const totalUsage = includedUsage.reduce((s, f) => s + f.usage, 0);
+
+  if (fieldsUsage.length === 0 || totalUsage <= 0) {
+    return {
+      allocated: false as const,
+      message: excluded.size > 0 && fieldsUsage.length > 0
+        ? "Every field is excluded — nothing left to allocate. Include at least one field."
+        : `No logged planting acres in ${input.year} for a crop matching "${input.cropName}". Check that a planting activity is logged for at least one field.`,
+    };
+  }
+
+  const transactionDate = input.transactionDate || `${input.year}-12-31`;
+  const prefixSuffix = "crop insurance payment, allocated by acres";
+
+  // Only replaces a PRIOR crop-insurance split (its own description prefix)
+  // — unlike allocateGrainSaleAction, this deliberately does NOT touch any
+  // unallocated lump income transaction matching the crop name, since that
+  // lump entry could just as easily be an unrelated, not-yet-allocated
+  // grain sale for the same crop/year rather than this insurance payment.
+  const existingFieldSplits = await findFieldAllocatedIncomeTransactions(input.year, input.cropName, prefixSuffix);
+  for (const t of existingFieldSplits) {
+    await repo.deleteTransaction(t.id);
+  }
+
+  fieldsUsage.sort((a, b) => b.usage - a.usage);
+  let allocatedSoFar = 0;
+  const sortedIncluded = fieldsUsage.filter((f) => !excluded.has(f.fieldId));
+  const lastIncludedId = sortedIncluded.length ? sortedIncluded[sortedIncluded.length - 1].fieldId : undefined;
+  const allocations: { fieldId: string; fieldName: string; usage: number; unit?: string; amount: number; excluded: boolean }[] = [];
+  for (const f of fieldsUsage) {
+    if (excluded.has(f.fieldId)) {
+      allocations.push({ fieldId: f.fieldId, fieldName: f.fieldName, usage: f.usage, unit: f.unit, amount: 0, excluded: true });
+      continue;
+    }
+    const isLast = f.fieldId === lastIncludedId;
+    const amount = isLast
+      ? Math.round((input.totalAmount - allocatedSoFar) * 100) / 100
+      : Math.round(input.totalAmount * (f.usage / totalUsage) * 100) / 100;
+    allocatedSoFar += amount;
+    allocations.push({ fieldId: f.fieldId, fieldName: f.fieldName, usage: f.usage, unit: f.unit, amount, excluded: false });
+  }
+
+  for (const a of allocations) {
+    if (a.excluded || a.amount <= 0) continue;
+    await repo.createTransaction({
+      farmBusinessId: farm.id,
+      taxYear: input.year,
+      transactionType: "income",
+      status: "categorized",
+      transactionDate,
+      vendorName: input.vendorName,
+      description: `${input.cropName} — ${prefixSuffix} (${a.fieldName})`,
+      amount: a.amount,
+      productName: input.cropName,
+      farmCategoryId: input.farmCategoryId,
+      isPersonalExcluded: false,
+      cpaFlag: false,
+      syncStatus: "synced",
+      splits: [{
+        targetType: "field", fieldId: a.fieldId, allocationMethod: "quantity",
+        allocatedAmount: a.amount, farmCategoryId: input.farmCategoryId,
+        notes: a.unit ? `${a.usage.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${a.unit} planted` : undefined,
+      }],
+    });
+  }
+
+  revalidatePath("/fields");
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
+
+  return {
+    allocated: true as const,
+    cropName: input.cropName,
+    totalAmount: input.totalAmount,
+    year: input.year,
+    farmCategoryId: input.farmCategoryId,
+    vendorName: input.vendorName,
+    transactionDate,
+    replacedCount: existingFieldSplits.length,
+    allocations,
+  };
+}
+
+/**
  * Records a manual, non-tax overhead figure (insurance, equipment ownership
  * cost, or equipment repairs/maintenance) against one field for one year, so
  * that field's displayed margin can reflect a fair share of overhead the
@@ -1892,6 +2047,64 @@ export async function deleteFieldOverheadAllocationAction(id: string, fieldId: s
   await repo.deleteFieldOverheadAllocation(id);
   revalidatePath("/fields");
   revalidatePath(`/fields/${fieldId}`);
+}
+
+/**
+ * Enter ONE total (equipment ownership cost, or repairs & maintenance) and
+ * split it across whichever fields it actually applies to — the same
+ * "one number, pick the fields" pattern as Allocate Grain Sale by Field
+ * Yield, since equipment isn't naturally usage-tracked per field the way
+ * bushels are. Split proportional to each selected field's acres (the best
+ * available proxy for equipment usage) with the last field absorbing the
+ * rounding remainder. Re-running this for the same category/year replaces
+ * every prior allocation in that category/year — including on fields no
+ * longer selected — rather than stacking on top of them.
+ */
+export async function allocateFieldOverheadAction(input: {
+  taxYear: number;
+  category: "equipment_ownership" | "equipment_repairs";
+  totalAmount: number;
+  fieldIds: string[];
+  note?: string;
+}) {
+  if (!(input.totalAmount > 0)) throw new Error("Enter a total amount greater than zero.");
+  if (input.fieldIds.length === 0) throw new Error("Select at least one field this applies to.");
+
+  const allFields = await repo.listFields();
+  const selected = allFields
+    .filter((f) => input.fieldIds.includes(f.id))
+    .map((f) => ({ fieldId: f.id, fieldName: f.name, acres: f.acres || 0 }));
+  const totalAcres = selected.reduce((s, f) => s + f.acres, 0);
+  if (!(totalAcres > 0)) throw new Error("The selected fields don't have any acres recorded to split this by.");
+
+  const replacedCount = await repo.deleteFieldOverheadAllocationsForCategory(input.taxYear, input.category);
+
+  selected.sort((a, b) => b.acres - a.acres);
+  const lastId = selected[selected.length - 1].fieldId;
+  let allocatedSoFar = 0;
+  const allocations: { fieldId: string; fieldName: string; acres: number; amount: number }[] = [];
+  for (const f of selected) {
+    const isLast = f.fieldId === lastId;
+    const amount = isLast
+      ? Math.round((input.totalAmount - allocatedSoFar) * 100) / 100
+      : Math.round(input.totalAmount * (f.acres / totalAcres) * 100) / 100;
+    allocatedSoFar += amount;
+    allocations.push({ fieldId: f.fieldId, fieldName: f.fieldName, acres: f.acres, amount });
+    if (amount > 0) {
+      await repo.createFieldOverheadAllocation({
+        fieldId: f.fieldId,
+        taxYear: input.taxYear,
+        category: input.category,
+        amount,
+        note: input.note,
+      });
+    }
+  }
+
+  revalidatePath("/fields");
+  for (const f of selected) revalidatePath(`/fields/${f.fieldId}`);
+
+  return { allocated: true as const, taxYear: input.taxYear, category: input.category, totalAmount: input.totalAmount, replacedCount, allocations };
 }
 
 // -----------------------------------------------------------------------

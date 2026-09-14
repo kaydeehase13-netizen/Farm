@@ -15,13 +15,15 @@ const OWNERSHIP_OPTIONS: { value: FieldOwnership; label: string }[] = [
 /**
  * Every field defaults to "owned" at creation (both the New Field form and
  * bulk/CSV import) with no way to correct it afterward — this is that fix.
- * Only ownership is editable here; other field details stay on the New
- * Field-style form elsewhere.
+ * Also edits landowner name here, since it pairs naturally with a rented
+ * field (and feeds the "Paid To" default on the rent-payment form below).
+ * Other field details stay on the New Field-style form elsewhere.
  */
-export function FieldOwnershipEditor({ fieldId, ownership }: { fieldId: string; ownership: FieldOwnership }) {
+export function FieldOwnershipEditor({ fieldId, ownership, landownerName }: { fieldId: string; ownership: FieldOwnership; landownerName?: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState<FieldOwnership>(ownership);
+  const [landowner, setLandowner] = useState(landownerName ?? "");
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -31,6 +33,7 @@ export function FieldOwnershipEditor({ fieldId, ownership }: { fieldId: string; 
       try {
         const fd = new FormData();
         fd.set("ownership", value);
+        fd.set("landownerName", landowner);
         await updateFieldAction(fieldId, fd);
         setOpen(false);
         router.refresh();
@@ -45,20 +48,21 @@ export function FieldOwnershipEditor({ fieldId, ownership }: { fieldId: string; 
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)} className="text-xs font-medium text-forest hover:underline">
-        {currentLabel} — edit
+        {currentLabel}{landownerName ? ` — ${landownerName}` : ""} — edit
       </button>
     );
   }
 
   return (
-    <span className="inline-flex items-center gap-2">
+    <span className="inline-flex items-center gap-2 flex-wrap">
       <select className="input text-xs py-1" value={value} onChange={(e) => setValue(e.target.value as FieldOwnership)}>
         {OWNERSHIP_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
+      <input className="input text-xs py-1" placeholder="Landowner name" value={landowner} onChange={(e) => setLandowner(e.target.value)} />
       <button type="button" onClick={save} disabled={isPending} className="text-xs font-medium bg-forest text-white px-2 py-1 rounded-lg hover:bg-forest-light disabled:opacity-40">
         {isPending ? "Saving…" : "Save"}
       </button>
-      <button type="button" onClick={() => { setOpen(false); setValue(ownership); }} className="text-xs text-charcoal/45 hover:underline">Cancel</button>
+      <button type="button" onClick={() => { setOpen(false); setValue(ownership); setLandowner(landownerName ?? ""); }} className="text-xs text-charcoal/45 hover:underline">Cancel</button>
       {error && <span className="text-xs text-status-red">{error}</span>}
     </span>
   );

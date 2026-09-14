@@ -1289,6 +1289,35 @@ export async function recordFieldSale(input: {
   });
 }
 
+/**
+ * Quick per-field expense entry — most importantly rent, which previously
+ * had no direct way to log against a field (only via New Transaction +
+ * manually splitting). Creates a REAL expense transaction split to this
+ * field, so it flows into Reports, the dashboard, and tax like any other
+ * expense — unlike field_overhead_allocation, this is a genuine deductible
+ * expense, not a margin-only overlay.
+ */
+export async function recordFieldExpense(input: {
+  fieldId: string;
+  amount: number;
+  farmCategoryId: string;
+  transactionDate: string;
+  vendorName?: string;
+  description?: string;
+}): Promise<void> {
+  const { farm } = await ctx();
+  const field = await getField(input.fieldId);
+  const taxYear = Number(input.transactionDate.slice(0, 4)) || farm.currentTaxYear;
+  await createTransaction({
+    farmBusinessId: farm.id, taxYear, transactionType: "expense", status: "categorized",
+    transactionDate: input.transactionDate, vendorName: input.vendorName,
+    description: input.description || `Rent — ${field?.name ?? "field"}`,
+    amount: input.amount, farmCategoryId: input.farmCategoryId,
+    isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced",
+    splits: [{ targetType: "field", fieldId: input.fieldId, allocationMethod: "manual", allocatedAmount: input.amount, farmCategoryId: input.farmCategoryId }],
+  });
+}
+
 export async function listCustomers(): Promise<Customer[]> {
   const { supabase, farm } = await ctx();
   const { data } = await supabase.from("customer").select("*").eq("farm_business_id", farm.id).is("archived_at", null).order("name");
@@ -1917,6 +1946,20 @@ export async function deleteFieldOverheadAllocation(id: string): Promise<void> {
   const { supabase, farm } = await ctx();
   const { error } = await supabase.from("field_overhead_allocation").delete().eq("id", id).eq("farm_business_id", farm.id);
   if (error) throw new Error(error.message);
+}
+
+/** Wipes every allocation for this (taxYear, category) across ALL fields — the "replace, don't stack" step before a fresh bulk allocation run. */
+export async function deleteFieldOverheadAllocationsForCategory(taxYear: number, category: FieldOverheadCategory): Promise<number> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase
+    .from("field_overhead_allocation")
+    .delete()
+    .eq("farm_business_id", farm.id)
+    .eq("tax_year", taxYear)
+    .eq("category", category)
+    .select("id");
+  if (error) throw new Error(error.message);
+  return (data ?? []).length;
 }
 
 function overheadMapForFields(rows: FieldOverheadAllocation[]): Map<string, { insurance: number; equipment_ownership: number; equipment_repairs: number }> {

@@ -2,9 +2,10 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { allocateGrainSaleAction, findUnallocatedGrainSaleAction } from "@/lib/actions";
+import { allocateGrainSaleAction, allocateCropInsuranceAction, findUnallocatedGrainSaleAction } from "@/lib/actions";
 
 type Result = Awaited<ReturnType<typeof allocateGrainSaleAction>>;
+type IncomeType = "grain_sale" | "crop_insurance";
 
 /**
  * The income-side twin of AllocateCostForm — same shape (one total, split
@@ -24,6 +25,7 @@ export function AllocateIncomeForm({
   farmCategories: { id: string; name: string }[];
 }) {
   const [year, setYear] = useState(defaultYear);
+  const [incomeType, setIncomeType] = useState<IncomeType>("grain_sale");
   const [cropName, setCropName] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
   const [farmCategoryId, setFarmCategoryId] = useState("");
@@ -37,12 +39,13 @@ export function AllocateIncomeForm({
   const [amountVerified, setAmountVerified] = useState(true);
   const [excludedFieldIds, setExcludedFieldIds] = useState<Set<string>>(new Set());
   const [isReallocating, setIsReallocating] = useState(false);
+  const [resultIncomeType, setResultIncomeType] = useState<IncomeType>("grain_sale");
 
   const yearOptions = years.includes(year) ? years : [...years, year].sort((a, b) => b - a);
 
   function lookup(nextCropName: string, nextYear: number) {
     const name = nextCropName.trim();
-    if (!name) { setFound(null); return; }
+    if (!name || incomeType !== "grain_sale") { setFound(null); return; }
     startLookup(async () => {
       const match = await findUnallocatedGrainSaleAction({ year: nextYear, cropName: name });
       setFound(match);
@@ -65,13 +68,15 @@ export function AllocateIncomeForm({
     setResult(null);
     setExcludedFieldIds(new Set());
     try {
-      const res = await allocateGrainSaleAction({
+      const action = incomeType === "grain_sale" ? allocateGrainSaleAction : allocateCropInsuranceAction;
+      const res = await action({
         year, cropName, totalAmount: Number(totalAmount), farmCategoryId,
         vendorName: vendorName || undefined, transactionDate: transactionDate || undefined,
       });
       setResult(res);
+      setResultIncomeType(incomeType);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong allocating this sale.");
+      setError(e instanceof Error ? e.message : "Something went wrong allocating this.");
     } finally {
       setSaving(false);
     }
@@ -90,14 +95,15 @@ export function AllocateIncomeForm({
     setIsReallocating(true);
     setError(null);
     try {
-      const res = await allocateGrainSaleAction({
+      const action = resultIncomeType === "grain_sale" ? allocateGrainSaleAction : allocateCropInsuranceAction;
+      const res = await action({
         year: result.year, cropName: result.cropName, totalAmount: result.totalAmount,
         farmCategoryId: result.farmCategoryId, vendorName: result.vendorName, transactionDate: result.transactionDate,
         excludeFieldIds: Array.from(excludedFieldIds),
       });
       setResult(res);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong reallocating this sale.");
+      setError(e instanceof Error ? e.message : "Something went wrong reallocating this.");
     } finally {
       setIsReallocating(false);
     }
@@ -106,19 +112,24 @@ export function AllocateIncomeForm({
   if (result?.allocated) {
     const includedUsage = result.allocations.filter((a) => !a.excluded);
     const totalUsage = includedUsage.reduce((s, a) => s + a.usage, 0);
+    const isInsurance = resultIncomeType === "crop_insurance";
+    const usageWord = isInsurance ? "planted" : "harvested";
+    const usagePctWord = isInsurance ? "acres" : "bushels";
     return (
       <div className="card p-6 space-y-4">
         <div className="text-3xl">✅</div>
         <div className="font-medium text-forest">
-          Allocated {money(result.totalAmount)} of {result.cropName} sales across {includedUsage.length} field{includedUsage.length === 1 ? "" : "s"} for {result.year}
+          Allocated {money(result.totalAmount)} of {result.cropName} {isInsurance ? "crop insurance payment" : "sales"} across {includedUsage.length} field{includedUsage.length === 1 ? "" : "s"} for {result.year}
         </div>
         {result.replacedCount > 0 && (
           <p className="text-xs text-charcoal/50">
-            Replaced {result.replacedCount} existing income entr{result.replacedCount === 1 ? "y" : "ies"} already on file for {result.cropName} with this per-field split, so it isn&apos;t counted twice.
+            Replaced {result.replacedCount} existing {isInsurance ? "crop insurance " : ""}income entr{result.replacedCount === 1 ? "y" : "ies"} already on file for {result.cropName} with this per-field split, so it isn&apos;t counted twice.
           </p>
         )}
         <p className="text-xs text-charcoal/45">
-          Uncheck a field if its grain wasn&apos;t part of this sale (stored separately, sold to someone else, etc.) — it drops to $0 and the {money(result.totalAmount)} you were paid gets reallocated across whatever&apos;s still checked, in proportion to bushels harvested.
+          {isInsurance
+            ? <>Uncheck a field if it wasn&apos;t part of this payment — it drops to $0 and the {money(result.totalAmount)} gets reallocated across whatever&apos;s still checked, in proportion to acres planted.</>
+            : <>Uncheck a field if its grain wasn&apos;t part of this sale (stored separately, sold to someone else, etc.) — it drops to $0 and the {money(result.totalAmount)} you were paid gets reallocated across whatever&apos;s still checked, in proportion to bushels harvested.</>}
         </p>
         <div className="space-y-1.5">
           {result.allocations.map((a) => {
@@ -130,9 +141,9 @@ export function AllocateIncomeForm({
                   <div>
                     <div className={`font-medium ${!checked ? "line-through text-charcoal/40" : ""}`}>{a.fieldName}</div>
                     <div className="text-xs text-charcoal/50">
-                      {a.usage.toLocaleString(undefined, { maximumFractionDigits: 1 })} {a.unit ?? "bu"} harvested
-                      {checked && totalUsage > 0 && ` · ${Math.round((a.usage / totalUsage) * 100)}% of bushels`}
-                      {!checked && " · excluded — not part of this sale"}
+                      {a.usage.toLocaleString(undefined, { maximumFractionDigits: 1 })} {a.unit ?? "bu"} {usageWord}
+                      {checked && totalUsage > 0 && ` · ${Math.round((a.usage / totalUsage) * 100)}% of ${usagePctWord}`}
+                      {!checked && " · excluded — not part of this"}
                     </div>
                   </div>
                 </div>
@@ -167,6 +178,24 @@ export function AllocateIncomeForm({
         <p className="text-sm text-status-amber bg-status-amber/10 border border-status-amber/30 rounded-lg p-3">{result.message}</p>
       )}
       {error && <p className="text-sm text-status-red">{error}</p>}
+
+      <label className="block">
+        <div className="text-sm font-medium text-charcoal/70 mb-1">Income Type</div>
+        <select
+          className="input"
+          value={incomeType}
+          onChange={(e) => {
+            const t = e.target.value as IncomeType;
+            setIncomeType(t);
+            setFound(null);
+            setAmountVerified(true);
+            if (t === "grain_sale") lookup(cropName, year);
+          }}
+        >
+          <option value="grain_sale">Grain Sale (split by bushels harvested)</option>
+          <option value="crop_insurance">Crop Insurance Payment (split by acres planted)</option>
+        </select>
+      </label>
 
       <label className="block">
         <div className="text-sm font-medium text-charcoal/70 mb-1">Tax Year</div>
@@ -209,7 +238,8 @@ export function AllocateIncomeForm({
 
       <label className="block">
         <div className="text-sm font-medium text-charcoal/70 mb-1">
-          Total Amount Sold For{!amountVerified && <span className="text-status-amber font-normal"> — auto-filled, please verify</span>}
+          {incomeType === "grain_sale" ? "Total Amount Sold For" : "Total Insurance Payment"}
+          {!amountVerified && <span className="text-status-amber font-normal"> — auto-filled, please verify</span>}
         </div>
         <input
           type="number" step="0.01" min="0"
@@ -232,21 +262,23 @@ export function AllocateIncomeForm({
       </label>
 
       <label className="block">
-        <div className="text-sm font-medium text-charcoal/70 mb-1">Buyer / Elevator (optional)</div>
-        <input className="input" value={vendorName} onChange={(e) => setVendorName(e.target.value)} placeholder="e.g. Hutchinson Grain Elevator" />
+        <div className="text-sm font-medium text-charcoal/70 mb-1">{incomeType === "grain_sale" ? "Buyer / Elevator (optional)" : "Insurance Company (optional)"}</div>
+        <input className="input" value={vendorName} onChange={(e) => setVendorName(e.target.value)} placeholder={incomeType === "grain_sale" ? "e.g. Hutchinson Grain Elevator" : "e.g. Rain and Hail Insurance"} />
       </label>
 
       <label className="block">
-        <div className="text-sm font-medium text-charcoal/70 mb-1">Sale Date</div>
+        <div className="text-sm font-medium text-charcoal/70 mb-1">{incomeType === "grain_sale" ? "Sale Date" : "Payment Date"}</div>
         <input type="date" className="input" value={transactionDate} onChange={(e) => setTransactionDate(e.target.value)} />
         <p className="text-xs text-charcoal/45 mt-1">Defaults to year-end for the tax year selected above — change it if you&apos;d rather date it to the settlement sheet.</p>
       </label>
 
       <button disabled={saving} className="bg-forest text-white px-5 py-2.5 rounded-lg font-medium w-full hover:bg-forest-light disabled:opacity-50">
-        {saving ? "Allocating…" : "Allocate Sale Across Fields"}
+        {saving ? "Allocating…" : incomeType === "grain_sale" ? "Allocate Sale Across Fields" : "Allocate Payment Across Fields"}
       </button>
       <p className="text-xs text-charcoal/45">
-        This creates one income entry per field, split proportionally to how many bushels each field harvested (yield × acres, from its logged/imported activity) — nothing is guessed beyond what&apos;s already in your records.
+        {incomeType === "grain_sale"
+          ? <>This creates one income entry per field, split proportionally to how many bushels each field harvested (yield × acres, from its logged/imported activity) — nothing is guessed beyond what&apos;s already in your records.</>
+          : <>This creates one income entry per field, split proportionally to how many acres each field planted of this crop (from its logged/imported planting activity) — acres rather than yield, since an indemnity payment doesn&apos;t track actual bushels the way a sale does.</>}
       </p>
     </form>
   );
