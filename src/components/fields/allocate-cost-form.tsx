@@ -6,13 +6,16 @@ import { allocateProductCostAction, findUnallocatedProductCostAction } from "@/l
 
 type Result = Awaited<ReturnType<typeof allocateProductCostAction>>;
 
+type ManualEntry = { fieldId: string; quantity: string; unit: string };
+
 export function AllocateCostForm({
-  years, defaultYear, productNames, farmCategories,
+  years, defaultYear, productNames, farmCategories, fields,
 }: {
   years: number[];
   defaultYear: number;
   productNames: string[];
   farmCategories: { id: string; name: string }[];
+  fields: { id: string; name: string }[];
 }) {
   const [year, setYear] = useState(defaultYear);
   const [productName, setProductName] = useState("");
@@ -25,6 +28,28 @@ export function AllocateCostForm({
   const [result, setResult] = useState<Result | null>(null);
   const [found, setFound] = useState<Awaited<ReturnType<typeof findUnallocatedProductCostAction>> | null>(null);
   const [isLookingUp, startLookup] = useTransition();
+  // Fields AgFiniti never covered — manually typed quantities that get
+  // folded into the same usage pool as real logged activity, so a field
+  // missing from AgFiniti (or a farm input like feed that was never
+  // tracked as a field activity to begin with) can still share in the
+  // proportional split.
+  const [manualEntries, setManualEntries] = useState<ManualEntry[]>([]);
+  const [showManual, setShowManual] = useState(false);
+
+  function addManualEntry() {
+    setManualEntries((prev) => [...prev, { fieldId: fields[0]?.id ?? "", quantity: "", unit: "" }]);
+  }
+  function updateManualEntry(index: number, patch: Partial<ManualEntry>) {
+    setManualEntries((prev) => prev.map((e, i) => (i === index ? { ...e, ...patch } : e)));
+  }
+  function removeManualEntry(index: number) {
+    setManualEntries((prev) => prev.filter((_, i) => i !== index));
+  }
+  function manualUsagePayload() {
+    return manualEntries
+      .filter((e) => e.fieldId && Number(e.quantity) > 0)
+      .map((e) => ({ fieldId: e.fieldId, quantity: Number(e.quantity), unit: e.unit || undefined }));
+  }
   // True while Total Amount Paid still holds the auto-filled figure,
   // untouched by hand — cleared as soon as the field is edited. A prior bug
   // once wrote inflated per-field amounts to the database, and the
@@ -69,6 +94,7 @@ export function AllocateCostForm({
       const res = await allocateProductCostAction({
         year, productName, totalAmount: Number(totalAmount), farmCategoryId,
         vendorName: vendorName || undefined, transactionDate: transactionDate || undefined,
+        manualUsage: manualUsagePayload(),
       });
       setResult(res);
     } catch (e) {
@@ -101,6 +127,7 @@ export function AllocateCostForm({
         year: result.year, productName: result.productName, totalAmount: result.totalAmount,
         farmCategoryId: result.farmCategoryId, vendorName: result.vendorName, transactionDate: result.transactionDate,
         excludeFieldIds: Array.from(excludedFieldIds),
+        manualUsage: manualUsagePayload(),
       });
       setResult(res);
     } catch (e) {
@@ -163,7 +190,7 @@ export function AllocateCostForm({
           </button>
           <Link prefetch={false} href="/fields" className="bg-wheat text-forest font-semibold px-5 py-2.5 rounded-lg text-center">Back to Fields</Link>
           <button
-            onClick={() => { setResult(null); setProductName(""); setTotalAmount(""); setExcludedFieldIds(new Set()); }}
+            onClick={() => { setResult(null); setProductName(""); setTotalAmount(""); setExcludedFieldIds(new Set()); setManualEntries([]); setShowManual(false); }}
             className="card px-5 py-2.5 text-sm font-medium hover:border-forest"
           >
             Allocate Another
@@ -251,6 +278,33 @@ export function AllocateCostForm({
         <input type="date" className="input" value={transactionDate} onChange={(e) => setTransactionDate(e.target.value)} />
         <p className="text-xs text-charcoal/45 mt-1">Defaults to year-end for the tax year selected above — change it if you'd rather date it to the invoice.</p>
       </label>
+
+      <div className="pt-2 border-t border-[--border-color]">
+        {!showManual && (
+          <button type="button" onClick={() => { setShowManual(true); if (manualEntries.length === 0) addManualEntry(); }} className="text-xs font-medium text-forest hover:underline">
+            + Add a field AgFiniti didn&apos;t cover
+          </button>
+        )}
+        {showManual && (
+          <div className="space-y-2">
+            <div className="text-sm font-medium text-charcoal/70">Fields Not Tracked by AgFiniti</div>
+            <p className="text-xs text-charcoal/45">
+              Type in the quantity used on each field yourself (seed, feed, anything else with no logged activity) — it&apos;s folded into the same pool as real logged usage above and shares in the split the same way. Use the same unit as your receipt (bags, lbs, tons, etc.).
+            </p>
+            {manualEntries.map((entry, i) => (
+              <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center">
+                <select className="input text-sm" value={entry.fieldId} onChange={(e) => updateManualEntry(i, { fieldId: e.target.value })}>
+                  {fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+                <input type="number" step="0.01" min="0" className="input text-sm w-24" placeholder="Qty" value={entry.quantity} onChange={(e) => updateManualEntry(i, { quantity: e.target.value })} />
+                <input className="input text-sm w-20" placeholder="unit" value={entry.unit} onChange={(e) => updateManualEntry(i, { unit: e.target.value })} />
+                <button type="button" onClick={() => removeManualEntry(i)} className="text-xs text-status-red hover:underline">Remove</button>
+              </div>
+            ))}
+            <button type="button" onClick={addManualEntry} className="text-xs font-medium text-forest hover:underline">+ Add another field</button>
+          </div>
+        )}
+      </div>
 
       <button disabled={saving} className="bg-forest text-white px-5 py-2.5 rounded-lg font-medium w-full hover:bg-forest-light disabled:opacity-50">
         {saving ? "Allocating…" : "Allocate Cost Across Fields"}

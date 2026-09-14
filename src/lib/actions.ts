@@ -1574,6 +1574,15 @@ export async function allocateProductCostAction(input: {
   transactionDate?: string;
   /** Fields to leave out of the split entirely (e.g. free/carryover seed) — they get $0 instead of their usage share. */
   excludeFieldIds?: string[];
+  /**
+   * Hand-entered quantities for fields with no logged/imported activity to
+   * pull from — e.g. a field AgFiniti never covered, where seed (or feed,
+   * or anything else) still needs to be accounted for. These are folded
+   * into the exact same usage pool as real logged activity and share in
+   * the proportional split the same way; a field can appear here even if
+   * it also has real logged usage, in which case the two add together.
+   */
+  manualUsage?: { fieldId: string; quantity: number; unit?: string }[];
 }) {
   const farm = await getFarm();
   const needle = input.productName.trim().toLowerCase();
@@ -1581,7 +1590,11 @@ export async function allocateProductCostAction(input: {
   if (!(input.totalAmount > 0)) throw new Error("Enter the total amount you paid.");
   const excluded = new Set(input.excludeFieldIds ?? []);
 
-  const activities = await repo.listActivities({ year: input.year });
+  const [activities, allFields] = await Promise.all([
+    repo.listActivities({ year: input.year }),
+    repo.listFields(),
+  ]);
+  const fieldNameById = new Map(allFields.map((f) => [f.id, f.name]));
 
   const usageByField = new Map<string, { fieldName: string; usage: number; unit?: string }>();
   let unmatchedUnits = false;
@@ -1611,6 +1624,10 @@ export async function allocateProductCostAction(input: {
     }
   }
 
+  for (const m of input.manualUsage ?? []) {
+    addUsage(m.fieldId, fieldNameById.get(m.fieldId), m.quantity, m.unit);
+  }
+
   const fieldsUsage = Array.from(usageByField.entries()).map(([fieldId, v]) => ({ fieldId, ...v }));
   const includedUsage = fieldsUsage.filter((f) => !excluded.has(f.fieldId));
   const totalUsage = includedUsage.reduce((s, f) => s + f.usage, 0);
@@ -1620,7 +1637,7 @@ export async function allocateProductCostAction(input: {
       allocated: false as const,
       message: excluded.size > 0 && fieldsUsage.length > 0
         ? "Every field with logged usage is excluded — nothing left to allocate. Include at least one field."
-        : `No logged activity in ${input.year} used a product matching "${input.productName}". Check the spelling against what's on the field activity history, or log/import the activity first.`,
+        : `No logged activity in ${input.year} used a product matching "${input.productName}", and no manual quantities were added below either. Check the spelling against the field activity history, log/import the activity first, or add the missing field(s) manually.`,
     };
   }
 
