@@ -43,16 +43,21 @@ export function AllocateIncomeForm({
 
   const yearOptions = years.includes(year) ? years : [...years, year].sort((a, b) => b - a);
 
-  function lookup(nextCropName: string, nextYear: number) {
+  // Only look up an existing unallocated entry once BOTH the crop and the
+  // payment label are filled in — the label is what keeps this scoped to
+  // one specific payment (say, the "FCE" wheat check) instead of summing
+  // every unsplit income transaction for that crop across every label
+  // (FCE, Kanza, Insurance, ...) into one misleading suggested total.
+  function lookup(nextCropName: string, nextYear: number, nextLabel: string) {
     const name = nextCropName.trim();
-    if (!name || incomeType !== "grain_sale") { setFound(null); return; }
+    const label = nextLabel.trim();
+    if (!name || !label || incomeType !== "grain_sale") { setFound(null); return; }
     startLookup(async () => {
-      const match = await findUnallocatedGrainSaleAction({ year: nextYear, cropName: name });
+      const match = await findUnallocatedGrainSaleAction({ year: nextYear, cropName: name, label });
       setFound(match);
       if (match) {
         setTotalAmount(String(match.totalAmount));
         setAmountVerified(false);
-        if (match.vendorName) setVendorName(match.vendorName);
         if (match.transactionDate) setTransactionDate(match.transactionDate);
         if (match.farmCategoryId) setFarmCategoryId(match.farmCategoryId);
       } else {
@@ -71,7 +76,7 @@ export function AllocateIncomeForm({
       const action = incomeType === "grain_sale" ? allocateGrainSaleAction : allocateCropInsuranceAction;
       const res = await action({
         year, cropName, totalAmount: Number(totalAmount), farmCategoryId,
-        vendorName: vendorName || undefined, transactionDate: transactionDate || undefined,
+        vendorName, transactionDate: transactionDate || undefined,
       });
       setResult(res);
       setResultIncomeType(incomeType);
@@ -162,7 +167,7 @@ export function AllocateIncomeForm({
           </button>
           <Link prefetch={false} href="/fields" className="bg-wheat text-forest font-semibold px-5 py-2.5 rounded-lg text-center">Back to Fields</Link>
           <button
-            onClick={() => { setResult(null); setCropName(""); setTotalAmount(""); setExcludedFieldIds(new Set()); }}
+            onClick={() => { setResult(null); setCropName(""); setTotalAmount(""); setVendorName(""); setFound(null); setExcludedFieldIds(new Set()); }}
             className="card px-5 py-2.5 text-sm font-medium hover:border-forest"
           >
             Allocate Another
@@ -189,7 +194,7 @@ export function AllocateIncomeForm({
             setIncomeType(t);
             setFound(null);
             setAmountVerified(true);
-            if (t === "grain_sale") lookup(cropName, year);
+            if (t === "grain_sale") lookup(cropName, year, vendorName);
           }}
         >
           <option value="grain_sale">Grain Sale (split by bushels harvested)</option>
@@ -199,9 +204,28 @@ export function AllocateIncomeForm({
 
       <label className="block">
         <div className="text-sm font-medium text-charcoal/70 mb-1">Tax Year</div>
-        <select className="input" value={year} onChange={(e) => { const y = Number(e.target.value); setYear(y); lookup(cropName, y); }}>
+        <select className="input" value={year} onChange={(e) => { const y = Number(e.target.value); setYear(y); lookup(cropName, y, vendorName); }}>
           {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
+        <p className="text-xs text-charcoal/45 mt-1">
+          For a winter crop (wheat) planted the fall before, use the year it&apos;s harvested/sold — planting activities from the year before are checked automatically.
+        </p>
+      </label>
+
+      <label className="block">
+        <div className="text-sm font-medium text-charcoal/70 mb-1">
+          Payment Label {incomeType === "grain_sale" ? "(buyer/elevator)" : "(insurer, or just \"Insurance\")"}
+        </div>
+        <input
+          className="input" value={vendorName}
+          onChange={(e) => setVendorName(e.target.value)}
+          onBlur={(e) => lookup(cropName, year, e.target.value)}
+          placeholder={incomeType === "grain_sale" ? "e.g. FCE, Kanza Co-op" : "e.g. Insurance, Rain and Hail"}
+          required
+        />
+        <p className="text-xs text-charcoal/45 mt-1">
+          What this specific payment is — so it can be tracked and reallocated on its own without touching other payments for the same crop/year (another elevator check, an insurance settlement, etc.).
+        </p>
       </label>
 
       <label className="block">
@@ -209,7 +233,7 @@ export function AllocateIncomeForm({
         <input
           list="crop-names" className="input" value={cropName}
           onChange={(e) => setCropName(e.target.value)}
-          onBlur={(e) => lookup(e.target.value, year)}
+          onBlur={(e) => lookup(e.target.value, year, vendorName)}
           placeholder="e.g. Corn, Soybeans, Wheat"
           required
         />
@@ -224,14 +248,14 @@ export function AllocateIncomeForm({
       {isLookingUp && <p className="text-xs text-charcoal/45">Checking for an existing entry…</p>}
       {!isLookingUp && found && found.alreadyAllocated && (
         <p className="text-xs text-status-amber bg-status-amber/10 border border-status-amber/30 rounded-lg p-3">
-          ⚠️ &quot;{cropName}&quot; in {year} is already allocated across {found.count} field{found.count === 1 ? "" : "s"}, adding up to {money(found.totalAmount)} — pre-filled below, but{" "}
-          <strong>check that number against your settlement sheet before allocating.</strong> It&apos;s a sum of whatever&apos;s already on file for this crop, so if an earlier allocation was ever wrong, this pulls the wrong total forward too.
+          ⚠️ &quot;{cropName}&quot; — &quot;{vendorName}&quot; in {year} is already allocated across {found.count} field{found.count === 1 ? "" : "s"}, adding up to {money(found.totalAmount)} — pre-filled below, but{" "}
+          <strong>check that number against your settlement sheet before allocating.</strong> It&apos;s a sum of whatever&apos;s already on file for this crop/label, so if an earlier allocation was ever wrong, this pulls the wrong total forward too.
           You don&apos;t need to remove anything first — just fix the amount below if it&apos;s off, then allocate; it&apos;ll replace the existing split either way.
         </p>
       )}
       {!isLookingUp && found && !found.alreadyAllocated && (
         <p className="text-xs text-status-amber bg-status-amber/10 border border-status-amber/30 rounded-lg p-3">
-          ⚠️ Found {found.count} existing income entr{found.count === 1 ? "y" : "ies"} already entered for &quot;{cropName}&quot; in {year}, totaling {money(found.totalAmount)} — pre-filled below, but{" "}
+          ⚠️ Found {found.count} existing income entr{found.count === 1 ? "y" : "ies"} already entered for &quot;{cropName}&quot; — &quot;{vendorName}&quot; in {year}, totaling {money(found.totalAmount)} — pre-filled below, but{" "}
           <strong>double-check it against your settlement sheet.</strong> Allocating will replace {found.count === 1 ? "it" : "them"} with the per-field split instead of adding a new income entry on top.
         </p>
       )}
@@ -259,11 +283,6 @@ export function AllocateIncomeForm({
           <option value="" disabled>Choose a category…</option>
           {farmCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-      </label>
-
-      <label className="block">
-        <div className="text-sm font-medium text-charcoal/70 mb-1">{incomeType === "grain_sale" ? "Buyer / Elevator (optional)" : "Insurance Company (optional)"}</div>
-        <input className="input" value={vendorName} onChange={(e) => setVendorName(e.target.value)} placeholder={incomeType === "grain_sale" ? "e.g. Hutchinson Grain Elevator" : "e.g. Rain and Hail Insurance"} />
       </label>
 
       <label className="block">

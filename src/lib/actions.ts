@@ -1718,31 +1718,42 @@ export async function allocateProductCostAction(input: {
 // transactions instead of expense ones.
 // -----------------------------------------------------------------------
 
-async function findUnallocatedIncomeTransactions(year: number, cropName: string) {
+/**
+ * Unsplit income transactions matching this crop AND this payment label
+ * (e.g. "FCE", "Kanza", "Insurance") — scoped by label so multiple separate
+ * payments for the same crop/year (several elevator checks, an insurance
+ * settlement) never get swept up together. A transaction "matches" the
+ * label if it shows up in either the vendor name or the description, since
+ * that's where a manually-entered lump transaction would carry it.
+ */
+async function findUnallocatedIncomeTransactions(year: number, cropName: string, label?: string) {
   const needle = cropName.trim().toLowerCase();
   if (!needle) return [];
+  const labelNeedle = label?.trim().toLowerCase();
   const txns = await repo.listTransactions({ taxYear: year, type: "income" });
   return txns.filter((t) => {
     if (!transactionMatchesProduct(t, needle)) return false;
-    return !t.splits.some((s) => s.targetType === "field");
+    if (t.splits.some((s) => s.targetType === "field")) return false;
+    if (!labelNeedle) return true;
+    return (t.description ?? "").toLowerCase().includes(labelNeedle) || (t.vendorName ?? "").toLowerCase().includes(labelNeedle);
   });
 }
 
-/** Existing per-field allocations from a prior allocateGrainSaleAction/allocateCropInsuranceAction run for this crop/year — the ones a reallocation replaces. Each income kind has its own description prefix, so a grain-sale reallocation never touches a crop-insurance split (and vice versa) on the same crop/year. */
-async function findFieldAllocatedIncomeTransactions(year: number, cropName: string, prefixSuffix: string = "sold, allocated by yield") {
+/** Existing per-field allocations from a prior allocateGrainSaleAction/allocateCropInsuranceAction run for this crop/year/label — the ones a reallocation replaces. Each income kind AND each label gets its own description prefix, so reallocating one payment (say, the "FCE" wheat check) never touches another (the "Kanza" check, or a crop-insurance settlement) for the same crop/year. */
+async function findFieldAllocatedIncomeTransactions(year: number, cropName: string, label: string, prefixSuffix: string = "sold, allocated by yield") {
   const needle = cropName.trim().toLowerCase();
   if (!needle) return [];
   const txns = await repo.listTransactions({ taxYear: year, type: "income" });
-  const prefix = `${needle} — ${prefixSuffix}`;
+  const prefix = `${needle} — ${label.trim().toLowerCase()} — ${prefixSuffix}`;
   return txns.filter((t) => (t.description ?? "").toLowerCase().startsWith(prefix) && t.splits.some((s) => s.targetType === "field"));
 }
 
-export async function findUnallocatedGrainSaleAction(input: { year: number; cropName: string }): Promise<{
+export async function findUnallocatedGrainSaleAction(input: { year: number; cropName: string; label?: string }): Promise<{
   count: number; totalAmount: number; vendorName?: string; transactionDate?: string; farmCategoryId?: string; alreadyAllocated: boolean;
 } | null> {
   const [unallocated, alreadySplit] = await Promise.all([
-    findUnallocatedIncomeTransactions(input.year, input.cropName),
-    findFieldAllocatedIncomeTransactions(input.year, input.cropName),
+    findUnallocatedIncomeTransactions(input.year, input.cropName, input.label),
+    input.label ? findFieldAllocatedIncomeTransactions(input.year, input.cropName, input.label) : Promise.resolve([]),
   ]);
   const matches = unallocated.length > 0 ? unallocated : alreadySplit;
   if (matches.length === 0) return null;
@@ -1763,7 +1774,8 @@ export async function allocateGrainSaleAction(input: {
   cropName: string;
   totalAmount: number;
   farmCategoryId: string;
-  vendorName?: string;
+  /** Who/what this payment was — e.g. "FCE", "Kanza Co-op". Required: it's what keeps several separate payments for the same crop/year (multiple elevator checks) from colliding when reallocated. Also stored as the transaction's vendor name. */
+  vendorName: string;
   transactionDate?: string;
   /** Fields to leave out of the split entirely (e.g. that field's grain is stored separately, not part of this sale) — they get $0 instead of their yield share. */
   excludeFieldIds?: string[];
@@ -1772,9 +1784,20 @@ export async function allocateGrainSaleAction(input: {
   const needle = input.cropName.trim().toLowerCase();
   if (!needle) throw new Error("Enter a crop name to allocate.");
   if (!(input.totalAmount > 0)) throw new Error("Enter the total amount you were paid.");
+  if (!input.vendorName?.trim()) throw new Error("Enter a label for this payment (e.g. the buyer/elevator name) — it keeps separate payments for the same crop/year from overwriting each other.");
   const excluded = new Set(input.excludeFieldIds ?? []);
 
-  const activities = await repo.listActivities({ year: input.year });
+  // A winter crop (wheat) is planted the FALL BEFORE the year it's
+  // harvested and sold — e.g. wheat planted Sept 2025, harvested/sold June
+  // 2026 — so the planting activity that carries the crop name can sit in
+  // input.year - 1 even though the sale itself belongs to input.year. Look
+  // for the crop name across both years; harvest yield still has to fall in
+  // the sale year itself (that's what "this year's sale" means).
+  const [activitiesThisYear, activitiesPriorYear] = await Promise.all([
+    repo.listActivities({ year: input.year }),
+    repo.listActivities({ year: input.year - 1 }),
+  ]);
+  const plantingActivities = [...activitiesThisYear, ...activitiesPriorYear];
 
   // A harvest activity on its own doesn't carry a crop name — AgFiniti's
   // own report lists the crop once per section, not per field row (see
@@ -1787,14 +1810,14 @@ export async function allocateGrainSaleAction(input: {
   // field that planted the crop but has no harvest yield logged yet is
   // left out rather than guessed at.
   const plantedFieldIds = new Set(
-    activities
+    plantingActivities
       .filter((a) => a.activityType === "plant" && a.seedProductName && a.seedProductName.trim().toLowerCase().includes(needle))
       .map((a) => a.fieldId)
       .filter((id): id is string => !!id)
   );
 
   const usageByField = new Map<string, { fieldName: string; usage: number; unit?: string }>();
-  for (const a of activities) {
+  for (const a of activitiesThisYear) {
     if (a.activityType !== "harvest" || !a.fieldId || !plantedFieldIds.has(a.fieldId)) continue;
     if (a.yieldAmount == null || !a.acres) continue;
     const bushels = a.yieldAmount * a.acres;
@@ -1814,18 +1837,21 @@ export async function allocateGrainSaleAction(input: {
       allocated: false as const,
       message: excluded.size > 0 && fieldsUsage.length > 0
         ? "Every field with a logged harvest is excluded — nothing left to allocate. Include at least one field."
-        : `No logged harvest yield in ${input.year} for a crop matching "${input.cropName}". Check that both a planting activity (for the crop name) and a harvest activity (for yield) are logged for at least one field.`,
+        : `No logged harvest yield in ${input.year} for a crop matching "${input.cropName}" (checked planting activities in both ${input.year - 1} and ${input.year}, to cover a winter crop planted the fall before). Check that both a planting activity (for the crop name) and a harvest activity (for yield) are logged for at least one field.`,
     };
   }
 
   const transactionDate = input.transactionDate || `${input.year}-12-31`;
+  const label = input.vendorName.trim();
 
-  // Same reconciliation as allocateProductCostAction: replace whatever's
-  // already on file for this crop/year (a lump income entry from New
-  // Transaction or the Excel import, or a prior run's per-field split)
-  // instead of stacking a new one on top.
-  const existing = await findUnallocatedIncomeTransactions(input.year, input.cropName);
-  const existingFieldSplits = await findFieldAllocatedIncomeTransactions(input.year, input.cropName);
+  // Same reconciliation as allocateProductCostAction, but scoped to THIS
+  // label as well as crop/year — replaces whatever's already on file for
+  // this specific payment (a matching lump income entry, or a prior run's
+  // per-field split for the same label) instead of stacking on top of it,
+  // while leaving other labeled payments for the same crop/year (a
+  // different elevator check, an insurance settlement) untouched.
+  const existing = await findUnallocatedIncomeTransactions(input.year, input.cropName, label);
+  const existingFieldSplits = await findFieldAllocatedIncomeTransactions(input.year, input.cropName, label);
   for (const t of [...existing, ...existingFieldSplits]) {
     await repo.deleteTransaction(t.id);
   }
@@ -1860,7 +1886,7 @@ export async function allocateGrainSaleAction(input: {
       status: "categorized",
       transactionDate,
       vendorName: input.vendorName,
-      description: `${input.cropName} — sold, allocated by yield (${a.fieldName})`,
+      description: `${input.cropName} — ${label} — sold, allocated by yield (${a.fieldName})`,
       amount: a.amount,
       productName: input.cropName,
       farmCategoryId: input.farmCategoryId,
@@ -1912,7 +1938,8 @@ export async function allocateCropInsuranceAction(input: {
   cropName: string;
   totalAmount: number;
   farmCategoryId: string;
-  vendorName?: string;
+  /** Who/what this payment was — e.g. "Insurance", "Rain and Hail". Required so multiple payments for the same crop/year (an elevator check, a separate insurance settlement) don't collide when reallocated. Also stored as the transaction's vendor name. */
+  vendorName: string;
   transactionDate?: string;
   excludeFieldIds?: string[];
 }) {
@@ -1920,9 +1947,17 @@ export async function allocateCropInsuranceAction(input: {
   const needle = input.cropName.trim().toLowerCase();
   if (!needle) throw new Error("Enter a crop name to allocate.");
   if (!(input.totalAmount > 0)) throw new Error("Enter the total insurance payment amount.");
+  if (!input.vendorName?.trim()) throw new Error("Enter a label for this payment (e.g. \"Insurance\" or the insurer's name) — it keeps separate payments for the same crop/year from overwriting each other.");
   const excluded = new Set(input.excludeFieldIds ?? []);
 
-  const activities = await repo.listActivities({ year: input.year });
+  // Crop year for insurance follows the same convention as a sale: a
+  // winter crop (wheat) insured for "2026" was actually planted fall 2025.
+  // Check both years for the planting activity that carries the crop name.
+  const [activitiesThisYear, activitiesPriorYear] = await Promise.all([
+    repo.listActivities({ year: input.year }),
+    repo.listActivities({ year: input.year - 1 }),
+  ]);
+  const activities = [...activitiesThisYear, ...activitiesPriorYear];
 
   const acresByField = new Map<string, { fieldName: string; acres: number }>();
   for (const a of activities) {
@@ -1943,19 +1978,22 @@ export async function allocateCropInsuranceAction(input: {
       allocated: false as const,
       message: excluded.size > 0 && fieldsUsage.length > 0
         ? "Every field is excluded — nothing left to allocate. Include at least one field."
-        : `No logged planting acres in ${input.year} for a crop matching "${input.cropName}". Check that a planting activity is logged for at least one field.`,
+        : `No logged planting acres for a crop matching "${input.cropName}" in ${input.year} or ${input.year - 1} (checked both, to cover a winter crop planted the fall before). Check that a planting activity is logged for at least one field.`,
     };
   }
 
   const transactionDate = input.transactionDate || `${input.year}-12-31`;
+  const label = input.vendorName.trim();
   const prefixSuffix = "crop insurance payment, allocated by acres";
 
-  // Only replaces a PRIOR crop-insurance split (its own description prefix)
-  // — unlike allocateGrainSaleAction, this deliberately does NOT touch any
-  // unallocated lump income transaction matching the crop name, since that
-  // lump entry could just as easily be an unrelated, not-yet-allocated
-  // grain sale for the same crop/year rather than this insurance payment.
-  const existingFieldSplits = await findFieldAllocatedIncomeTransactions(input.year, input.cropName, prefixSuffix);
+  // Only replaces a PRIOR crop-insurance split for THIS SAME LABEL (its own
+  // description prefix) — unlike allocateGrainSaleAction, this deliberately
+  // does NOT touch any unallocated lump income transaction matching just
+  // the crop name, since that lump entry could just as easily be an
+  // unrelated, not-yet-allocated grain sale for the same crop/year rather
+  // than this insurance payment. A different label (a separate settlement,
+  // or a grain sale) for the same crop/year is left untouched.
+  const existingFieldSplits = await findFieldAllocatedIncomeTransactions(input.year, input.cropName, label, prefixSuffix);
   for (const t of existingFieldSplits) {
     await repo.deleteTransaction(t.id);
   }
@@ -1987,7 +2025,7 @@ export async function allocateCropInsuranceAction(input: {
       status: "categorized",
       transactionDate,
       vendorName: input.vendorName,
-      description: `${input.cropName} — ${prefixSuffix} (${a.fieldName})`,
+      description: `${input.cropName} — ${label} — ${prefixSuffix} (${a.fieldName})`,
       amount: a.amount,
       productName: input.cropName,
       farmCategoryId: input.farmCategoryId,
