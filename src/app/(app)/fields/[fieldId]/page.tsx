@@ -54,7 +54,7 @@ export default async function FieldDetailPage({
       />
 
       <div className="mb-4 text-sm text-charcoal/60">
-        Ownership: <FieldOwnershipEditor fieldId={fieldId} ownership={field.ownership} landownerName={field.landownerName} />
+        Ownership: <FieldOwnershipEditor fieldId={fieldId} name={field.name} ownership={field.ownership} landownerName={field.landownerName} />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
