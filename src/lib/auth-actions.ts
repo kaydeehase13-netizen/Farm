@@ -119,7 +119,60 @@ export async function createFarmAction(formData: FormData) {
   }
 
   const cookieStore = await cookies();
-  cookieStore.set("farmledger_active_farm", farm.id, { httpOnly: false, path: "/", sameSite: "lax" });
+  cookieStore.set("farmledger_active_farm", farm.id, { httpOnly: true, path: "/", sameSite: "lax" });
+
+  redirect("/home");
+}
+
+/**
+ * Same as createFarmAction, but for a user who's already signed in and
+ * already has at least one farm — createFarmAction itself never checked
+ * that, only the /onboarding PAGE redirected an existing owner straight to
+ * /home before they could ever reach the form. This is the "add another
+ * farm to the same login" entry point that was missing: one Supabase login
+ * (one email) can already own several farms — switchFarmAction and the
+ * farm switcher have supported that from the start — there just wasn't a
+ * page to create the second one after the first.
+ */
+export async function addAnotherFarmAction(formData: FormData) {
+  const supabase = await createServerSupabaseClient();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) redirect("/login");
+  const user = userData.user;
+
+  const name = str(formData, "name") || "My Farm";
+  const operationType = str(formData, "operationType") || "row_crop";
+  const state = str(formData, "state") || null;
+  const currentTaxYear = new Date().getFullYear();
+
+  const { data: farm, error: farmError } = await supabase
+    .from("farm_business")
+    .insert({ owner_user_id: user.id, name, operation_type: operationType, state, current_tax_year: currentTaxYear })
+    .select("id")
+    .single();
+
+  if (farmError || !farm) {
+    redirect(`/more/add-farm?error=${encodeURIComponent(farmError?.message ?? "Could not create farm")}`);
+  }
+
+  const admin = createAdminClient();
+  const { error: memberError } = await admin.from("farm_membership").insert({
+    farm_business_id: farm.id,
+    user_id: user.id,
+    role: "owner_admin",
+    can_view_financials: true,
+    can_edit_financials: true,
+    can_view_tax_records: true,
+    can_edit_operational_records: true,
+    accepted_at: new Date().toISOString(),
+  });
+
+  if (memberError) {
+    redirect(`/more/add-farm?error=${encodeURIComponent(memberError.message)}`);
+  }
+
+  const cookieStore = await cookies();
+  cookieStore.set("farmledger_active_farm", farm.id, { httpOnly: true, path: "/", sameSite: "lax" });
 
   redirect("/home");
 }
@@ -129,7 +182,7 @@ export async function switchFarmAction(formData: FormData) {
   const farmId = str(formData, "farmId");
   if (!farmId) redirect("/home");
   const cookieStore = await cookies();
-  cookieStore.set("farmledger_active_farm", farmId, { httpOnly: false, path: "/", sameSite: "lax" });
+  cookieStore.set("farmledger_active_farm", farmId, { httpOnly: true, path: "/", sameSite: "lax" });
   redirect("/home");
 }
 

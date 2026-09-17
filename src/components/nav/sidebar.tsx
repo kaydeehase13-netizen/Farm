@@ -117,6 +117,13 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
                       </button>
                     </form>
                   ))}
+                  <Link
+                    href="/more/add-farm"
+                    prefetch={false}
+                    className="block w-full text-left px-3 py-2 text-xs text-forest font-medium hover:bg-cream border-t border-[--border-color]"
+                  >
+                    + Add Another Farm
+                  </Link>
                 </div>
               )}
             </div>
@@ -124,6 +131,11 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
           <Link href="/more/settings" prefetch={false} className="text-xs text-sage-light/70 hover:text-white block">
             {farmName} · {taxYear} · Settings
           </Link>
+          {authenticated && farms.length <= 1 && (
+            <Link href="/more/add-farm" prefetch={false} className="text-xs text-sage-light/70 hover:text-white block">
+              + Add Another Farm
+            </Link>
+          )}
           {authenticated && (
             <form action={signOutAction}>
               <button type="submit" className="flex items-center gap-1.5 text-xs text-sage-light/70 hover:text-white">

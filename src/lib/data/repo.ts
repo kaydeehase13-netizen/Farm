@@ -306,6 +306,11 @@ export async function listFarmCategories() {
   return demo.listFarmCategories();
 }
 
+export async function listFarmMembers() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listFarmMembers();
+  return demo.listFarmMembers();
+}
+
 export async function recordPayment(input: Omit<Payment, "id">) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).recordPayment(input);
   return demo.recordPayment(input);

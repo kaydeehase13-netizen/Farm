@@ -1,4 +1,4 @@
-import { getFarm } from "@/lib/data/repo";
+import { getFarm, listFarmMembers } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { inviteMemberAction } from "@/lib/auth-actions";
@@ -15,11 +15,16 @@ export default async function SettingsPage({
   const { error, notice } = await searchParams;
   const [farm, taxYear] = await Promise.all([getFarm(), getViewTaxYear()]);
   const supabaseOn = isSupabaseConfigured();
+  const members = supabaseOn ? await listFarmMembers() : [];
 
   const roles = [
     "Farm Owner/Admin", "Farm Manager", "Employee", "Equipment Operator",
     "Applicator", "Bookkeeper", "CPA/Tax Professional",
   ];
+  const ROLE_LABELS: Record<string, string> = {
+    owner_admin: "Farm Owner/Admin", manager: "Farm Manager", employee: "Employee / Field Hand",
+    equipment_operator: "Equipment Operator", applicator: "Applicator", bookkeeper: "Bookkeeper", cpa: "CPA/Tax Professional",
+  };
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -44,8 +49,30 @@ export default async function SettingsPage({
 
         {supabaseOn ? (
           <>
+            {members.length > 0 && (
+              <div className="mb-4 space-y-1.5">
+                {members.map((m) => (
+                  <div key={m.userId} className="flex items-center justify-between text-sm px-3 py-2 bg-cream-deep rounded-lg">
+                    <div>
+                      <div className="font-medium">{m.name}</div>
+                      {m.email && <div className="text-xs text-charcoal/45">{m.email}</div>}
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs font-medium text-forest">{ROLE_LABELS[m.role] ?? m.role}</div>
+                      {!m.accepted && <div className="text-xs text-status-amber">Invite pending</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             {error && <div className="text-sm text-status-red bg-red-50 rounded-lg px-3 py-2 mb-3">{error}</div>}
-            {notice === "invited" && <div className="text-sm text-forest bg-wheat/30 rounded-lg px-3 py-2 mb-3">Invite sent.</div>}
+            {notice === "invited" && (
+              <div className="text-sm text-forest bg-wheat/30 rounded-lg px-3 py-2 mb-3">
+                Invite sent — they&apos;ll show up above as &quot;Invite pending&quot; until they open the email and sign in.
+                If they never get it, check Supabase&apos;s Auth logs — the free built-in email sender is rate-limited and
+                sometimes silently fails; a custom SMTP provider under Auth settings fixes that for good.
+              </div>
+            )}
             <form action={inviteMemberAction} className="flex flex-col sm:flex-row gap-2">
               <input type="text" name="name" placeholder="Their name" className="input sm:w-40" />
               <input type="email" name="email" placeholder="teammate@email.com" required className="input flex-1" />

@@ -2146,6 +2146,42 @@ export async function listCustomerFields(): Promise<CustomerField[]> {
   return (data ?? []).map((f: any) => ({ id: f.id, customerId: f.customer_id, name: f.name, acres: f.acres != null ? Number(f.acres) : undefined, county: f.county ?? undefined }));
 }
 
+export interface FarmMemberRow {
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+  accepted: boolean;
+}
+
+/**
+ * Everyone on the active farm, invited or accepted. app_user only has a
+ * self-select RLS policy (a user can read their own profile row, never a
+ * teammate's), so the anon+session client can't join names/emails for
+ * anyone else. requireActiveFarm() inside ctx() already proves the caller
+ * is a member of this exact farm before we ever get here, so — same
+ * pattern as inviteMemberAction/createFarmAction — the admin client is
+ * used only for this one read, scoped to that already-verified farm.id,
+ * never to an id the caller supplied.
+ */
+export async function listFarmMembers(): Promise<FarmMemberRow[]> {
+  const { farm } = await ctx();
+  const { createAdminClient } = await import("./admin");
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("farm_membership")
+    .select("user_id, role, accepted_at, app_user:user_id(full_name, email)")
+    .eq("farm_business_id", farm.id)
+    .order("accepted_at", { ascending: true, nullsFirst: false });
+  return (data ?? []).map((m: any) => ({
+    userId: m.user_id,
+    name: m.app_user?.full_name || m.app_user?.email || "—",
+    email: m.app_user?.email ?? "",
+    role: m.role,
+    accepted: m.accepted_at != null,
+  }));
+}
+
 /** Aggregate accessor mirroring the demo store's getDB() shape, for pages/exports that read several collections at once. */
 export async function getAppData(taxYear: number) {
   const [fields, farmCategories, customers, customerFields, transactions] = await Promise.all([

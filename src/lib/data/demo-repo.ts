@@ -752,6 +752,12 @@ export function listFarmCategories() {
   return getDB().farmCategories;
 }
 
+// Demo mode has no real auth/multi-user concept — just the one seeded
+// sample-data "user" who's implicitly the owner.
+export function listFarmMembers() {
+  return [{ userId: "demo", name: "You (Demo)", email: "", role: "owner_admin", accepted: true }];
+}
+
 export function createInvoiceFromJob(jobId: string): Invoice | null {
   return mutate((db) => {
     const job = db.jobs.find((j) => j.id === jobId);
