@@ -509,11 +509,23 @@ export async function listTransactions(filters: {
   if (filters.status) q = q.eq("status", filters.status);
   if (filters.customerId) q = q.eq("customer_id", filters.customerId);
   if (filters.vendorId) q = q.eq("vendor_id", filters.vendorId);
-  if (filters.search) q = q.ilike("description", `%${filters.search}%`);
   const { data: rows, error } = await q;
   if (error || !rows) return [];
 
-  const filtered = filters.taxYear ? rows.filter((r: any) => r.tax_year?.year === filters.taxYear) : rows;
+  let filtered = filters.taxYear ? rows.filter((r: any) => r.tax_year?.year === filters.taxYear) : rows;
+  // Vendor name isn't a column on transaction — it only exists on the
+  // joined vendor row (vendor:vendor_id(name)) — so a plain .ilike() on
+  // the transaction table, like the old version of this filter did, can
+  // only ever match description and silently never matches on vendor,
+  // even though every "Search vendor or description" box in the app
+  // promises both. Filtering in JS against the already-embedded vendor
+  // name (same as demo-repo.ts does) fixes that without a second query.
+  if (filters.search) {
+    const needle = filters.search.toLowerCase();
+    filtered = filtered.filter((r: any) =>
+      (r.description ?? "").toLowerCase().includes(needle) || (r.vendor?.name ?? "").toLowerCase().includes(needle)
+    );
+  }
   const ids = filtered.map((r: any) => r.id);
   if (ids.length === 0) return [];
   const { data: splitRows } = await supabase.from("transaction_split").select("*").in("transaction_id", ids);

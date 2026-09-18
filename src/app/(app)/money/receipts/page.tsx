@@ -4,13 +4,23 @@ import { PageHeader } from "@/components/ui/stat-card";
 import { DeleteReceiptButton } from "@/components/money/delete-receipt-button";
 import { ReceiptThumbnail } from "@/components/money/receipt-thumbnail";
 
-export default async function ReceiptsPage() {
-  const receipts = await listReceipts();
+export default async function ReceiptsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const { q } = await searchParams;
+  const allReceipts = await listReceipts();
+  const needle = q?.trim().toLowerCase();
+  const receipts = needle
+    ? allReceipts.filter((r) => (r.ocrVendorGuess ?? "").toLowerCase().includes(needle))
+    : allReceipts;
+
   return (
     <div>
       <PageHeader
         title="Receipts"
-        description={`${receipts.length} receipt${receipts.length === 1 ? "" : "s"} on file`}
+        description={`${receipts.length} receipt${receipts.length === 1 ? "" : "s"}${needle ? ` matching "${q}"` : ""} on file`}
         action={
           <div className="flex gap-2">
             <Link prefetch={false} href="/money/receipts/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Scan / Upload Receipt</Link>
@@ -19,10 +29,15 @@ export default async function ReceiptsPage() {
           </div>
         }
       />
+      <form className="flex gap-2 mb-4" action="/money/receipts">
+        <input name="q" defaultValue={q} placeholder="Search by vendor…" className="card px-3 py-2 flex-1 max-w-sm" />
+        <button className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">Search</button>
+        {needle && <Link prefetch={false} href="/money/receipts" className="card px-4 py-2 text-sm font-medium hover:border-forest">Clear</Link>}
+      </form>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {receipts.map((r) => (
           <div key={r.id} className="card p-4">
-            <ReceiptThumbnail receiptId={r.id} className="w-full h-32 object-cover rounded-lg bg-charcoal/5 mb-3" />
+            <ReceiptThumbnail receiptId={r.id} width={300} className="w-full h-32 object-cover rounded-lg bg-charcoal/5 mb-3" />
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-charcoal/50">{r.captureSource.replace("_", " ")}</span>
               <span className={`status-pill ${r.ocrStatus === "confirmed" ? "status-green" : r.ocrStatus === "failed" ? "status-red" : "status-amber"}`}>
@@ -49,7 +64,9 @@ export default async function ReceiptsPage() {
             )}
           </div>
         ))}
-        {receipts.length === 0 && <div className="text-charcoal/50">No receipts yet.</div>}
+        {receipts.length === 0 && (
+          <div className="text-charcoal/50">{needle ? `No receipts match "${q}".` : "No receipts yet."}</div>
+        )}
       </div>
     </div>
   );
