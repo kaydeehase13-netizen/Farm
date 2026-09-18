@@ -1,6 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
-import { allFieldProfitability, getFarm } from "@/lib/data/repo";
+import { allFieldProfitability, getFarm, fieldProductUsage } from "@/lib/data/repo";
+import type { FieldProfitability } from "@/types/domain";
+
+const CURRENCY = '"$"#,##0.00';
+
+/** One tab per product category (Seed / Fertilizer / Chemical): what was used on each field, and what it cost — the per-field breakdown behind the summary tab's Seed/Fertilizer/Chemical expense columns. */
+function addProductBreakdownSheet(
+  wb: ExcelJS.Workbook,
+  title: string,
+  category: "Seed" | "Fertilizer" | "Chemical",
+  rows: FieldProfitability[],
+  usageByField: Map<string, Awaited<ReturnType<typeof fieldProductUsage>>>
+) {
+  const sheet = wb.addWorksheet(title, { views: [{ state: "frozen", ySplit: 1 }] });
+  sheet.columns = [
+    { header: "Field", key: "field", width: 18 },
+    { header: "Crop", key: "crop", width: 14 },
+    { header: "Product", key: "product", width: 26 },
+    { header: "Quantity", key: "qty", width: 12 },
+    { header: "Unit", key: "unit", width: 10 },
+    { header: "Cost", key: "cost", width: 14, style: { numFmt: CURRENCY } },
+  ];
+  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  sheet.getRow(1).eachCell((c) => (c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F3D2E" } }));
+  sheet.autoFilter = { from: "A1", to: "F1" };
+
+  let any = false;
+  for (const r of rows) {
+    const usage = usageByField.get(r.fieldId) ?? [];
+    for (const u of usage.filter((u) => u.category === category)) {
+      any = true;
+      sheet.addRow({
+        field: r.fieldName, crop: r.cropName, product: u.productName,
+        qty: u.totalQuantity, unit: u.unit ?? "", cost: u.allocatedCost,
+      });
+    }
+  }
+  if (!any) {
+    sheet.addRow({ field: `No ${category.toLowerCase()} activity logged for this tax year.` });
+  }
+}
 
 export async function GET(req: NextRequest) {
   const farm = await getFarm();
@@ -8,10 +48,15 @@ export async function GET(req: NextRequest) {
   const taxYear = Number(searchParams.get("taxYear")) || farm.currentTaxYear;
   const rows = await allFieldProfitability(taxYear);
 
+  // One usage-by-product lookup per field, reused across the Seed /
+  // Fertilizer / Chemical breakdown tabs below instead of each tab
+  // re-deriving it from the raw activities/transactions itself.
+  const usageEntries = await Promise.all(rows.map(async (r) => [r.fieldId, await fieldProductUsage(r.fieldId, taxYear)] as const));
+  const usageByField = new Map(usageEntries);
+
   const wb = new ExcelJS.Workbook();
   wb.creator = "FarmLedger";
   const sheet = wb.addWorksheet("Field Report", { views: [{ state: "frozen", ySplit: 1 }] });
-  const CURRENCY = '"$"#,##0.00';
 
   sheet.columns = [
     { header: "Field", key: "field", width: 18 },
@@ -45,6 +90,10 @@ export async function GET(req: NextRequest) {
       totalExp: r.totalExpense, incAcre: r.incomePerAcre, expAcre: r.expensePerAcre, margin: r.margin, marginAcre: r.marginPerAcre,
     });
   }
+
+  addProductBreakdownSheet(wb, "Seed Detail", "Seed", rows, usageByField);
+  addProductBreakdownSheet(wb, "Fertilizer Detail", "Fertilizer", rows, usageByField);
+  addProductBreakdownSheet(wb, "Chemical Detail", "Chemical", rows, usageByField);
 
   const buffer = await wb.xlsx.writeBuffer();
   return new NextResponse(buffer, {
