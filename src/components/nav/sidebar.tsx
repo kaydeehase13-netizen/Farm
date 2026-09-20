@@ -41,7 +41,7 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
   return (
     <>
       {/* Desktop / web sidebar */}
-      <aside className="hidden md:flex md:flex-col w-64 shrink-0 bg-forest text-cream min-h-screen sticky top-0">
+      <aside data-app-chrome className="hidden md:flex md:flex-col w-64 shrink-0 bg-forest text-cream min-h-screen sticky top-0">
         <div className="px-5 py-6 border-b border-white/10">
           <div className="text-lg font-semibold tracking-tight">FarmLedger</div>
           <div className="text-xs text-sage-light/80 mt-0.5">Farm all year. Be ready at tax time.</div>
@@ -147,7 +147,7 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
       </aside>
 
       {/* Mobile bottom nav */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-forest text-cream border-t border-white/10 flex items-stretch">
+      <nav data-app-chrome className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-forest text-cream border-t border-white/10 flex items-stretch">
         {PRIMARY_NAV.map((item) => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
@@ -170,6 +170,7 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
       {/* Mobile floating add button */}
       <button
         onClick={() => setAddOpen(true)}
+        data-app-chrome
         className="md:hidden fixed bottom-20 right-4 z-40 w-14 h-14 rounded-full bg-wheat text-forest shadow-lg flex items-center justify-center"
         aria-label="Add"
       >
@@ -189,7 +190,7 @@ export function TopBar({ farmName = "Mohler Farms", taxYear = 2026, years = [] }
   const options = years.includes(taxYear) ? years : [...years, taxYear].sort((a, b) => b - a);
 
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-between gap-4 bg-cream/95 backdrop-blur border-b border-[--border-color] px-4 md:px-8 py-3">
+    <header data-app-chrome className="sticky top-0 z-30 flex items-center justify-between gap-4 bg-cream/95 backdrop-blur border-b border-[--border-color] px-4 md:px-8 py-3">
       <div className="flex items-center gap-2 text-sm text-charcoal/60 max-w-md w-full">
         <Search size={16} />
         <input
