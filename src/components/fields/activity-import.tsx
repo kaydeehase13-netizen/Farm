@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { parseCsv, rowsToObjects } from "@/lib/csv";
-import { importActivitiesAction, createFieldsForImportAction } from "@/lib/actions";
+import { importActivitiesAction, createFieldsForImportAction, allocateImportedProductCostsAction } from "@/lib/actions";
 import type { Field } from "@/types/domain";
 
 const CREATE_NEW = "__create_new__";
@@ -66,6 +66,7 @@ const FIELD_TARGETS: { key: keyof ColumnMap; label: string; required?: boolean; 
   { key: "rateUnit", label: "Rate Unit", synonyms: ["rate unit", "rate uom", "units"] },
   { key: "quantity", label: "Quantity Used", synonyms: ["quantity", "quantity used", "total applied", "amount"] },
   { key: "quantityUnit", label: "Quantity Unit", synonyms: ["quantity unit", "qty unit", "uom"] },
+  { key: "cost", label: "Cost", synonyms: ["cost", "total cost", "amount", "extended cost", "line cost", "expense", "cost ($)", "$"] },
   { key: "yieldAmount", label: "Yield", synonyms: ["yield", "dry yield", "yield amount", "avg yield"] },
   { key: "yieldUnit", label: "Yield Unit", synonyms: ["yield unit", "yield uom"] },
   { key: "moisturePct", label: "Moisture %", synonyms: ["moisture", "moisture %", "moisture pct", "avg moisture"] },
@@ -76,7 +77,7 @@ const FIELD_TARGETS: { key: keyof ColumnMap; label: string; required?: boolean; 
 
 type ColumnMap = {
   activityDate?: string; field?: string; activityType?: string; product?: string;
-  rate?: string; rateUnit?: string; quantity?: string; quantityUnit?: string;
+  rate?: string; rateUnit?: string; quantity?: string; quantityUnit?: string; cost?: string;
   yieldAmount?: string; yieldUnit?: string; moisturePct?: string; acres?: string;
   applicator?: string; notes?: string;
 };
@@ -98,6 +99,28 @@ function num(v: string | undefined): number | null {
   if (!v) return null;
   const n = Number(String(v).replace(/[^0-9.\-]/g, ""));
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Currency parser for the optional Cost column. Deliberately NOT `num` - a
+ * blank cost means "not priced yet", which must stay null rather than
+ * collapsing to 0, or an unpriced row reads as a genuinely free one and
+ * quietly drags the product's allocated total down.
+ */
+function money(v: string | undefined): number | null {
+  if (v == null) return null;
+  const raw = String(v).trim();
+  if (raw === "") return null;
+  const negative = /^\(.*\)$/.test(raw);
+  const cleaned = raw.replace(/[()$,\s]/g, "");
+  if (cleaned === "" || cleaned === "-") return null;
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return null;
+  return Math.round((negative ? -n : n) * 100) / 100;
+}
+
+function formatUsd(n: number): string {
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
 function toIsoDate(v: string | undefined): string {
@@ -125,6 +148,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
   const [replaceOnMismatch, setReplaceOnMismatch] = useState(false);
   const [result, setResult] = useState<{ imported: number; repaired?: number; replaced?: number; failed: number; errors: string[]; createdFieldNames: string[]; skippedDuplicates?: number } | null>(null);
+  const [costResult, setCostResult] = useState<Awaited<ReturnType<typeof allocateImportedProductCostsAction>> | null>(null);
 
   function handleFile(file: File) {
     setFileName(file.name);
@@ -195,6 +219,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
           rateUnit: colMap.rateUnit ? (r[colMap.rateUnit] || null) : null,
           quantity: colMap.quantity ? num(r[colMap.quantity]) : null,
           quantityUnit: colMap.quantityUnit ? (r[colMap.quantityUnit] || null) : null,
+          cost: colMap.cost ? money(r[colMap.cost]) : null,
           yieldAmount: colMap.yieldAmount ? num(r[colMap.yieldAmount]) : null,
           yieldUnit: colMap.yieldUnit ? (r[colMap.yieldUnit] || null) : null,
           moisturePct: colMap.moisturePct ? num(r[colMap.moisturePct]) : null,
@@ -277,6 +302,18 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
       };
     }
     setImportProgress(null);
+
+    // Costs are allocated only after the activities are on file: the split
+    // is driven by logged usage, so it has nothing to divide across until
+    // the rows it divides across exist.
+    if (colMap.cost && finalRows.some((r) => r.cost != null)) {
+      try {
+        setCostResult(await allocateImportedProductCostsAction(finalRows));
+      } catch (e) {
+        setCostResult({ allocated: [], skipped: [{ productName: "-", year: 0, total: 0, reason: e instanceof Error ? e.message : "Cost allocation failed." }] });
+      }
+    }
+
     setResult({ ...combined, createdFieldNames });
     setImporting(false);
     setStep("done");
@@ -447,6 +484,28 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
             We only had the name (and acreage, if this file included it) from the import — ownership, county, and FSA numbers are still blank.
             Fill those in on the <a href="/fields" className="text-forest font-medium hover:underline">Fields page</a> when you get a chance.
           </p>
+        </div>
+      )}
+      {costResult && costResult.allocated.length > 0 && (
+        <div className="text-left text-sm bg-sage/20 border border-sage/40 rounded-lg p-3 text-charcoal/70">
+          <div className="font-medium mb-1">
+            Allocated {formatUsd(costResult.allocated.reduce((sum, a) => sum + a.total, 0))} of product cost across {costResult.allocated.length} product{costResult.allocated.length === 1 ? "" : "s"}
+          </div>
+          <ul className="list-disc list-inside space-y-0.5">
+            {costResult.allocated.map((a) => (
+              <li key={`${a.year}-${a.productName}`}>{a.productName} ({a.year}) &mdash; {formatUsd(a.total)} across {a.fields} field{a.fields === 1 ? "" : "s"}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {costResult && costResult.skipped.length > 0 && (
+        <div className="text-left text-sm bg-wheat/30 border border-wheat rounded-lg p-3 text-charcoal/70">
+          <div className="font-medium mb-1">{costResult.skipped.length} product cost{costResult.skipped.length === 1 ? "" : "s"} still need allocating by hand:</div>
+          <ul className="list-disc list-inside space-y-0.5">
+            {costResult.skipped.map((sk, i) => (
+              <li key={i}>{sk.productName} ({sk.year}) &mdash; {formatUsd(sk.total)}: {sk.reason}</li>
+            ))}
+          </ul>
         </div>
       )}
       {result && result.failed > 0 && (

@@ -512,6 +512,8 @@ type ImportRow = {
   rateUnit?: string | null;
   quantity?: number | null;
   quantityUnit?: string | null;
+  /** Optional per-row dollar cost from the import file (see allocateImportedProductCostsAction). */
+  cost?: number | null;
   yieldAmount?: number | null;
   yieldUnit?: string | null;
   moisturePct?: number | null;
@@ -1563,6 +1565,69 @@ async function findFieldAllocatedProductTransactions(year: number, productName: 
   const txns = await repo.listTransactions({ taxYear: year, type: "expense" });
   const prefix = `${needle} — allocated by usage`;
   return txns.filter((t) => (t.description ?? "").toLowerCase().startsWith(prefix) && t.splits.some((s) => s.targetType === "field"));
+}
+
+export async function allocateImportedProductCostsAction(
+  rows: ImportRow[],
+  options?: { vendorName?: string },
+): Promise<{
+  allocated: { productName: string; year: number; total: number; fields: number }[];
+  skipped: { productName: string; year: number; total: number; reason: string }[];
+}> {
+  const farmCategories = await repo.listFarmCategories();
+
+  function categoryIdFor(activityType: string): string | undefined {
+    const want =
+      activityType === "plant" ? ["seed"]
+      : activityType === "fertilize" ? ["fertilizer", "fertiliser"]
+      : activityType === "spray" ? ["chemical", "herbicide", "pesticide"]
+      : [];
+    for (const w of want) {
+      const hit = farmCategories.find((c) => c.name.toLowerCase().includes(w));
+      if (hit) return hit.id;
+    }
+    return undefined;
+  }
+
+  const totals = new Map<string, { year: number; productName: string; activityType: string; total: number }>();
+  for (const r of rows) {
+    if (r.cost == null || !(r.cost > 0)) continue;
+    const productName = r.productName?.trim();
+    if (!productName) continue;
+    const year = Number(r.activityDate?.slice(0, 4));
+    if (!year) continue;
+    const key = `${year}::${productName.toLowerCase()}`;
+    const existing = totals.get(key);
+    if (existing) existing.total += r.cost;
+    else totals.set(key, { year, productName, activityType: r.activityType, total: r.cost });
+  }
+
+  const allocated: { productName: string; year: number; total: number; fields: number }[] = [];
+  const skipped: { productName: string; year: number; total: number; reason: string }[] = [];
+
+  for (const t of totals.values()) {
+    const total = Math.round(t.total * 100) / 100;
+    const farmCategoryId = categoryIdFor(t.activityType);
+    if (!farmCategoryId) {
+      skipped.push({ productName: t.productName, year: t.year, total, reason: "No matching expense category on this farm - allocate it by hand." });
+      continue;
+    }
+    try {
+      const res = await allocateProductCostAction({
+        year: t.year,
+        productName: t.productName,
+        totalAmount: total,
+        farmCategoryId,
+        vendorName: options?.vendorName,
+      });
+      if (res.allocated) allocated.push({ productName: t.productName, year: t.year, total, fields: res.allocations?.length ?? 0 });
+      else skipped.push({ productName: t.productName, year: t.year, total, reason: res.message });
+    } catch (e) {
+      skipped.push({ productName: t.productName, year: t.year, total, reason: e instanceof Error ? e.message : "Allocation failed." });
+    }
+  }
+
+  return { allocated, skipped };
 }
 
 export async function allocateProductCostAction(input: {
