@@ -45,6 +45,9 @@ export default async function FieldDetailPage({
         description={`${field.acres} acres · ${field.county ?? ""} County ${field.fsaFarmNumber ? `· FSA Farm ${field.fsaFarmNumber}` : ""} · Viewing ${taxYear}`}
         action={
           <div className="flex items-center gap-3">
+            <Link prefetch={false} href={`/fields/${fieldId}/print`} className="border border-forest text-forest px-4 py-2 rounded-lg text-sm font-medium hover:bg-cream-deep">
+              Print Field Sheet
+            </Link>
             <Link prefetch={false} href={`/fields/activities/new?fieldId=${fieldId}`} className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">
               + Log Field Activity
             </Link>

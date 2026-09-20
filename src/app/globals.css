@@ -97,3 +97,55 @@ body {
   border-color: var(--color-forest);
 }
 
+
+/* ---- Printing -------------------------------------------------------------
+   Anything that is app chrome (sidebar, top bar, mobile nav) carries
+   data-app-chrome and drops out of print, as does anything marked .no-print.
+   That leaves the page's own content on the paper — the field sheet at
+   /fields/[fieldId]/print is built for this, but every page prints cleaner
+   for it. */
+@media print {
+  @page {
+    size: letter portrait;
+    margin: 0.55in;
+  }
+
+  [data-app-chrome],
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: white;
+    color: black;
+  }
+
+  /* The app shell centres and pads <main>; on paper the @page margin does
+     that job, so the content runs the full width of the sheet. */
+  main {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+
+  .card {
+    border: 0;
+    box-shadow: none;
+  }
+
+  .print-sheet {
+    max-width: none;
+  }
+
+  .data-table {
+    font-size: 10pt;
+  }
+
+  /* Keep a table's header with its rows when a section breaks across pages. */
+  thead {
+    display: table-header-group;
+  }
+  tr,
+  .break-inside-avoid {
+    break-inside: avoid;
+  }
+}
