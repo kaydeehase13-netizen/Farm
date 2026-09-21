@@ -1042,16 +1042,56 @@ export async function countActivities(): Promise<number> {
   return count ?? 0;
 }
 
+/**
+ * Page size for the paginated fetch below. PostgREST caps every response at
+ * its server-side `max-rows` (1000 on Supabase unless raised), so a single
+ * unpaginated select silently returns only the first slice of a farm with
+ * more activities than that — no error, no warning, just a short array.
+ */
+const ACTIVITY_PAGE_SIZE = 1000;
+
 export async function listActivities(filters: { fieldId?: string; activityType?: string; customerId?: string; year?: number } = {}): Promise<Activity[]> {
   const { supabase, farm } = await ctx();
-  let q = supabase.from("activity").select("*, field:field_id(name), customer_field:customer_field_id(name), spray_product_line(*, product:product_id(name, epa_registration_number)), fertilizer_product_line(*, product:product_id(name)), planting_activity_detail(seeding_rate, seed_product:seed_product_id(name)), harvest_activity_detail(yield_amount, yield_unit, moisture_pct)")
-    .eq("farm_business_id", farm.id).order("activity_date", { ascending: false });
-  if (filters.fieldId) q = q.eq("field_id", filters.fieldId);
-  if (filters.activityType) q = q.eq("activity_type", filters.activityType);
-  if (filters.customerId) q = q.eq("customer_id", filters.customerId);
-  if (filters.year) q = q.gte("activity_date", `${filters.year}-01-01`).lt("activity_date", `${filters.year + 1}-01-01`);
-  const { data } = await q;
-  return (data ?? []).map((r: any): Activity => {
+
+  // Rebuilt per page rather than reused — a PostgrestFilterBuilder is
+  // single-use, so `.range()` has to be applied to a fresh one each time.
+  // The secondary sort on id is what makes paging deterministic:
+  // activity_date alone ties constantly (a whole day's work shares one
+  // date), and without a tiebreaker Postgres is free to order tied rows
+  // differently between requests, which silently duplicates some rows
+  // across page boundaries and drops others entirely.
+  function buildQuery() {
+    let q = supabase.from("activity").select("*, field:field_id(name), customer_field:customer_field_id(name), spray_product_line(*, product:product_id(name, epa_registration_number)), fertilizer_product_line(*, product:product_id(name)), planting_activity_detail(seeding_rate, seed_product:seed_product_id(name)), harvest_activity_detail(yield_amount, yield_unit, moisture_pct)")
+      .eq("farm_business_id", farm.id)
+      .order("activity_date", { ascending: false })
+      .order("id", { ascending: true });
+    if (filters.fieldId) q = q.eq("field_id", filters.fieldId);
+    if (filters.activityType) q = q.eq("activity_type", filters.activityType);
+    if (filters.customerId) q = q.eq("customer_id", filters.customerId);
+    if (filters.year) q = q.gte("activity_date", `${filters.year}-01-01`).lt("activity_date", `${filters.year + 1}-01-01`);
+    return q;
+  }
+
+  const rows: any[] = [];
+  // Advances by however many rows actually came back, and only stops on an
+  // empty page. Stopping on a short page instead would reintroduce the same
+  // silent truncation whenever the server's max-rows is lower than
+  // ACTIVITY_PAGE_SIZE: every page would come back short and the loop would
+  // quit after the first one.
+  for (let from = 0; ; ) {
+    const { data, error } = await buildQuery().range(from, from + ACTIVITY_PAGE_SIZE - 1);
+    // Errors were previously discarded (`const { data } = await q`), so a
+    // statement timeout or an RLS rejection surfaced as zero activities —
+    // which reads downstream as "no logged activity used this product" and
+    // leaves Allocate Product Cost refusing to allocate anything, with
+    // nothing anywhere to say why.
+    if (error) throw new Error(`Couldn't load field activities: ${error.message}`);
+    if (!data || data.length === 0) break;
+    rows.push(...data);
+    from += data.length;
+  }
+
+  return rows.map((r: any): Activity => {
     const planting = Array.isArray(r.planting_activity_detail) ? r.planting_activity_detail[0] : r.planting_activity_detail;
     const harvest = Array.isArray(r.harvest_activity_detail) ? r.harvest_activity_detail[0] : r.harvest_activity_detail;
     return {
