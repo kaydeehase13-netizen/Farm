@@ -267,7 +267,7 @@ function ProductEditor({
         </div>
         <p className="text-xs text-charcoal/50">
           {allocated
-            ? "Changing this re-splits the new total across every field by usage. Category, vendor, date and any fields you'd left out stay the same."
+            ? "Changing this re-splits the new total across every field by usage. Category, vendor and date stay the same; every field with logged usage is included, and fields added by hand keep their quantities."
             : "Not allocated yet — enter what you paid and it will be split across every field that used it."}
         </p>
       </form>

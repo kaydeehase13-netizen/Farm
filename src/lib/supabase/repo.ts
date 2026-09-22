@@ -236,8 +236,13 @@ export async function fieldProductUsage(fieldId: string, taxYear: number): Promi
     for (const p of a.fertilizerProducts ?? []) addLine("Fertilizer", p.productName, p.quantityUsed, p.quantityUnit, a);
     if (a.seedProductName) {
       const rawSeeds = a.seedingRate && a.acres ? a.seedingRate * a.acres : undefined;
-      const { quantity, unit } = seedQuantityInUnits(a.seedProductName, rawSeeds);
-      addLine("Seed", a.seedProductName, quantity, unit, a);
+      if (rawSeeds == null && a.acres) {
+        // No seeding rate logged - show planted acres instead of "0 used".
+        addLine("Seed", a.seedProductName, a.acres, "ac", a);
+      } else {
+        const { quantity, unit } = seedQuantityInUnits(a.seedProductName, rawSeeds);
+        addLine("Seed", a.seedProductName, quantity, unit, a);
+      }
     }
   }
 

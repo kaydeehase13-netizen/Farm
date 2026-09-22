@@ -1710,6 +1710,13 @@ export async function allocateProductCostAction(input: {
     }
   }
 
+  // Seed logged without a seeding rate (AgFiniti leaves it blank for some
+  // crops - wheat, some soybeans, millet, Feed) has no seed count to split
+  // by. When NO planting of this product carries a rate, split by planted
+  // acres instead, so those fields still get their share; if some do carry
+  // a rate, seed count wins and the rate-less ones stay out rather than
+  // mixing acres with seeds.
+  const seedByAcres = seedSplitsByAcres(activities, needle);
   for (const a of activities) {
     for (const p of a.sprayProducts ?? []) {
       if (p.productName.trim().toLowerCase() === needle) addUsage(a.fieldId, a.fieldName, p.quantityUsed, p.quantityUnit);
@@ -1718,8 +1725,12 @@ export async function allocateProductCostAction(input: {
       if (p.productName.trim().toLowerCase() === needle) addUsage(a.fieldId, a.fieldName, p.quantityUsed, p.quantityUnit);
     }
     if (a.seedProductName && a.seedProductName.trim().toLowerCase() === needle) {
-      const { quantity, unit } = seedQuantityInUnits(a.seedProductName, (a.seedingRate ?? 0) * (a.acres ?? 0));
-      addUsage(a.fieldId, a.fieldName, quantity ?? 0, unit);
+      if (seedByAcres) {
+        addUsage(a.fieldId, a.fieldName, a.acres ?? 0, "ac");
+      } else {
+        const { quantity, unit } = seedQuantityInUnits(a.seedProductName, (a.seedingRate ?? 0) * (a.acres ?? 0));
+        addUsage(a.fieldId, a.fieldName, quantity ?? 0, unit);
+      }
     }
   }
 
@@ -2372,15 +2383,23 @@ export async function bulkImportAllocateCostAction(formData: FormData): Promise<
 // Edit a product from the field page, and re-split its cost automatically.
 // -----------------------------------------------------------------------
 
+/** True when a seed product was planted but no planting of it records a seeding rate - split it by acres. */
+function seedSplitsByAcres(activities: Awaited<ReturnType<typeof repo.listActivities>>, needle: string): boolean {
+  const plantings = activities.filter((a) => a.seedProductName && a.seedProductName.trim().toLowerCase() === needle && (a.acres ?? 0) > 0);
+  return plantings.length > 0 && plantings.every((a) => !((a.seedingRate ?? 0) > 0));
+}
+
 /** Field ids whose logged activity used this product (any amount > 0). */
 function fieldsWithLoggedUsage(activities: Awaited<ReturnType<typeof repo.listActivities>>, needle: string): Set<string> {
   const ids = new Set<string>();
+  const byAcres = seedSplitsByAcres(activities, needle);
   for (const a of activities) {
     if (!a.fieldId) continue;
     const used =
       (a.sprayProducts ?? []).some((p) => p.productName.trim().toLowerCase() === needle && p.quantityUsed > 0) ||
       (a.fertilizerProducts ?? []).some((p) => p.productName.trim().toLowerCase() === needle && p.quantityUsed > 0) ||
-      (!!a.seedProductName && a.seedProductName.trim().toLowerCase() === needle && (a.seedingRate ?? 0) * (a.acres ?? 0) > 0);
+      (!!a.seedProductName && a.seedProductName.trim().toLowerCase() === needle &&
+        (byAcres ? (a.acres ?? 0) > 0 : (a.seedingRate ?? 0) * (a.acres ?? 0) > 0));
     if (used) ids.add(a.fieldId);
   }
   return ids;
@@ -2458,10 +2477,13 @@ async function reallocateProduct(input: {
 
   const logged = fieldsWithLoggedUsage(activities, needle);
   const priorSplits = prior.flatMap((t) => t.splits.filter((sp) => sp.targetType === "field" && sp.fieldId));
-  const priorFieldIds = new Set(priorSplits.map((sp) => sp.fieldId!));
 
-  // Fields with logged usage that got nothing last time were excluded on purpose.
-  const excludeFieldIds = [...logged].filter((id) => !priorFieldIds.has(id) && id !== input.includeFieldId);
+  // Every field with logged usage is included. (An earlier version guessed
+  // that a field with usage but no share last time had been left out on
+  // purpose - but that guess also shut out fields whose usage was logged
+  // or imported after the first allocation, or that came in by merging
+  // product names, which is exactly when a re-split is wanted.)
+  const excludeFieldIds: string[] = [];
   // Fields in the last split with no logged usage were added by hand; carry their quantity forward.
   const manualUsage: { fieldId: string; quantity: number; unit?: string }[] = [];
   for (const sp of priorSplits) {
@@ -2480,7 +2502,7 @@ async function reallocateProduct(input: {
   const included = outcome.allocations.filter((a) => !a.excluded);
   return {
     ...base, reallocated: true, totalAmount: outcome.totalAmount,
-    message: `Re-split ${formatMoney(outcome.totalAmount)} across ${included.length} field(s)${excludeFieldIds.length ? `; ${excludeFieldIds.length} field(s) left out as before` : ""}.`,
+    message: `Re-split ${formatMoney(outcome.totalAmount)} across ${included.length} field(s).`,
     fields: outcome.allocations.map((a) => ({ fieldName: a.fieldName, amount: a.amount, excluded: a.excluded })),
   };
 }
@@ -2592,6 +2614,35 @@ export async function allocateGeneralCostAction(input: {
     manualUsage: [...seedsByField].map(([fieldId, seeds]) => ({ fieldId, quantity: Math.round(seeds), unit: "seeds" })),
   }, { activities });
   return { ...outcome, missingFieldIds: missing };
+}
+
+/**
+ * "Re-split all" step 1: every product that already has a by-usage split
+ * for the year (read back from its "<product> — allocated by usage (...)"
+ * entries), with what it currently adds up to.
+ */
+export async function listAllocatedProductsAction(year: number): Promise<{ productName: string; total: number }[]> {
+  const txns = await repo.listTransactions({ taxYear: year, type: "expense" });
+  const byName = new Map<string, { productName: string; total: number }>();
+  for (const t of txns) {
+    const m = (t.description ?? "").match(/^(.*?) — allocated by usage \(/);
+    if (!m || !t.splits.some((sp) => sp.targetType === "field")) continue;
+    const key = m[1].trim().toLowerCase();
+    const cur = byName.get(key) ?? { productName: m[1].trim(), total: 0 };
+    cur.total = Math.round((cur.total + t.amount) * 100) / 100;
+    byName.set(key, cur);
+  }
+  return [...byName.values()].sort((a, b) => a.productName.localeCompare(b.productName));
+}
+
+/** "Re-split all" step 2: re-split one product by current usage, keeping its total. */
+export async function resplitProductAction(input: { year: number; productName: string }): Promise<ReallocationResult> {
+  return reallocateProduct({ year: input.year, productName: input.productName });
+}
+
+/** "Re-split all" step 3: refresh pages once at the end. */
+export async function finishResplitAllAction(): Promise<void> {
+  revalidateFieldCost();
 }
 
 /** Field page: change what a product cost in total for the year, and re-split it across its fields. */
