@@ -427,3 +427,13 @@ export async function getFullSnapshot() {
   const { getDB } = await import("./store");
   return getDB();
 }
+
+export async function updateActivityProductLine(edit: Parameters<typeof demo.updateActivityProductLine>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).updateActivityProductLine(edit);
+  return demo.updateActivityProductLine(edit);
+}
+
+export async function renameProduct(oldName: string, newName: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).renameProduct(oldName, newName);
+  return demo.renameProduct(oldName, newName);
+}

@@ -1682,7 +1682,7 @@ export async function allocateProductCostAction(input: {
    * each response re-render pages for nothing and slows the whole run.
    */
   skipRevalidate?: boolean;
-}) {
+}, preload?: { activities?: Awaited<ReturnType<typeof repo.listActivities>> }) {
   const farm = await getFarm();
   const needle = input.productName.trim().toLowerCase();
   if (!needle) throw new Error("Enter a product name to allocate.");
@@ -1690,7 +1690,7 @@ export async function allocateProductCostAction(input: {
   const excluded = new Set(input.excludeFieldIds ?? []);
 
   const [activities, allFields] = await Promise.all([
-    repo.listActivities({ year: input.year }),
+    preload?.activities ?? repo.listActivities({ year: input.year }),
     repo.listFields(),
   ]);
   const fieldNameById = new Map(allFields.map((f) => [f.id, f.name]));
@@ -2366,6 +2366,188 @@ export async function bulkImportAllocateCostAction(formData: FormData): Promise<
   }
 
   return { total: rows.length, imported, failed: rows.length - imported, results };
+}
+
+// -----------------------------------------------------------------------
+// Edit a product from the field page, and re-split its cost automatically.
+// -----------------------------------------------------------------------
+
+/** Field ids whose logged activity used this product (any amount > 0). */
+function fieldsWithLoggedUsage(activities: Awaited<ReturnType<typeof repo.listActivities>>, needle: string): Set<string> {
+  const ids = new Set<string>();
+  for (const a of activities) {
+    if (!a.fieldId) continue;
+    const used =
+      (a.sprayProducts ?? []).some((p) => p.productName.trim().toLowerCase() === needle && p.quantityUsed > 0) ||
+      (a.fertilizerProducts ?? []).some((p) => p.productName.trim().toLowerCase() === needle && p.quantityUsed > 0) ||
+      (!!a.seedProductName && a.seedProductName.trim().toLowerCase() === needle && (a.seedingRate ?? 0) * (a.acres ?? 0) > 0);
+    if (used) ids.add(a.fieldId);
+  }
+  return ids;
+}
+
+/** Reads "123.5 gal used" back out of a split note written by allocateProductCostAction. */
+function usageFromNote(note?: string): { quantity: number; unit?: string } | null {
+  const m = (note ?? "").match(/^\s*([\d.,]+)\s*(.*?)\s+used\s*$/i);
+  if (!m) return null;
+  const quantity = Number(m[1].replace(/,/g, ""));
+  return quantity > 0 ? { quantity, unit: m[2] || undefined } : null;
+}
+
+export interface ReallocationResult {
+  productName: string;
+  year: number;
+  reallocated: boolean;
+  message: string;
+  totalAmount?: number;
+  fields?: { fieldName: string; amount: number; excluded: boolean }[];
+}
+
+/**
+ * Re-splits a product's cost for a year across fields using current usage.
+ * Keeps what the last allocation was set up with: its category, vendor and
+ * date; fields that were left out stay left out; and fields that were added
+ * by hand (no logged usage) keep the quantity they were given. A field
+ * named in includeFieldId is always included (the field just edited).
+ * With newTotal the product's total changes too; without it the existing
+ * total is kept and only the split moves.
+ */
+async function reallocateProduct(input: {
+  year: number; productName: string; newTotal?: number; includeFieldId?: string;
+  /** The field whose usage was just edited: never carry its old quantity forward as a hand entry. */
+  editedFieldId?: string;
+  farmCategoryId?: string; vendorName?: string;
+}): Promise<ReallocationResult> {
+  const productName = input.productName.trim();
+  const needle = productName.toLowerCase();
+  const base = { productName, year: input.year };
+  if (!needle) return { ...base, reallocated: false, message: "No product name." };
+
+  const [yearExpenses, activities] = await Promise.all([
+    repo.listTransactions({ taxYear: input.year, type: "expense" }),
+    repo.listActivities({ year: input.year }),
+  ]);
+  const prior = await findFieldAllocatedProductTransactions(input.year, productName, yearExpenses);
+  const unsplit = await findUnallocatedProductTransactions(input.year, productName, yearExpenses);
+
+  if (prior.length === 0) {
+    // Never allocated. A new total can start it, as long as there's a
+    // category to file it under (from the caller, or a lump expense on file).
+    if (input.newTotal == null) return { ...base, reallocated: false, message: `${productName} hasn't been allocated for ${input.year} yet, so there was no cost to re-split.` };
+    const farmCategoryId = input.farmCategoryId ?? unsplit[0]?.farmCategoryId;
+    if (!farmCategoryId) return { ...base, reallocated: false, message: "Pick a category for this cost." };
+    const outcome = await allocateProductCostAction({
+      year: input.year, productName, totalAmount: input.newTotal, farmCategoryId,
+      vendorName: input.vendorName ?? unsplit[0]?.vendorName, transactionDate: unsplit[0]?.transactionDate,
+      skipRevalidate: true,
+    }, { activities });
+    if (!outcome.allocated) return { ...base, reallocated: false, message: outcome.message };
+    return {
+      ...base, reallocated: true, totalAmount: outcome.totalAmount,
+      message: `Allocated ${formatMoney(outcome.totalAmount)} across ${outcome.allocations.filter((a) => !a.excluded).length} field(s).`,
+      fields: outcome.allocations.map((a) => ({ fieldName: a.fieldName, amount: a.amount, excluded: a.excluded })),
+    };
+  }
+
+  const priorTotal = Math.round(prior.reduce((sum, t) => sum + t.amount, 0) * 100) / 100;
+  const totalAmount = input.newTotal ?? priorTotal;
+  if (!(totalAmount > 0)) return { ...base, reallocated: false, message: "Enter a total greater than $0." };
+  const first = prior[0];
+  const farmCategoryId = input.farmCategoryId ?? first.farmCategoryId;
+  if (!farmCategoryId) return { ...base, reallocated: false, message: "The existing allocation has no category - redo it from Allocate Product Cost." };
+
+  const logged = fieldsWithLoggedUsage(activities, needle);
+  const priorSplits = prior.flatMap((t) => t.splits.filter((sp) => sp.targetType === "field" && sp.fieldId));
+  const priorFieldIds = new Set(priorSplits.map((sp) => sp.fieldId!));
+
+  // Fields with logged usage that got nothing last time were excluded on purpose.
+  const excludeFieldIds = [...logged].filter((id) => !priorFieldIds.has(id) && id !== input.includeFieldId);
+  // Fields in the last split with no logged usage were added by hand; carry their quantity forward.
+  const manualUsage: { fieldId: string; quantity: number; unit?: string }[] = [];
+  for (const sp of priorSplits) {
+    if (logged.has(sp.fieldId!) || sp.fieldId === input.editedFieldId) continue;
+    const u = usageFromNote(sp.notes);
+    if (u) manualUsage.push({ fieldId: sp.fieldId!, ...u });
+  }
+
+  const outcome = await allocateProductCostAction({
+    year: input.year, productName, totalAmount, farmCategoryId,
+    vendorName: input.vendorName ?? first.vendorName,
+    transactionDate: first.transactionDate,
+    excludeFieldIds, manualUsage, skipRevalidate: true,
+  }, { activities });
+  if (!outcome.allocated) return { ...base, reallocated: false, message: outcome.message };
+  const included = outcome.allocations.filter((a) => !a.excluded);
+  return {
+    ...base, reallocated: true, totalAmount: outcome.totalAmount,
+    message: `Re-split ${formatMoney(outcome.totalAmount)} across ${included.length} field(s)${excludeFieldIds.length ? `; ${excludeFieldIds.length} field(s) left out as before` : ""}.`,
+    fields: outcome.allocations.map((a) => ({ fieldName: a.fieldName, amount: a.amount, excluded: a.excluded })),
+  };
+}
+
+function formatMoney(n: number) {
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+function revalidateFieldCost() {
+  revalidatePath("/fields", "layout");
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+}
+
+/**
+ * Field page: edit one product line on this field's activity (product,
+ * rate, quantity - or seed, seeding rate, acres), then re-split the cost of
+ * every product that changed. Renaming re-splits both the old product
+ * (this field no longer shares in it) and the new one.
+ */
+export async function updateFieldProductLineAction(input: {
+  fieldId: string;
+  year: number;
+  oldProductName: string;
+  edit: Parameters<typeof repo.updateActivityProductLine>[0];
+}): Promise<ReallocationResult[]> {
+  await repo.updateActivityProductLine(input.edit);
+  const newName = (input.edit.kind === "seed" ? input.edit.seedProductName : input.edit.productName).trim();
+  const results: ReallocationResult[] = [];
+  const renamed = newName.toLowerCase() !== input.oldProductName.trim().toLowerCase();
+  results.push(await reallocateProduct({ year: input.year, productName: input.oldProductName, editedFieldId: input.fieldId }));
+  if (renamed && newName) results.push(await reallocateProduct({ year: input.year, productName: newName, includeFieldId: input.fieldId, editedFieldId: input.fieldId }));
+  revalidateFieldCost();
+  return results;
+}
+
+/**
+ * Field page: rename a product everywhere (all fields, all years, and its
+ * cost entries). Renaming onto a product that already exists merges them,
+ * and the merged product's cost for the year is re-split as one.
+ */
+export async function renameProductAction(input: { year: number; oldName: string; newName: string }): Promise<ReallocationResult[]> {
+  const newName = input.newName.trim();
+  if (!newName) return [{ productName: input.oldName, year: input.year, reallocated: false, message: "Enter a new name." }];
+  if (newName === input.oldName.trim()) return [{ productName: newName, year: input.year, reallocated: false, message: "That's already its name." }];
+  const r = await repo.renameProduct(input.oldName, newName);
+  const summary: ReallocationResult = {
+    productName: newName, year: input.year, reallocated: true,
+    message: `Renamed from "${input.oldName.trim()}"${r.merged ? " and merged with the existing product" : ""} — ${r.transactionsRenamed} cost entr${r.transactionsRenamed === 1 ? "y" : "ies"} updated.`,
+  };
+  const results = [summary];
+  if (r.merged) results.push(await reallocateProduct({ year: input.year, productName: newName }));
+  revalidateFieldCost();
+  return results;
+}
+
+/** Field page: change what a product cost in total for the year, and re-split it across its fields. */
+export async function updateProductTotalCostAction(input: {
+  year: number; productName: string; totalAmount: number; farmCategoryId?: string; vendorName?: string;
+}): Promise<ReallocationResult> {
+  if (!(input.totalAmount > 0)) return { productName: input.productName, year: input.year, reallocated: false, message: "Enter a total greater than $0." };
+  const result = await reallocateProduct({
+    year: input.year, productName: input.productName, newTotal: Math.round(input.totalAmount * 100) / 100,
+    farmCategoryId: input.farmCategoryId || undefined, vendorName: input.vendorName || undefined,
+  });
+  revalidateFieldCost();
+  return result;
 }
 
 /** One row of an Allocate Product Cost upload, already parsed and plain (serializable). */

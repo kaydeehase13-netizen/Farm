@@ -177,6 +177,8 @@ export interface InventoryMovement {
 }
 
 export interface SprayProductLine {
+  /** Row id of the product line itself (Supabase only), so one line can be edited in place. */
+  lineId?: string;
   productId: string;
   productName: string;
   rate: number;
@@ -211,7 +213,7 @@ export interface Activity {
   sprayProducts?: SprayProductLine[];
   seedProductName?: string;
   seedingRate?: number;
-  fertilizerProducts?: { productName: string; rate: number; rateUnit: string; quantityUsed: number; quantityUnit: string }[];
+  fertilizerProducts?: { lineId?: string; productName: string; rate: number; rateUnit: string; quantityUsed: number; quantityUnit: string }[];
   yieldAmount?: number;
   yieldUnit?: string;
   moisturePct?: number;

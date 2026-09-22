@@ -168,6 +168,8 @@ export interface FieldProductUsage {
   allocatedCost: number | null;
   /** Farm-wide usage only: how many distinct fields this product was used on. */
   fieldCount?: number;
+  /** Field page only: what this product's allocation adds up to across ALL fields for the year. */
+  farmAllocatedTotal?: number | null;
 }
 
 /**
@@ -253,9 +255,24 @@ export async function fieldProductUsage(fieldId: string, taxYear: number): Promi
     }
     return found ? total : null;
   }
+  function farmTotalFor(productName: string): number | null {
+    const needle = productName.trim().toLowerCase();
+    let total = 0;
+    let found = false;
+    for (const t of txns) {
+      if (t.transactionType !== "expense") continue;
+      // Same test Allocate Product Cost uses to find its own split, so the
+      // total shown here is exactly what a re-split will replace.
+      if (!(t.description ?? "").toLowerCase().startsWith(`${needle} — allocated by usage`)) continue;
+      if (!t.splits.some((s) => s.targetType === "field")) continue;
+      total += t.amount;
+      found = true;
+    }
+    return found ? Math.round(total * 100) / 100 : null;
+  }
 
   return Array.from(usage.values())
-    .map((u) => ({ ...u, allocatedCost: allocatedCostFor(u.productName) }))
+    .map((u) => ({ ...u, allocatedCost: allocatedCostFor(u.productName), farmAllocatedTotal: farmTotalFor(u.productName) }))
     .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
 }
 
@@ -1147,11 +1164,11 @@ export async function listActivities(filters: { fieldId?: string; activityType?:
     yieldUnit: harvest?.yield_unit ?? undefined,
     moisturePct: harvest?.moisture_pct != null ? Number(harvest.moisture_pct) : undefined,
     sprayProducts: (r.spray_product_line ?? []).map((p: any) => ({
-      productId: p.product_id, productName: p.product?.name ?? "Product", rate: Number(p.rate), rateUnit: p.rate_unit,
+      lineId: p.id, productId: p.product_id, productName: p.product?.name ?? "Product", rate: Number(p.rate), rateUnit: p.rate_unit,
       quantityUsed: Number(p.quantity_used), quantityUnit: p.quantity_unit, epaRegistrationNumber: p.product?.epa_registration_number,
     })),
     fertilizerProducts: (r.fertilizer_product_line ?? []).map((p: any) => ({
-      productName: p.product?.name ?? "Product", rate: Number(p.rate), rateUnit: p.rate_unit,
+      lineId: p.id, productName: p.product?.name ?? "Product", rate: Number(p.rate), rateUnit: p.rate_unit,
       quantityUsed: Number(p.quantity_used), quantityUnit: p.quantity_unit,
     })),
   };
@@ -1324,6 +1341,150 @@ export async function getActivity(activityId: string): Promise<Activity | null> 
   if (!data) return null;
   const activities = await listActivities({ fieldId: (data as any).field_id ?? undefined });
   return activities.find((a) => a.id === activityId) ?? null;
+}
+
+export type ProductLineEdit =
+  | { kind: "spray" | "fertilizer"; activityId: string; lineId?: string; lineIndex: number; productName: string; rate: number; quantityUsed: number }
+  | { kind: "seed"; activityId: string; seedProductName: string; seedingRate: number | null; acres: number | null };
+
+/**
+ * Edits one product line on a logged activity in place - the product it
+ * used, its rate, and how much was used (or, for planting, the seed,
+ * seeding rate and acres). Renaming a line points it at that product
+ * (created if new). The activity's inventory usage movement follows the
+ * line, so the product's on-hand count stays right.
+ */
+export async function updateActivityProductLine(edit: ProductLineEdit): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const { data: activity, error: findErr } = await supabase.from("activity").select("id").eq("id", edit.activityId).eq("farm_business_id", farm.id).maybeSingle();
+  if (findErr || !activity) throw new Error("Couldn't find that activity.");
+
+  async function productIdFor(name: string, category: string, unit: string): Promise<string> {
+    const { data: existing } = await supabase.from("product").select("id").eq("farm_business_id", farm.id).eq("name", name).maybeSingle();
+    if (existing?.id) return existing.id;
+    const { data: created, error } = await supabase.from("product").insert({ farm_business_id: farm.id, category, name, default_unit: unit }).select("id").single();
+    if (error || !created) throw new Error(`Product "${name}": ${error?.message ?? "couldn't create it"}`);
+    return created.id;
+  }
+
+  if (edit.kind === "seed") {
+    const seedProductId = edit.seedProductName.trim() ? await productIdFor(edit.seedProductName.trim(), "seed", "seeds") : null;
+    const { error } = await supabase.from("planting_activity_detail").upsert(
+      { activity_id: edit.activityId, seed_product_id: seedProductId, seeding_rate: edit.seedingRate },
+      { onConflict: "activity_id" },
+    );
+    if (error) throw new Error(error.message);
+    const { error: acresErr } = await supabase.from("activity").update({ acres: edit.acres }).eq("id", edit.activityId);
+    if (acresErr) throw new Error(acresErr.message);
+    return;
+  }
+
+  const table = edit.kind === "spray" ? "spray_product_line" : "fertilizer_product_line";
+  if (!edit.lineId) throw new Error("That product line can't be edited - reload the page and try again.");
+  const { data: line, error: lineErr } = await supabase.from(table).select("id, product_id, quantity_unit").eq("id", edit.lineId).eq("activity_id", edit.activityId).maybeSingle();
+  if (lineErr || !line) throw new Error("Couldn't find that product line.");
+
+  const name = edit.productName.trim();
+  if (!name) throw new Error("Enter a product name.");
+  const newProductId = await productIdFor(name, edit.kind === "spray" ? "chemical" : "fertilizer", line.quantity_unit);
+  const { error: updErr } = await supabase.from(table).update({ product_id: newProductId, rate: edit.rate, quantity_used: edit.quantityUsed }).eq("id", edit.lineId);
+  if (updErr) throw new Error(updErr.message);
+
+  // Keep the inventory ledger in step: move this activity's usage movement
+  // for the old product onto the new one, at the new quantity.
+  const { data: oldItem } = await supabase.from("inventory_item").select("id")
+    .eq("farm_business_id", farm.id).eq("product_id", line.product_id).eq("unit", line.quantity_unit).maybeSingle();
+  if (oldItem?.id) {
+    let newItemId: string | undefined = oldItem.id;
+    if (newProductId !== line.product_id) {
+      const { data: item } = await supabase.from("inventory_item").select("id")
+        .eq("farm_business_id", farm.id).eq("product_id", newProductId).eq("unit", line.quantity_unit).maybeSingle();
+      newItemId = item?.id;
+      if (!newItemId) {
+        const { data: created } = await supabase.from("inventory_item").insert({ farm_business_id: farm.id, product_id: newProductId, unit: line.quantity_unit, quantity_on_hand: 0 }).select("id").single();
+        newItemId = created?.id;
+      }
+    }
+    if (newItemId) {
+      await supabase.from("inventory_movement").update({ inventory_item_id: newItemId, quantity: -edit.quantityUsed })
+        .eq("related_activity_id", edit.activityId).eq("inventory_item_id", oldItem.id).lt("quantity", 0);
+    }
+  }
+}
+
+/**
+ * Renames a product everywhere: every field and year it was logged on, and
+ * every transaction filed under it (Product Name, or a description starting
+ * "<name> —" like the per-field allocation splits). If a product with the
+ * new name already exists the two are merged: logged usage is pointed at
+ * the existing one and the old one is archived.
+ */
+export async function renameProduct(oldName: string, newName: string): Promise<{ merged: boolean; linesMoved: number; transactionsRenamed: number }> {
+  const { supabase, farm } = await ctx();
+  const from = oldName.trim();
+  const to = newName.trim();
+  if (!from || !to) throw new Error("Enter a product name.");
+  const fromLower = from.toLowerCase();
+  const toLower = to.toLowerCase();
+
+  const { data: products, error: prodErr } = await supabase.from("product").select("id, name").eq("farm_business_id", farm.id);
+  if (prodErr) throw new Error(prodErr.message);
+  const olds = (products ?? []).filter((p: any) => (p.name ?? "").trim().toLowerCase() === fromLower);
+  const existingTarget = fromLower === toLower ? undefined : (products ?? []).find((p: any) => (p.name ?? "").trim().toLowerCase() === toLower);
+  if (olds.length === 0 && !existingTarget) throw new Error(`Couldn't find a product named "${from}".`);
+
+  let targetId: string;
+  let toMerge: any[];
+  if (existingTarget) {
+    targetId = existingTarget.id;
+    toMerge = olds;
+  } else {
+    // Rename the first matching row; any case-variant duplicates merge into it.
+    targetId = olds[0].id;
+    const { error } = await supabase.from("product").update({ name: to }).eq("id", targetId);
+    if (error) throw new Error(error.message);
+    toMerge = olds.slice(1);
+  }
+
+  let linesMoved = 0;
+  for (const old of toMerge) {
+    for (const table of ["spray_product_line", "fertilizer_product_line"]) {
+      const { data, error } = await supabase.from(table).update({ product_id: targetId }).eq("product_id", old.id).select("id");
+      if (error) throw new Error(error.message);
+      linesMoved += data?.length ?? 0;
+    }
+    const { data: seeds, error: seedErr } = await supabase.from("planting_activity_detail").update({ seed_product_id: targetId }).eq("seed_product_id", old.id).select("activity_id");
+    if (seedErr) throw new Error(seedErr.message);
+    linesMoved += seeds?.length ?? 0;
+    await supabase.from("product").update({ archived_at: new Date().toISOString() }).eq("id", old.id);
+  }
+
+  // Transactions: page through a narrow select and rename matches in JS.
+  const rows: { id: string; description: string | null; product_name: string | null }[] = [];
+  for (let offset = 0; ; ) {
+    const { data, error } = await supabase.from("transaction").select("id, description, product_name")
+      .eq("farm_business_id", farm.id).order("id", { ascending: true }).range(offset, offset + TXN_PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) break;
+    rows.push(...(data as any[]));
+    offset += data.length;
+  }
+  const updates: { id: string; patch: Record<string, string> }[] = [];
+  for (const r of rows) {
+    const patch: Record<string, string> = {};
+    const desc = r.description ?? "";
+    const dl = desc.toLowerCase();
+    if (dl.startsWith(`${fromLower} —`) || dl.startsWith(`${fromLower} -`)) patch.description = to + desc.slice(from.length);
+    if ((r.product_name ?? "").trim().toLowerCase() === fromLower) patch.product_name = to;
+    if (Object.keys(patch).length) updates.push({ id: r.id, patch });
+  }
+  for (let i = 0; i < updates.length; i += 20) {
+    await Promise.all(updates.slice(i, i + 20).map(async (u) => {
+      const { error } = await supabase.from("transaction").update(u.patch).eq("id", u.id).eq("farm_business_id", farm.id);
+      if (error) throw new Error(error.message);
+    }));
+  }
+  return { merged: !!existingTarget || toMerge.length > 0, linesMoved, transactionsRenamed: updates.length };
 }
 
 /**

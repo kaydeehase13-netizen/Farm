@@ -489,9 +489,24 @@ export function fieldProductUsage(fieldId: string, taxYear: number) {
     }
     return found ? total : null;
   }
+  function farmTotalFor(productName: string): number | null {
+    const needle = productName.trim().toLowerCase();
+    let total = 0;
+    let found = false;
+    for (const t of txns) {
+      if (t.transactionType !== "expense") continue;
+      // Same test Allocate Product Cost uses to find its own split, so the
+      // total shown here is exactly what a re-split will replace.
+      if (!(t.description ?? "").toLowerCase().startsWith(`${needle} — allocated by usage`)) continue;
+      if (!t.splits.some((s) => s.targetType === "field")) continue;
+      total += t.amount;
+      found = true;
+    }
+    return found ? Math.round(total * 100) / 100 : null;
+  }
 
   return Array.from(usage.values())
-    .map((u) => ({ ...u, allocatedCost: allocatedCostFor(u.productName) }))
+    .map((u) => ({ ...u, allocatedCost: allocatedCostFor(u.productName), farmAllocatedTotal: farmTotalFor(u.productName) }))
     .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
 }
 
@@ -1168,4 +1183,54 @@ export function dashboardSummary(taxYear: number) {
       overdueInvoices, unconfirmedReceipts, lowInventory,
     },
   };
+}
+
+/** Demo-mode mirror of the Supabase updateActivityProductLine (lines are matched by position). */
+export function updateActivityProductLine(edit:
+  | { kind: "spray" | "fertilizer"; activityId: string; lineId?: string; lineIndex: number; productName: string; rate: number; quantityUsed: number }
+  | { kind: "seed"; activityId: string; seedProductName: string; seedingRate: number | null; acres: number | null }) {
+  mutate((db) => {
+    const a = db.activities.find((a) => a.id === edit.activityId);
+    if (!a) throw new Error("Couldn't find that activity.");
+    if (edit.kind === "seed") {
+      a.seedProductName = edit.seedProductName.trim() || undefined;
+      a.seedingRate = edit.seedingRate ?? undefined;
+      a.acres = edit.acres ?? undefined;
+      return;
+    }
+    const lines = edit.kind === "spray" ? a.sprayProducts : a.fertilizerProducts;
+    const line = lines?.[edit.lineIndex];
+    if (!line) throw new Error("Couldn't find that product line.");
+    line.productName = edit.productName.trim();
+    line.rate = edit.rate;
+    line.quantityUsed = edit.quantityUsed;
+  });
+}
+
+/** Demo-mode mirror of the Supabase renameProduct. */
+export function renameProduct(oldName: string, newName: string): { merged: boolean; linesMoved: number; transactionsRenamed: number } {
+  const from = oldName.trim(), to = newName.trim();
+  if (!from || !to) throw new Error("Enter a product name.");
+  const fl = from.toLowerCase();
+  const merged = getDB().activities.some((a) =>
+    [...(a.sprayProducts ?? []), ...(a.fertilizerProducts ?? [])].some((p) => p.productName.trim().toLowerCase() === to.toLowerCase()) ||
+    (a.seedProductName ?? "").trim().toLowerCase() === to.toLowerCase()) && fl !== to.toLowerCase();
+  return mutate((db) => {
+    let linesMoved = 0, transactionsRenamed = 0;
+    for (const a of db.activities) {
+      for (const p of [...(a.sprayProducts ?? []), ...(a.fertilizerProducts ?? [])]) {
+        if (p.productName.trim().toLowerCase() === fl) { p.productName = to; linesMoved++; }
+      }
+      if ((a.seedProductName ?? "").trim().toLowerCase() === fl) { a.seedProductName = to; linesMoved++; }
+    }
+    for (const t of db.transactions) {
+      const desc = t.description ?? "";
+      const dl = desc.toLowerCase();
+      let hit = false;
+      if (dl.startsWith(`${fl} —`) || dl.startsWith(`${fl} -`)) { t.description = to + desc.slice(from.length); hit = true; }
+      if ((t.productName ?? "").trim().toLowerCase() === fl) { t.productName = to; hit = true; }
+      if (hit) transactionsRenamed++;
+    }
+    return { merged, linesMoved, transactionsRenamed };
+  });
 }

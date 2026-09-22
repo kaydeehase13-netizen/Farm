@@ -4,7 +4,7 @@ import { getField, fieldProfitability, listActivities, listCropYears, getFarm, f
 import { PageHeader, StatCard, money, moneyPrecise } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 import { DeleteFieldButton } from "@/components/fields/delete-field-button";
-import { ProductUsagePanel } from "@/components/fields/product-usage-panel";
+import { ProductUsagePanel, type EditableProductLine } from "@/components/fields/product-usage-panel";
 import { HarvestActivityEditor } from "@/components/fields/harvest-activity-editor";
 import { FieldOwnershipEditor } from "@/components/fields/field-ownership-editor";
 import { FieldOverheadPanel } from "@/components/fields/field-overhead-panel";
@@ -30,6 +30,24 @@ export default async function FieldDetailPage({
   const productUsage = await fieldProductUsage(fieldId, taxYear);
   const farmCategories = await listFarmCategories();
   const overheadAllocations = await listFieldOverheadAllocations(fieldId, taxYear);
+
+  // Every product line on this field's activity for the year, so the usage
+  // panel can edit them in place.
+  const yearActivities = showAllActivities ? await listActivities({ fieldId, year: taxYear }) : activities;
+  const editableLines: EditableProductLine[] = yearActivities.flatMap((a): EditableProductLine[] => [
+    ...(a.sprayProducts ?? []).map((p, i): EditableProductLine => ({
+      kind: "spray", activityId: a.id, activityDate: a.activityDate, lineId: p.lineId, lineIndex: i,
+      productName: p.productName, rate: p.rate, rateUnit: p.rateUnit, quantityUsed: p.quantityUsed, quantityUnit: p.quantityUnit,
+    })),
+    ...(a.fertilizerProducts ?? []).map((p, i): EditableProductLine => ({
+      kind: "fertilizer", activityId: a.id, activityDate: a.activityDate, lineId: p.lineId, lineIndex: i,
+      productName: p.productName, rate: p.rate, rateUnit: p.rateUnit, quantityUsed: p.quantityUsed, quantityUnit: p.quantityUnit,
+    })),
+    ...(a.seedProductName ? [{
+      kind: "seed" as const, activityId: a.id, activityDate: a.activityDate,
+      seedProductName: a.seedProductName, seedingRate: a.seedingRate, acres: a.acres,
+    }] : []),
+  ]);
 
   const expenseRows: [string, number][] = ([
     ["Seed", profit.expenseSeed], ["Fertilizer", profit.expenseFertilizer], ["Chemical", profit.expenseChemical],
@@ -69,7 +87,11 @@ export default async function FieldDetailPage({
       </div>
 
       <div className="mb-6">
-        <ProductUsagePanel usage={productUsage} taxYear={taxYear} />
+        <ProductUsagePanel
+          usage={productUsage}
+          taxYear={taxYear}
+          edit={{ fieldId, lines: editableLines, farmCategories: farmCategories.map((c) => ({ id: c.id, name: c.name })) }}
+        />
       </div>
 
       <div className="mb-6">
