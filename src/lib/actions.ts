@@ -1567,8 +1567,6 @@ async function findFieldAllocatedProductTransactions(year: number, productName: 
   return txns.filter((t) => (t.description ?? "").toLowerCase().startsWith(prefix) && t.splits.some((s) => s.targetType === "field"));
 }
 
-<<<<<<< Updated upstream
-=======
 /**
  * Rolls a Cost column from the activity importer up into the SAME per-field
  * expense split that Allocate Product Cost produces.
@@ -1589,7 +1587,6 @@ async function findFieldAllocatedProductTransactions(year: number, productName: 
  * Re-running is safe: allocateProductCostAction tears down the prior split
  * for that product/year before writing the new one.
  */
->>>>>>> Stashed changes
 export async function allocateImportedProductCostsAction(
   rows: ImportRow[],
   options?: { vendorName?: string },
@@ -1599,11 +1596,8 @@ export async function allocateImportedProductCostsAction(
 }> {
   const farmCategories = await repo.listFarmCategories();
 
-<<<<<<< Updated upstream
-=======
   // Match the farm's own category names rather than hard-coding ids —
   // every farm's category list is its own.
->>>>>>> Stashed changes
   function categoryIdFor(activityType: string): string | undefined {
     const want =
       activityType === "plant" ? ["seed"]
@@ -1617,13 +1611,10 @@ export async function allocateImportedProductCostsAction(
     return undefined;
   }
 
-<<<<<<< Updated upstream
-=======
   // (year + product) is the grain allocateProductCostAction works at. The
   // activity type rides along only to pick a category; where one product
   // somehow appears under two types, first one in wins, which is fine
   // because the category is a tax bucket, not part of the identity.
->>>>>>> Stashed changes
   const totals = new Map<string, { year: number; productName: string; activityType: string; total: number }>();
   for (const r of rows) {
     if (r.cost == null || !(r.cost > 0)) continue;
@@ -1644,11 +1635,7 @@ export async function allocateImportedProductCostsAction(
     const total = Math.round(t.total * 100) / 100;
     const farmCategoryId = categoryIdFor(t.activityType);
     if (!farmCategoryId) {
-<<<<<<< Updated upstream
-      skipped.push({ productName: t.productName, year: t.year, total, reason: "No matching expense category on this farm - allocate it by hand." });
-=======
       skipped.push({ productName: t.productName, year: t.year, total, reason: "No matching expense category on this farm — allocate it by hand." });
->>>>>>> Stashed changes
       continue;
     }
     try {

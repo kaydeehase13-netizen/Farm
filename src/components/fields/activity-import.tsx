@@ -102,17 +102,10 @@ function num(v: string | undefined): number | null {
 }
 
 /**
-<<<<<<< Updated upstream
- * Currency parser for the optional Cost column. Deliberately NOT `num` - a
- * blank cost means "not priced yet", which must stay null rather than
- * collapsing to 0, or an unpriced row reads as a genuinely free one and
- * quietly drags the product's allocated total down.
-=======
  * Currency parser for the optional Cost column. Deliberately NOT `num` —
  * a blank cost means "not priced yet", which has to stay null rather than
  * collapsing to 0, or an unpriced row would read as a genuinely free one
  * and quietly drag a product's allocated total down.
->>>>>>> Stashed changes
  */
 function money(v: string | undefined): number | null {
   if (v == null) return null;
@@ -310,24 +303,14 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
     }
     setImportProgress(null);
 
-<<<<<<< Updated upstream
-    // Costs are allocated only after the activities are on file: the split
-    // is driven by logged usage, so it has nothing to divide across until
-    // the rows it divides across exist.
-=======
     // Costs are allocated only after the activities themselves are on file:
     // the split is driven by logged usage, so it has nothing to divide
     // across until the rows it is dividing across exist.
->>>>>>> Stashed changes
     if (colMap.cost && finalRows.some((r) => r.cost != null)) {
       try {
         setCostResult(await allocateImportedProductCostsAction(finalRows));
       } catch (e) {
-<<<<<<< Updated upstream
-        setCostResult({ allocated: [], skipped: [{ productName: "-", year: 0, total: 0, reason: e instanceof Error ? e.message : "Cost allocation failed." }] });
-=======
         setCostResult({ allocated: [], skipped: [{ productName: "—", year: 0, total: 0, reason: e instanceof Error ? e.message : "Cost allocation failed." }] });
->>>>>>> Stashed changes
       }
     }
 
@@ -513,19 +496,11 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
       {costResult && costResult.allocated.length > 0 && (
         <div className="text-left text-sm bg-sage/20 border border-sage/40 rounded-lg p-3 text-charcoal/70">
           <div className="font-medium mb-1">
-<<<<<<< Updated upstream
-            Allocated {formatUsd(costResult.allocated.reduce((sum, a) => sum + a.total, 0))} of product cost across {costResult.allocated.length} product{costResult.allocated.length === 1 ? "" : "s"}
-          </div>
-          <ul className="list-disc list-inside space-y-0.5">
-            {costResult.allocated.map((a) => (
-              <li key={`${a.year}-${a.productName}`}>{a.productName} ({a.year}) &mdash; {formatUsd(a.total)} across {a.fields} field{a.fields === 1 ? "" : "s"}</li>
-=======
             Allocated {formatUsd(costResult.allocated.reduce((s, a) => s + a.total, 0))} of product cost across {costResult.allocated.length} product{costResult.allocated.length === 1 ? "" : "s"}
           </div>
           <ul className="list-disc list-inside space-y-0.5">
             {costResult.allocated.map((a) => (
               <li key={`${a.year}-${a.productName}`}>{a.productName} ({a.year}) — {formatUsd(a.total)} across {a.fields} field{a.fields === 1 ? "" : "s"}</li>
->>>>>>> Stashed changes
             ))}
           </ul>
         </div>
@@ -535,11 +510,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
           <div className="font-medium mb-1">{costResult.skipped.length} product cost{costResult.skipped.length === 1 ? "" : "s"} still need allocating by hand:</div>
           <ul className="list-disc list-inside space-y-0.5">
             {costResult.skipped.map((sk, i) => (
-<<<<<<< Updated upstream
-              <li key={i}>{sk.productName} ({sk.year}) &mdash; {formatUsd(sk.total)}: {sk.reason}</li>
-=======
               <li key={i}>{sk.productName} ({sk.year}) — {formatUsd(sk.total)}: {sk.reason}</li>
->>>>>>> Stashed changes
             ))}
           </ul>
         </div>
