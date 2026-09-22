@@ -2537,6 +2537,63 @@ export async function renameProductAction(input: { year: number; oldName: string
   return results;
 }
 
+/**
+ * A general cost (e.g. a "Corn seed" charge the dealer didn't break down by
+ * hybrid) spread over fields you pick, weighted by how much seed each of
+ * those fields planted - counting only the seed products you tick (so a
+ * field's soybean seed doesn't inflate its corn share). Seeds planted =
+ * seeding rate x acres, summed across the chosen hybrids.
+ *
+ * It rides on allocateProductCostAction as hand-entered usage, so it gets
+ * the same replace-on-rerun behavior, shows up as normal per-field expense
+ * splits, and the field page's re-split keeps those fields and quantities.
+ */
+export async function allocateGeneralCostAction(input: {
+  year: number;
+  name: string;
+  totalAmount: number;
+  farmCategoryId: string;
+  vendorName?: string;
+  transactionDate?: string;
+  fieldIds: string[];
+  seedProducts: string[];
+}) {
+  const name = input.name.trim();
+  if (!name) throw new Error("Give this cost a name, e.g. Corn seed (general).");
+  if (input.fieldIds.length === 0) throw new Error("Tick at least one field.");
+  if (input.seedProducts.length === 0) throw new Error("Tick at least one seed to count.");
+
+  const activities = await repo.listActivities({ year: input.year });
+  if (fieldsWithLoggedUsage(activities, name.toLowerCase()).size > 0) {
+    throw new Error(`"${name}" is already the name of a product on your logged activity. Use a different name, e.g. "${name} (general)".`);
+  }
+
+  const wanted = new Set(input.seedProducts.map((n) => n.trim().toLowerCase()));
+  const picked = new Set(input.fieldIds);
+  const seedsByField = new Map<string, number>();
+  for (const a of activities) {
+    if (!a.fieldId || !picked.has(a.fieldId) || !a.seedProductName) continue;
+    if (!wanted.has(a.seedProductName.trim().toLowerCase())) continue;
+    const seeds = (a.seedingRate ?? 0) * (a.acres ?? 0);
+    if (seeds > 0) seedsByField.set(a.fieldId, (seedsByField.get(a.fieldId) ?? 0) + seeds);
+  }
+  const missing = input.fieldIds.filter((id) => !seedsByField.has(id));
+  if (seedsByField.size === 0) {
+    return { allocated: false as const, message: `None of the ticked fields planted the ticked seed in ${input.year}, so there's nothing to split by.`, missingFieldIds: missing };
+  }
+
+  const outcome = await allocateProductCostAction({
+    year: input.year,
+    productName: name,
+    totalAmount: input.totalAmount,
+    farmCategoryId: input.farmCategoryId,
+    vendorName: input.vendorName || undefined,
+    transactionDate: input.transactionDate || undefined,
+    manualUsage: [...seedsByField].map(([fieldId, seeds]) => ({ fieldId, quantity: Math.round(seeds), unit: "seeds" })),
+  }, { activities });
+  return { ...outcome, missingFieldIds: missing };
+}
+
 /** Field page: change what a product cost in total for the year, and re-split it across its fields. */
 export async function updateProductTotalCostAction(input: {
   year: number; productName: string; totalAmount: number; farmCategoryId?: string; vendorName?: string;

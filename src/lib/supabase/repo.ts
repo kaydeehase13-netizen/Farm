@@ -170,6 +170,8 @@ export interface FieldProductUsage {
   fieldCount?: number;
   /** Field page only: what this product's allocation adds up to across ALL fields for the year. */
   farmAllocatedTotal?: number | null;
+  /** Field page only: every transaction split that makes up allocatedCost on this field. */
+  costSources?: { transactionId: string; date: string; description: string; vendorName?: string; amount: number }[];
 }
 
 /**
@@ -241,19 +243,21 @@ export async function fieldProductUsage(fieldId: string, taxYear: number): Promi
 
   const fieldName = field?.name ?? "";
   function allocatedCostFor(productName: string): number | null {
+    const sources = costSourcesFor(productName);
+    return sources.length ? sources.reduce((sum, c) => sum + c.amount, 0) : null;
+  }
+  function costSourcesFor(productName: string): NonNullable<FieldProductUsage["costSources"]> {
     const needle = productName.trim().toLowerCase();
-    let total = 0;
-    let found = false;
+    const out: NonNullable<FieldProductUsage["costSources"]> = [];
     for (const t of txns) {
       if (t.transactionType !== "expense") continue;
       if (!transactionMatchesProductName(t, needle)) continue;
       for (const s of t.splits) {
         if (s.fieldId !== fieldId) continue;
-        total += s.allocatedAmount;
-        found = true;
+        out.push({ transactionId: t.id, date: t.transactionDate, description: t.description ?? t.productName ?? "", vendorName: t.vendorName, amount: s.allocatedAmount });
       }
     }
-    return found ? total : null;
+    return out;
   }
   function farmTotalFor(productName: string): number | null {
     const needle = productName.trim().toLowerCase();
@@ -272,7 +276,7 @@ export async function fieldProductUsage(fieldId: string, taxYear: number): Promi
   }
 
   return Array.from(usage.values())
-    .map((u) => ({ ...u, allocatedCost: allocatedCostFor(u.productName), farmAllocatedTotal: farmTotalFor(u.productName) }))
+    .map((u) => ({ ...u, allocatedCost: allocatedCostFor(u.productName), farmAllocatedTotal: farmTotalFor(u.productName), costSources: costSourcesFor(u.productName) }))
     .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
 }
 

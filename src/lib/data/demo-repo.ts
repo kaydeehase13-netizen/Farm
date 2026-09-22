@@ -473,21 +473,23 @@ export function fieldProductUsage(fieldId: string, taxYear: number) {
     if (a.seedProductName) addLine("Seed", a.seedProductName, a.seedingRate && a.acres ? a.seedingRate * a.acres : undefined, "units", a);
   }
 
-  function allocatedCostFor(productName: string): number | null {
+  function costSourcesFor(productName: string) {
     const needle = productName.trim().toLowerCase();
-    let total = 0;
-    let found = false;
+    const out: { transactionId: string; date: string; description: string; vendorName?: string; amount: number }[] = [];
     for (const t of txns) {
       if (t.transactionType !== "expense") continue;
       const desc = (t.description ?? "").toLowerCase();
       if (!desc.startsWith(`${needle} —`) && !desc.startsWith(`${needle} -`)) continue;
       for (const s of t.splits) {
         if (s.fieldId !== fieldId) continue;
-        total += s.allocatedAmount;
-        found = true;
+        out.push({ transactionId: t.id, date: t.transactionDate, description: t.description ?? "", vendorName: t.vendorName, amount: s.allocatedAmount });
       }
     }
-    return found ? total : null;
+    return out;
+  }
+  function allocatedCostFor(productName: string): number | null {
+    const sources = costSourcesFor(productName);
+    return sources.length ? sources.reduce((sum, c) => sum + c.amount, 0) : null;
   }
   function farmTotalFor(productName: string): number | null {
     const needle = productName.trim().toLowerCase();
@@ -506,7 +508,7 @@ export function fieldProductUsage(fieldId: string, taxYear: number) {
   }
 
   return Array.from(usage.values())
-    .map((u) => ({ ...u, allocatedCost: allocatedCostFor(u.productName), farmAllocatedTotal: farmTotalFor(u.productName) }))
+    .map((u) => ({ ...u, allocatedCost: allocatedCostFor(u.productName), farmAllocatedTotal: farmTotalFor(u.productName), costSources: costSourcesFor(u.productName) }))
     .sort((a, b) => (b.allocatedCost ?? -1) - (a.allocatedCost ?? -1) || b.totalQuantity - a.totalQuantity);
 }
 

@@ -226,6 +226,28 @@ function ProductEditor({
 
   return (
     <div className="mt-2 mb-2 rounded-lg bg-cream-deep/50 p-3 space-y-4 text-sm">
+      <div className="space-y-1">
+        <div className="font-medium text-charcoal/80">Where this field&apos;s cost comes from</div>
+        {usage.costSources && usage.costSources.length > 0 ? (
+          <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-0.5 text-xs text-charcoal/70">
+            {usage.costSources.map((c, i) => (
+              <Fragment key={`${c.transactionId}-${i}`}>
+                <span className="text-charcoal/50">{c.date}</span>
+                <a href={`/money/transactions?q=${encodeURIComponent(c.description.slice(0, 40))}`} className="hover:underline truncate">
+                  {c.description || "(no description)"}{c.vendorName ? ` · ${c.vendorName}` : ""}
+                </a>
+                <span className="text-right">{money(c.amount)}</span>
+              </Fragment>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-charcoal/50">No expense on file for this product on this field yet.</p>
+        )}
+        <p className="text-xs text-charcoal/45">
+          Any expense whose Product Name is {usage.productName}, or whose description starts with &quot;{usage.productName} —&quot;, counts toward it for each field it&apos;s split to.
+        </p>
+      </div>
+
       <form onSubmit={saveTotal} className="space-y-2">
         <div className="font-medium text-charcoal/80">Total paid for {usage.productName} in {taxYear} (all fields)</div>
         <div className="flex flex-wrap items-center gap-2">
