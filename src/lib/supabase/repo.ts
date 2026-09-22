@@ -498,19 +498,42 @@ export async function renameVendor(id: string, newName: string): Promise<{ merge
   return { merged: false };
 }
 
+const TXN_PAGE_SIZE = 1000;
+const SPLIT_ID_CHUNK = 150;
 const TXN_SELECT = "*, vendor:vendor_id(name), tax_year:tax_year_id(year), tax_category:tax_category_id(code)";
 
 export async function listTransactions(filters: {
   taxYear?: number; type?: string; status?: string; fieldId?: string; customerId?: string; vendorId?: string; search?: string;
 } = {}): Promise<Transaction[]> {
   const { supabase, farm } = await ctx();
-  let q = supabase.from("transaction").select(TXN_SELECT).eq("farm_business_id", farm.id).order("transaction_date", { ascending: false });
-  if (filters.type) q = q.eq("transaction_type", filters.type);
-  if (filters.status) q = q.eq("status", filters.status);
-  if (filters.customerId) q = q.eq("customer_id", filters.customerId);
-  if (filters.vendorId) q = q.eq("vendor_id", filters.vendorId);
-  const { data: rows, error } = await q;
-  if (error || !rows) return [];
+  // Paged the same way as listActivities: PostgREST caps one response at
+  // max-rows (1000 on Supabase), so an unpaged select silently dropped
+  // everything past the first 1000 transactions. Allocate Product Cost
+  // relies on this list to find and replace a product's earlier split; a
+  // truncated list meant the old split was missed and the new one stacked
+  // on top of it. The id tiebreaker keeps paging stable across the many
+  // transactions that share a date.
+  function buildQuery() {
+    let q = supabase.from("transaction").select(TXN_SELECT).eq("farm_business_id", farm.id)
+      .order("transaction_date", { ascending: false })
+      .order("id", { ascending: true });
+    if (filters.type) q = q.eq("transaction_type", filters.type);
+    if (filters.status) q = q.eq("status", filters.status);
+    if (filters.customerId) q = q.eq("customer_id", filters.customerId);
+    if (filters.vendorId) q = q.eq("vendor_id", filters.vendorId);
+    return q;
+  }
+  const rows: any[] = [];
+  for (let from = 0; ; ) {
+    const { data, error } = await buildQuery().range(from, from + TXN_PAGE_SIZE - 1);
+    if (error) {
+      console.error("listTransactions failed:", error.message);
+      return [];
+    }
+    if (!data || data.length === 0) break;
+    rows.push(...data);
+    from += data.length;
+  }
 
   let filtered = filters.taxYear ? rows.filter((r: any) => r.tax_year?.year === filters.taxYear) : rows;
   // Vendor name isn't a column on transaction — it only exists on the
@@ -528,9 +551,26 @@ export async function listTransactions(filters: {
   }
   const ids = filtered.map((r: any) => r.id);
   if (ids.length === 0) return [];
-  const { data: splitRows } = await supabase.from("transaction_split").select("*").in("transaction_id", ids);
+  // Split lookup in chunks: `.in()` puts every id in the request URL, and
+  // a few hundred UUIDs is enough to exceed the URL length limit - the
+  // request then fails, splitRows comes back empty, and every transaction
+  // looks unsplit.
+  const splitChunks = await Promise.all(
+    Array.from({ length: Math.ceil(ids.length / SPLIT_ID_CHUNK) }, (_, i) =>
+      supabase.from("transaction_split").select("*").in("transaction_id", ids.slice(i * SPLIT_ID_CHUNK, (i + 1) * SPLIT_ID_CHUNK))
+    )
+  );
+  const splitRows = splitChunks.flatMap((c) => {
+    if (c.error) console.error("listTransactions split lookup failed:", c.error.message);
+    return c.data ?? [];
+  });
+  const splitsByTxn = new Map<string, any[]>();
+  for (const sr of splitRows) {
+    const list = splitsByTxn.get(sr.transaction_id);
+    if (list) list.push(sr); else splitsByTxn.set(sr.transaction_id, [sr]);
+  }
 
-  let result = filtered.map((r: any) => mapTransaction(r, mapSplits(splitRows ?? [], r.id)));
+  let result = filtered.map((r: any) => mapTransaction(r, mapSplits(splitsByTxn.get(r.id) ?? [], r.id)));
   if (filters.fieldId) result = result.filter((t) => t.splits.some((s) => s.fieldId === filters.fieldId));
   return result;
 }

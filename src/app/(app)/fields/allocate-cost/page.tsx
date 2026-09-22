@@ -2,8 +2,7 @@ import { listActivities, listFarmCategories, listTaxYears, listFields } from "@/
 import { PageHeader } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 import { AllocateCostForm } from "@/components/fields/allocate-cost-form";
-import { ExcelBulkImport } from "@/components/shared/excel-bulk-import";
-import { bulkImportAllocateCostAction } from "@/lib/actions";
+import { AllocateCostBulkImport } from "@/components/fields/allocate-cost-bulk-import";
 import { distinctProductNames } from "@/lib/product-usage";
 
 export default async function AllocateCostPage() {
@@ -33,11 +32,10 @@ export default async function AllocateCostPage() {
         fields={fields.map((f) => ({ id: f.id, name: f.name }))}
       />
       <div className="mt-6">
-        <ExcelBulkImport
+        <AllocateCostBulkImport
           title="Bulk allocate from Excel"
           description="Got several products to allocate at once? Download the template, fill in one row per product, and upload it here instead of doing them one at a time above."
           templateUrl="/api/templates/allocate-cost"
-          action={bulkImportAllocateCostAction}
         />
       </div>
     </div>

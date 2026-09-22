@@ -1521,10 +1521,12 @@ function transactionMatchesProduct(t: { productName?: string; description?: stri
   return desc.startsWith(`${needle} —`) || desc.startsWith(`${needle} -`);
 }
 
-async function findUnallocatedProductTransactions(year: number, productName: string) {
+type ExpenseTxns = Awaited<ReturnType<typeof repo.listTransactions>>;
+
+async function findUnallocatedProductTransactions(year: number, productName: string, preloaded?: ExpenseTxns) {
   const needle = productName.trim().toLowerCase();
   if (!needle) return [];
-  const txns = await repo.listTransactions({ taxYear: year, type: "expense" });
+  const txns = preloaded ?? await repo.listTransactions({ taxYear: year, type: "expense" });
   return txns.filter((t) => {
     if (!transactionMatchesProduct(t, needle)) return false;
     return !t.splits.some((s) => s.targetType === "field");
@@ -1559,10 +1561,10 @@ export async function findUnallocatedProductCostAction(input: { year: number; pr
 }
 
 /** Existing per-field allocations from a prior allocateProductCostAction run for this product/year — the ones a reallocation replaces. */
-async function findFieldAllocatedProductTransactions(year: number, productName: string) {
+async function findFieldAllocatedProductTransactions(year: number, productName: string, preloaded?: ExpenseTxns) {
   const needle = productName.trim().toLowerCase();
   if (!needle) return [];
-  const txns = await repo.listTransactions({ taxYear: year, type: "expense" });
+  const txns = preloaded ?? await repo.listTransactions({ taxYear: year, type: "expense" });
   const prefix = `${needle} — allocated by usage`;
   return txns.filter((t) => (t.description ?? "").toLowerCase().startsWith(prefix) && t.splits.some((s) => s.targetType === "field"));
 }
@@ -1674,6 +1676,12 @@ export async function allocateProductCostAction(input: {
    * it also has real logged usage, in which case the two add together.
    */
   manualUsage?: { fieldId: string; quantity: number; unit?: string }[];
+  /**
+   * Bulk upload sends one product per request and revalidates once at the
+   * end (finishBulkAllocateCostAction). Revalidating on every row makes
+   * each response re-render pages for nothing and slows the whole run.
+   */
+  skipRevalidate?: boolean;
 }) {
   const farm = await getFarm();
   const needle = input.productName.trim().toLowerCase();
@@ -1742,11 +1750,12 @@ export async function allocateProductCostAction(input: {
   // excluded (free/carryover seed) or a corrected total tears down the old
   // per-field split and rebuilds it fresh, rather than leaving stale
   // amounts from before sitting alongside the new ones.
-  const existing = await findUnallocatedProductTransactions(input.year, input.productName);
-  const existingFieldSplits = await findFieldAllocatedProductTransactions(input.year, input.productName);
-  for (const t of [...existing, ...existingFieldSplits]) {
-    await repo.deleteTransaction(t.id);
-  }
+  // One load of the year's expenses shared by both lookups - each lookup
+  // used to fetch every transaction (and all their splits) on its own.
+  const yearExpenses = await repo.listTransactions({ taxYear: input.year, type: "expense" });
+  const existing = await findUnallocatedProductTransactions(input.year, input.productName, yearExpenses);
+  const existingFieldSplits = await findFieldAllocatedProductTransactions(input.year, input.productName, yearExpenses);
+  await Promise.all([...existing, ...existingFieldSplits].map((t) => repo.deleteTransaction(t.id)));
 
   // Proportional split (excluded fields get $0 and don't share in the
   // pool), with any rounding remainder folded into the SMALLEST-usage
@@ -1777,32 +1786,40 @@ export async function allocateProductCostAction(input: {
     allocations.push({ fieldId: f.fieldId, fieldName: f.fieldName, usage: f.usage, unit: f.unit, amount, excluded: false });
   }
 
-  for (const a of allocations) {
-    if (a.excluded || a.amount <= 0) continue;
-    await repo.createTransaction({
-      farmBusinessId: farm.id,
-      taxYear: input.year,
-      transactionType: "expense",
-      status: "categorized",
-      transactionDate,
-      vendorName: input.vendorName,
-      description: `${input.productName} — allocated by usage (${a.fieldName})`,
-      amount: a.amount,
-      farmCategoryId: input.farmCategoryId,
-      isPersonalExcluded: false,
-      cpaFlag: false,
-      syncStatus: "synced",
-      splits: [{
-        targetType: "field", fieldId: a.fieldId, allocationMethod: "quantity",
-        allocatedAmount: a.amount, farmCategoryId: input.farmCategoryId,
-        notes: a.unit ? `${a.usage} ${a.unit} used` : undefined,
-      }],
-    });
+  const toCreate = allocations.filter((a) => !a.excluded && a.amount > 0);
+  const createOne = (a: (typeof allocations)[number]) => repo.createTransaction({
+    farmBusinessId: farm.id,
+    taxYear: input.year,
+    transactionType: "expense",
+    status: "categorized",
+    transactionDate,
+    vendorName: input.vendorName,
+    description: `${input.productName} — allocated by usage (${a.fieldName})`,
+    amount: a.amount,
+    farmCategoryId: input.farmCategoryId,
+    isPersonalExcluded: false,
+    cpaFlag: false,
+    syncStatus: "synced",
+    splits: [{
+      targetType: "field", fieldId: a.fieldId, allocationMethod: "quantity",
+      allocatedAmount: a.amount, farmCategoryId: input.farmCategoryId,
+      notes: a.unit ? `${a.usage} ${a.unit} used` : undefined,
+    }],
+  });
+  // The first write runs alone because createTransaction get-or-creates the
+  // vendor and tax year; running every field at once would race and could
+  // create duplicate vendors. After that they already exist, so the rest
+  // go in parallel instead of one database round trip after another.
+  if (toCreate.length > 0) {
+    await createOne(toCreate[0]);
+    await Promise.all(toCreate.slice(1).map(createOne));
   }
 
-  revalidatePath("/fields");
-  revalidatePath("/money/transactions");
-  revalidatePath("/home");
+  if (!input.skipRevalidate) {
+    revalidatePath("/fields");
+    revalidatePath("/money/transactions");
+    revalidatePath("/home");
+  }
 
   return {
     allocated: true as const,
@@ -2349,6 +2366,81 @@ export async function bulkImportAllocateCostAction(formData: FormData): Promise<
   }
 
   return { total: rows.length, imported, failed: rows.length - imported, results };
+}
+
+/** One row of an Allocate Product Cost upload, already parsed and plain (serializable). */
+export interface AllocateCostFileRow {
+  row: number;
+  year?: number;
+  productName?: string;
+  totalAmount?: number;
+  category?: string;
+  vendorName?: string;
+  transactionDate?: string;
+}
+
+/**
+ * Step 1 of the bulk upload: read the file and hand the rows back to the
+ * browser. The browser then allocates them one product per request
+ * (allocateCostRowAction). Doing the whole file in one request, as
+ * bulkImportAllocateCostAction does, runs past the hosting function's time
+ * limit on a real file - every product reloads the year's activities and
+ * transactions - and the browser only sees "An unexpected response was
+ * received from the server" with no way to tell how far it got.
+ */
+export async function parseAllocateCostFileAction(formData: FormData): Promise<{ rows: AllocateCostFileRow[]; error?: string }> {
+  const { parseXlsxRows, toIsoDate, toNumber, toText } = await import("@/lib/xlsx-import");
+  const file = formData.get("file");
+  if (!(file instanceof File)) return { rows: [], error: "No file uploaded." };
+  let raw: Awaited<ReturnType<typeof parseXlsxRows>>;
+  try {
+    raw = await parseXlsxRows(await file.arrayBuffer());
+  } catch (e) {
+    return { rows: [], error: e instanceof Error ? e.message : "Couldn't read that file." };
+  }
+  const rows = raw.map((r, i): AllocateCostFileRow => ({
+    row: i + 2, // header is row 1
+    year: toNumber(r["Year"]),
+    productName: toText(r["Product Name"]),
+    totalAmount: toNumber(r["Total Amount"]),
+    category: toText(r["Category"]),
+    vendorName: toText(r["Vendor (optional)"]) ?? toText(r["Vendor"]),
+    transactionDate: toIsoDate(r["Date (optional, YYYY-MM-DD)"]) ?? toIsoDate(r["Date"]),
+  })).filter((r) => r.productName || r.totalAmount || r.category); // drop fully blank rows
+  return { rows };
+}
+
+/** Step 2 of the bulk upload: allocate a single parsed row. */
+export async function allocateCostRowAction(r: AllocateCostFileRow): Promise<BulkImportRowResult> {
+  const label = r.productName ? `${r.productName}: ` : "";
+  if (!r.productName || !r.totalAmount) return { row: r.row, ok: false, message: `${label}Skipped — missing Product Name or Total Amount.` };
+  if (!r.category) return { row: r.row, ok: false, message: `${label}Skipped — missing Category.` };
+  const [farm, categories] = await Promise.all([getFarm(), repo.listFarmCategories()]);
+  const farmCategoryId = await matchCategoryId(r.category, categories);
+  if (!farmCategoryId) return { row: r.row, ok: false, message: `${label}Category "${r.category}" doesn't match any category name.` };
+  try {
+    const outcome = await allocateProductCostAction({
+      year: r.year ?? farm.currentTaxYear,
+      productName: r.productName,
+      totalAmount: r.totalAmount,
+      farmCategoryId,
+      vendorName: r.vendorName,
+      transactionDate: r.transactionDate,
+      skipRevalidate: true,
+    });
+    return outcome.allocated
+      ? { row: r.row, ok: true, message: `${label}Allocated across ${outcome.allocations.filter((a) => !a.excluded).length} field(s).` }
+      : { row: r.row, ok: false, message: `${label}${outcome.message}` };
+  } catch (e) {
+    return { row: r.row, ok: false, message: `${label}${e instanceof Error ? e.message : "Failed to allocate."}` };
+  }
+}
+
+/** Step 3: refresh the pages that show field cost, once, after the last row. */
+export async function finishBulkAllocateCostAction(): Promise<void> {
+  revalidatePath("/fields");
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
 }
 
 async function bulkImportTransactions(formData: FormData, transactionType: "income" | "expense"): Promise<BulkImportSummary> {
