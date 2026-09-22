@@ -437,3 +437,8 @@ export async function renameProduct(oldName: string, newName: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).renameProduct(oldName, newName);
   return demo.renameProduct(oldName, newName);
 }
+
+export async function mergeFields(fromId: string, intoId: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).mergeFields(fromId, intoId);
+  return demo.mergeFields(fromId, intoId);
+}

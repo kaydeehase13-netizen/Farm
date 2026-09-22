@@ -1496,6 +1496,65 @@ export async function renameProduct(oldName: string, newName: string): Promise<{
   return { merged: !!existingTarget || toMerge.length > 0, linesMoved, transactionsRenamed: updates.length };
 }
 
+export interface FieldMergeResult {
+  activities: number; costSplits: number; cropYearsMoved: number; cropYearsDropped: number;
+  overhead: number; documents: number; mileageTrips: number;
+}
+
+/**
+ * Merges one field into another: everything tied to `fromId` (activities,
+ * transaction splits, crop years, overhead allocations, documents, mileage
+ * trips) is re-pointed at `intoId`, and `fromId` is archived rather than
+ * deleted so nothing is lost. A crop year the target already has for the
+ * same tax year is kept and the source's duplicate is dropped (one crop
+ * record per field per year).
+ */
+export async function mergeFields(fromId: string, intoId: string): Promise<FieldMergeResult> {
+  const { supabase, farm } = await ctx();
+  if (fromId === intoId) throw new Error("Pick a different field to merge into.");
+  const { data: both, error: fieldErr } = await supabase.from("field").select("id").eq("farm_business_id", farm.id).in("id", [fromId, intoId]);
+  if (fieldErr) throw new Error(fieldErr.message);
+  if ((both ?? []).length !== 2) throw new Error("Couldn't find both fields.");
+
+  async function move(table: string, column: string, extra?: (q: any) => any): Promise<number> {
+    let q = supabase.from(table).update({ [column]: intoId }).eq(column, fromId);
+    if (extra) q = extra(q);
+    const { data, error } = await q.select("id");
+    if (error) throw new Error(`${table}: ${error.message}`);
+    return data?.length ?? 0;
+  }
+
+  const activities = await move("activity", "field_id", (q) => q.eq("farm_business_id", farm.id));
+  const costSplits = await move("transaction_split", "field_id");
+  const overhead = await move("field_overhead_allocation", "field_id", (q) => q.eq("farm_business_id", farm.id));
+  const documents = await move("document", "related_field_id", (q) => q.eq("farm_business_id", farm.id));
+  const mileageTrips = await move("mileage_trip", "field_id", (q) => q.eq("farm_business_id", farm.id));
+
+  const { data: fromYears, error: fyErr } = await supabase.from("crop_year").select("id, tax_year_id").eq("field_id", fromId);
+  if (fyErr) throw new Error(fyErr.message);
+  const { data: intoYears } = await supabase.from("crop_year").select("tax_year_id").eq("field_id", intoId);
+  const taken = new Set((intoYears ?? []).map((y: any) => y.tax_year_id));
+  let cropYearsMoved = 0, cropYearsDropped = 0;
+  for (const y of fromYears ?? []) {
+    if (taken.has(y.tax_year_id)) {
+      // Activities pointing at the dropped crop year keep working; just unlink them.
+      await supabase.from("activity").update({ crop_year_id: null }).eq("crop_year_id", y.id);
+      const { error } = await supabase.from("crop_year").delete().eq("id", y.id);
+      if (error) throw new Error(`crop_year: ${error.message}`);
+      cropYearsDropped++;
+    } else {
+      const { error } = await supabase.from("crop_year").update({ field_id: intoId }).eq("id", y.id);
+      if (error) throw new Error(`crop_year: ${error.message}`);
+      taken.add(y.tax_year_id);
+      cropYearsMoved++;
+    }
+  }
+
+  const { error: archErr } = await supabase.from("field").update({ archived_at: new Date().toISOString() }).eq("id", fromId).eq("farm_business_id", farm.id);
+  if (archErr) throw new Error(archErr.message);
+  return { activities, costSplits, cropYearsMoved, cropYearsDropped, overhead, documents, mileageTrips };
+}
+
 /**
  * Lets a harvest activity's yield numbers be corrected after the fact —
  * e.g. the PDF import over/undercounted a wet/dry weight, or Kaydee just

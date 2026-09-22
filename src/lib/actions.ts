@@ -382,6 +382,24 @@ export async function deleteFieldAction(fieldId: string) {
   revalidatePath("/fields");
 }
 
+/**
+ * Merges one field into another (e.g. an import that logged the same ground
+ * under two names). Everything moves to the target and the source is
+ * archived. Returns the years the moved activity covers so the page can
+ * re-split product costs for them (one product per request, see
+ * MergeFieldButton) and the merged field ends up with one clean split per
+ * product.
+ */
+export async function mergeFieldsAction(fromId: string, intoId: string) {
+  const fromActivities = await repo.listActivities({ fieldId: fromId });
+  const years = [...new Set(fromActivities.map((a) => Number(a.activityDate.slice(0, 4))).filter((y) => y > 2000))].sort();
+  const result = await repo.mergeFields(fromId, intoId);
+  revalidatePath("/fields", "layout");
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  return { ...result, years };
+}
+
 /** "Start fresh" — deletes every field it safely can (skipping any with real transaction/activity/crop-year history) and reports both lists. */
 export async function deleteAllFieldsAction() {
   const result = await repo.deleteAllFields();

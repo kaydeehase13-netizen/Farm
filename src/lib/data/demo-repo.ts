@@ -1236,3 +1236,23 @@ export function renameProduct(oldName: string, newName: string): { merged: boole
     return { merged, linesMoved, transactionsRenamed };
   });
 }
+
+/** Demo-mode mirror of the Supabase mergeFields (demo has no archive flag, so the merged-away field is removed). */
+export function mergeFields(fromId: string, intoId: string) {
+  if (fromId === intoId) throw new Error("Pick a different field to merge into.");
+  return mutate((db) => {
+    const into = db.fields.find((f) => f.id === intoId);
+    if (!into || !db.fields.some((f) => f.id === fromId)) throw new Error("Couldn't find both fields.");
+    let activities = 0, costSplits = 0, cropYearsMoved = 0, cropYearsDropped = 0;
+    for (const a of db.activities) if (a.fieldId === fromId) { a.fieldId = intoId; a.fieldName = into.name; activities++; }
+    for (const t of db.transactions) for (const sp of t.splits) if (sp.fieldId === fromId) { sp.fieldId = intoId; costSplits++; }
+    const years = new Set(db.cropYears.filter((c) => c.fieldId === intoId).map((c) => c.year));
+    db.cropYears = db.cropYears.filter((c) => {
+      if (c.fieldId !== fromId) return true;
+      if (years.has(c.year)) { cropYearsDropped++; return false; }
+      c.fieldId = intoId; years.add(c.year); cropYearsMoved++; return true;
+    });
+    db.fields = db.fields.filter((f) => f.id !== fromId);
+    return { activities, costSplits, cropYearsMoved, cropYearsDropped, overhead: 0, documents: 0, mileageTrips: 0 };
+  });
+}

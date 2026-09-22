@@ -1,9 +1,10 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getField, fieldProfitability, listActivities, listCropYears, getFarm, fieldProductUsage, listFarmCategories, listFieldOverheadAllocations } from "@/lib/data/repo";
+import { getField, fieldProfitability, listActivities, listCropYears, getFarm, fieldProductUsage, listFarmCategories, listFieldOverheadAllocations, listFields } from "@/lib/data/repo";
 import { PageHeader, StatCard, money, moneyPrecise } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 import { DeleteFieldButton } from "@/components/fields/delete-field-button";
+import { MergeFieldButton } from "@/components/fields/merge-field-button";
 import { ProductUsagePanel, type EditableProductLine } from "@/components/fields/product-usage-panel";
 import { HarvestActivityEditor } from "@/components/fields/harvest-activity-editor";
 import { FieldOwnershipEditor } from "@/components/fields/field-ownership-editor";
@@ -30,6 +31,7 @@ export default async function FieldDetailPage({
   const productUsage = await fieldProductUsage(fieldId, taxYear);
   const farmCategories = await listFarmCategories();
   const overheadAllocations = await listFieldOverheadAllocations(fieldId, taxYear);
+  const allFields = await listFields();
 
   // Every product line on this field's activity for the year, so the usage
   // panel can edit them in place.
@@ -69,6 +71,7 @@ export default async function FieldDetailPage({
             <Link prefetch={false} href={`/fields/activities/new?fieldId=${fieldId}`} className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">
               + Log Field Activity
             </Link>
+            <MergeFieldButton fieldId={fieldId} fieldName={field.name} fields={allFields.map((f) => ({ id: f.id, name: f.name }))} />
             <DeleteFieldButton fieldId={fieldId} fieldName={field.name} />
           </div>
         }
