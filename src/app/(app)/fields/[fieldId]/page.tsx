@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getField, fieldProfitability, listActivities, listCropYears, getFarm, fieldProductUsage, listFarmCategories, listFieldOverheadAllocations, listFields } from "@/lib/data/repo";
+import { getField, fieldProfitability, listActivities, listCropYears, getFarm, fieldProductUsage, listFarmCategories, listFieldOverheadAllocations, listFields, listTransactions } from "@/lib/data/repo";
 import { PageHeader, StatCard, money, moneyPrecise } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 import { DeleteFieldButton } from "@/components/fields/delete-field-button";
@@ -10,6 +10,7 @@ import { HarvestActivityEditor } from "@/components/fields/harvest-activity-edit
 import { FieldOwnershipEditor } from "@/components/fields/field-ownership-editor";
 import { FieldOverheadPanel } from "@/components/fields/field-overhead-panel";
 import { FieldExpenseForm } from "@/components/fields/field-expense-form";
+import { FieldRentPanel, type FieldRentEntry } from "@/components/fields/field-rent-panel";
 
 export default async function FieldDetailPage({
   params,
@@ -32,6 +33,24 @@ export default async function FieldDetailPage({
   const farmCategories = await listFarmCategories();
   const overheadAllocations = await listFieldOverheadAllocations(fieldId, taxYear);
   const allFields = await listFields();
+
+  // Rent-type expenses split to this field this year, for the editable list.
+  const categoryName = new Map(farmCategories.map((c) => [c.id, c.name]));
+  const fieldNameById = new Map(allFields.map((f) => [f.id, f.name]));
+  const fieldTxns = await listTransactions({ taxYear, type: "expense", fieldId });
+  const rentEntries: FieldRentEntry[] = fieldTxns.flatMap((t): FieldRentEntry[] => {
+    const cat = t.farmCategoryId ? categoryName.get(t.farmCategoryId) : undefined;
+    const isRent = (cat ?? "").toLowerCase().includes("rent") || (t.description ?? "").toLowerCase().startsWith("rent");
+    if (!isRent) return [];
+    const mine = t.splits.filter((sp) => sp.fieldId === fieldId);
+    if (mine.length === 0) return [];
+    return [{
+      transactionId: t.id, date: t.transactionDate, vendorName: t.vendorName,
+      description: t.description ?? "Rent", categoryName: cat,
+      amount: mine.reduce((sum, sp) => sum + sp.allocatedAmount, 0), paymentTotal: t.amount,
+      otherFields: t.splits.filter((sp) => sp.fieldId && sp.fieldId !== fieldId).map((sp) => fieldNameById.get(sp.fieldId!) ?? "another field"),
+    }];
+  });
 
   // Every product line on this field's activity for the year, so the usage
   // panel can edit them in place.
@@ -115,6 +134,17 @@ export default async function FieldDetailPage({
                 <div className="w-20 text-right font-medium">{money(value)}</div>
               </div>
             ))}
+          </div>
+
+          <div className="mt-4 pt-4 border-t border-[--border-color]">
+            <FieldRentPanel
+              fieldId={fieldId}
+              taxYear={taxYear}
+              entries={rentEntries}
+              fields={allFields.map((f) => ({ id: f.id, name: f.name, acres: f.acres }))}
+              farmCategories={farmCategories.map((c) => ({ id: c.id, name: c.name }))}
+              landownerName={field.landownerName}
+            />
           </div>
 
           <div className="mt-4 pt-4 border-t border-[--border-color]">

@@ -1475,6 +1475,101 @@ export async function duplicateTransactionToCategoryAction(transactionId: string
 }
 
 /** Permanently deletes a transaction. Use setTransactionOmittedAction to keep the record but exclude it instead. */
+function revalidateMoney() {
+  revalidatePath("/fields", "layout");
+  revalidatePath("/money/transactions");
+  revalidatePath("/home");
+  revalidatePath("/tax");
+  revalidatePath("/reports");
+}
+
+/**
+ * Edit rent (or any field expense) already on file, from the field page.
+ * `amount` is THIS field's share: on a payment that only this field carries
+ * the payment total changes with it; on one payment split across several
+ * fields only this field's share changes, and the payment total becomes the
+ * new sum of its shares.
+ */
+export async function updateFieldExpenseAction(input: {
+  transactionId: string; fieldId: string; amount: number; transactionDate?: string; vendorName?: string;
+}) {
+  if (!(input.amount > 0)) throw new Error("Enter an amount greater than zero.");
+  const txn = await repo.getTransaction(input.transactionId);
+  if (!txn) throw new Error("Couldn't find that payment.");
+  const amount = Math.round(input.amount * 100) / 100;
+  const common = {
+    ...(input.transactionDate ? { transactionDate: input.transactionDate } : {}),
+    ...(input.vendorName !== undefined ? { vendorName: input.vendorName } : {}),
+  };
+  if (txn.splits.length <= 1) {
+    await repo.updateTransaction(txn.id, { amount, ...common });
+  } else {
+    const mine = txn.splits.find((sp) => sp.fieldId === input.fieldId);
+    if (!mine) throw new Error("That payment isn't split to this field.");
+    const splits = txn.splits.map((sp) => sp.id === mine.id ? { ...sp, allocatedAmount: amount } : sp);
+    const total = Math.round(splits.reduce((sum, sp) => sum + sp.allocatedAmount, 0) * 100) / 100;
+    await repo.updateTransaction(txn.id, { amount: total, splits, ...common });
+  }
+  revalidateMoney();
+}
+
+/**
+ * One payment (e.g. a rent check covering several fields) split across the
+ * fields you pick - by acres, evenly, or with amounts you type per field.
+ * Saved as ONE expense transaction with a share per field, so it matches the
+ * single check in your books and each field's margin still gets its part.
+ */
+export async function recordMultiFieldExpenseAction(input: {
+  fieldIds: string[];
+  totalAmount: number;
+  method: "acres" | "even" | "manual";
+  manualAmounts?: Record<string, number>;
+  farmCategoryId: string;
+  transactionDate: string;
+  vendorName?: string;
+  note?: string;
+}) {
+  if (input.fieldIds.length === 0) throw new Error("Tick at least one field.");
+  if (!input.farmCategoryId) throw new Error("Choose a category (e.g. Rent).");
+  const farm = await getFarm();
+  const fields = (await repo.listFields()).filter((f) => input.fieldIds.includes(f.id));
+  if (fields.length !== input.fieldIds.length) throw new Error("One of those fields couldn't be found.");
+
+  let shares: { fieldId: string; name: string; amount: number }[];
+  if (input.method === "manual") {
+    shares = fields.map((f) => ({ fieldId: f.id, name: f.name, amount: Math.round((input.manualAmounts?.[f.id] ?? 0) * 100) / 100 }))
+      .filter((sh) => sh.amount > 0);
+    if (shares.length === 0) throw new Error("Enter an amount for at least one field.");
+  } else {
+    if (!(input.totalAmount > 0)) throw new Error("Enter the total amount paid.");
+    const weights = fields.map((f) => (input.method === "acres" ? (f.acres ?? 0) : 1));
+    const sumW = weights.reduce((a, b) => a + b, 0);
+    if (!(sumW > 0)) throw new Error("None of the ticked fields has acres on file - split evenly or type the amounts instead.");
+    let left = Math.round(input.totalAmount * 100) / 100;
+    shares = fields.map((f, i) => {
+      const amt = i === fields.length - 1 ? Math.round(left * 100) / 100 : Math.round(input.totalAmount * (weights[i] / sumW) * 100) / 100;
+      left -= amt;
+      return { fieldId: f.id, name: f.name, amount: amt };
+    }).filter((sh) => sh.amount > 0);
+  }
+  const total = Math.round(shares.reduce((sum, sh) => sum + sh.amount, 0) * 100) / 100;
+  const taxYear = Number(input.transactionDate.slice(0, 4)) || farm.currentTaxYear;
+  await repo.createTransaction({
+    farmBusinessId: farm.id, taxYear, transactionType: "expense", status: "categorized",
+    transactionDate: input.transactionDate, vendorName: input.vendorName || undefined,
+    description: input.note || `Rent — ${shares.map((sh) => sh.name).join(", ")}`,
+    amount: total, farmCategoryId: input.farmCategoryId,
+    isPersonalExcluded: false, cpaFlag: false, syncStatus: "synced",
+    splits: shares.map((sh) => ({
+      targetType: "field" as const, fieldId: sh.fieldId,
+      allocationMethod: input.method === "acres" ? ("acres" as const) : ("manual" as const),
+      allocatedAmount: sh.amount, farmCategoryId: input.farmCategoryId,
+    })),
+  });
+  revalidateMoney();
+  return { total, shares };
+}
+
 export async function deleteTransactionAction(transactionId: string) {
   await repo.deleteTransaction(transactionId);
   revalidatePath("/money/transactions");
