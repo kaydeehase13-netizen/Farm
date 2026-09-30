@@ -185,3 +185,24 @@ export function calculateMix(input: MixInput): MixResult {
     errors,
   };
 }
+
+/**
+ * Maps a rate unit as logged/imported on an activity ("oz/ac", "gal(US)/ac",
+ * "Pt/Ac", ...) onto a calculator unit. Spray and liquid-fertilizer "oz/ac"
+ * is read as fluid ounces. Returns undefined when it can't tell.
+ */
+export function normalizeRateUnit(raw: string | undefined | null): RateUnit | undefined {
+  if (!raw) return undefined;
+  const u = raw.toLowerCase().replace(/\(us\)/g, "").replace(/\s+/g, "").replace("acre", "ac").replace(/\.$/, "");
+  const map: Record<string, RateUnit> = {
+    "floz/ac": "fl oz/ac", "oz/ac": "fl oz/ac", "fl.oz/ac": "fl oz/ac",
+    "pt/ac": "pt/ac", "pint/ac": "pt/ac", "pints/ac": "pt/ac",
+    "qt/ac": "qt/ac", "quart/ac": "qt/ac", "quarts/ac": "qt/ac",
+    "gal/ac": "gal/ac", "gpa": "gal/ac",
+    "lb/ac": "lb/ac", "lbs/ac": "lb/ac",
+    "ozwt/ac": "oz/ac", "drzoz/ac": "oz/ac",
+    "%v/v": "% v/v", "%": "% v/v",
+    "lb/100gal": "lb/100 gal", "floz/100gal": "fl oz/100 gal", "qt/100gal": "qt/100 gal", "pt/100gal": "pt/100 gal", "gal/100gal": "gal/100 gal",
+  };
+  return map[u];
+}

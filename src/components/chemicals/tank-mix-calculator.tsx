@@ -6,7 +6,20 @@ import type { Product, TankMixRecipe } from "@/types/domain";
 import { calculateMix, formatPlain, isRateUnit, RATE_UNITS, type MixProduct, type RateUnit } from "@/lib/tank-mix";
 import { saveChemicalAction, saveTankMixAction, deleteTankMixAction } from "@/lib/actions";
 
-type Row = { key: string; productId?: string; name: string; rate: string; unit: RateUnit };
+type Row = { key: string; productId?: string; name: string; rate: string; unit: RateUnit; unitNote?: string };
+
+/** A spray or liquid-fertilizer pass already logged, grouped by day + product mix. */
+export type PastLoad = {
+  key: string;
+  date: string;
+  type: "Spray" | "Fertilizer";
+  label: string;
+  fieldIds: string[];
+  fieldNames: string[];
+  /** Acres actually covered, summed from the logged activity. */
+  acres: number;
+  products: { name: string; rate: number; unit?: RateUnit; rawUnit?: string }[];
+};
 
 let rowSeq = 0;
 const newKey = () => `r${++rowSeq}`;
@@ -17,9 +30,10 @@ const newKey = () => `r${++rowSeq}`;
  * full loads plus a right-sized last load - with the EPA number and a
  * Restricted Use flag on each chemical. Mixes can be saved and reloaded.
  */
-export function TankMixCalculator({ chemicals, mixes, fields, needsMigration }: {
+export function TankMixCalculator({ chemicals, mixes, pastLoads = [], fields, needsMigration }: {
   chemicals: Product[];
   mixes: TankMixRecipe[];
+  pastLoads?: PastLoad[];
   fields: { id: string; name: string; acres?: number }[];
   needsMigration: boolean;
 }) {
@@ -79,6 +93,35 @@ export function TankMixCalculator({ chemicals, mixes, fields, needsMigration }: 
     });
   }
 
+  const [pastKey, setPastKey] = useState("");
+  const [pastFilter, setPastFilter] = useState("");
+  const [pastNote, setPastNote] = useState<string | null>(null);
+  const shownPast = pastLoads.filter((p) => !pastFilter || `${p.label} ${p.fieldNames.join(" ")} ${p.date}`.toLowerCase().includes(pastFilter.toLowerCase()));
+
+  function loadPast(key: string) {
+    setPastKey(key);
+    const p = pastLoads.find((x) => x.key === key);
+    if (!p) { setPastNote(null); return; }
+    setMixId(""); setMixName("");
+    setRows(p.products.map((pr) => {
+      const chem = byName.get(pr.name.toLowerCase());
+      return {
+        key: newKey(), productId: chem?.id, name: pr.name, rate: pr.rate ? String(pr.rate) : "",
+        unit: pr.unit ?? "fl oz/ac",
+        unitNote: pr.unit ? undefined : `logged as "${pr.rawUnit ?? "no unit"}" — check the unit`,
+      };
+    }));
+    setPickedFields(new Set(p.fieldIds));
+    const fieldAc = fields.filter((f) => p.fieldIds.includes(f.id)).reduce((s, f) => s + (f.acres ?? 0), 0);
+    // Custom-hire passes (customer fields) have none of your fields to tick,
+    // so the acres actually sprayed go in directly.
+    setExtraAcres(p.fieldIds.length === 0 ? String(p.acres) : "");
+    const where = p.fieldNames.length ? p.fieldNames.join(", ") : "no field recorded";
+    const diff = p.fieldIds.length > 0 && Math.abs(fieldAc - p.acres) > 0.5
+      ? ` The ticked fields total ${fieldAc.toFixed(2)} ac — untick or add acres if this run is different.` : "";
+    setPastNote(`${p.type} on ${p.date}: ${where} — ${p.acres} ac covered that day.${diff} Set your tank size and GPA.`);
+  }
+
   function loadMix(id: string) {
     setMixId(id);
     const m = mixes.find((x) => x.id === id);
@@ -129,6 +172,24 @@ export function TankMixCalculator({ chemicals, mixes, fields, needsMigration }: 
       )}
 
       <div className="card p-5 space-y-4 print:hidden">
+        {pastLoads.length > 0 && (
+          <div className="rounded-lg bg-cream-deep/40 p-3 space-y-2">
+            <div className="text-sm font-medium text-charcoal/80">Start from a load already in FarmLedger</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input className="input w-56!" placeholder="Search product, field or date…" value={pastFilter} onChange={(e) => setPastFilter(e.target.value)} />
+              <select className="input flex-1 min-w-[16rem]" value={pastKey} onChange={(e) => loadPast(e.target.value)}>
+                <option value="">— Pick a logged spray or fertilizer pass ({shownPast.length}) —</option>
+                {shownPast.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.date} · {p.type} · {p.label} · {p.fieldNames.length} field{p.fieldNames.length === 1 ? "" : "s"} · {p.acres} ac
+                  </option>
+                ))}
+              </select>
+            </div>
+            {pastNote && <p className="text-xs text-charcoal/65">{pastNote}</p>}
+          </div>
+        )}
+
         <div className="flex flex-wrap items-end gap-3">
           <label className="block">
             <div className="text-xs text-charcoal/60 mb-1">Saved mix</div>
@@ -195,10 +256,11 @@ export function TankMixCalculator({ chemicals, mixes, fields, needsMigration }: 
                 <div key={r.key} className="grid grid-cols-[minmax(0,1fr)_6rem_9rem] sm:grid-cols-[minmax(0,2fr)_7rem_10rem_minmax(0,1.4fr)] items-center gap-2">
                   <input className="input" list="tank-mix-chemicals" placeholder="Chemical" value={r.name} onChange={(e) => setRow(r.key, { name: e.target.value })} />
                   <input className="input" type="number" step="0.001" min="0" placeholder="Rate" value={r.rate} onChange={(e) => setRow(r.key, { rate: e.target.value })} />
-                  <select className="input" value={r.unit} onChange={(e) => setRow(r.key, { unit: e.target.value as RateUnit })}>
+                  <select className="input" value={r.unit} onChange={(e) => setRow(r.key, { unit: e.target.value as RateUnit, unitNote: undefined })}>
                     {RATE_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
                   </select>
                   <div className="col-span-3 sm:col-span-1 flex flex-wrap items-center gap-2">
+                  {r.unitNote && <span className="text-xs text-status-amber">{r.unitNote}</span>}
                   {chem?.restrictedUse && <span className="text-[11px] font-semibold text-white bg-status-red rounded px-1.5 py-0.5">RUP</span>}
                   {chem?.epaRegistrationNumber && <span className="text-xs text-charcoal/55">EPA {chem.epaRegistrationNumber}</span>}
                   {r.name.trim() && !chem && (
