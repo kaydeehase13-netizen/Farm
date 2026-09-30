@@ -12,7 +12,7 @@ export default async function LivestockPage() {
         description={`${groups.length} group${groups.length === 1 ? "" : "s"}`}
         action={
           <div className="flex gap-2">
-            <Link prefetch={false} href="/more/livestock/cattle" className="card px-4 py-2 text-sm font-medium hover:border-forest">Cattle List</Link>
+            <Link prefetch={false} href="/cattle" className="card px-4 py-2 text-sm font-medium hover:border-forest">Cattle List</Link>
             <Link prefetch={false} href="/more/livestock/new" className="bg-forest text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest-light">+ Record Purchase/Sale/Loss</Link>
           </div>
         }

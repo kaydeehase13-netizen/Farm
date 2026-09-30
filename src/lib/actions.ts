@@ -3140,18 +3140,18 @@ export async function deleteTankMixAction(id: string) {
 
 export async function saveCowAction(input: Parameters<typeof repo.saveCow>[0]) {
   const cow = await repo.saveCow(input);
-  revalidatePath("/more/livestock/cattle");
+  revalidatePath("/cattle");
   return cow;
 }
 
 export async function removeCowAction(id: string) {
   await repo.removeCow(id);
-  revalidatePath("/more/livestock/cattle");
+  revalidatePath("/cattle");
 }
 
 /** Makes a new Google Sheet sync key (replacing any old one) and returns it once. */
 export async function createCattleSyncKeyAction() {
   const key = await repo.createCattleSyncKey();
-  revalidatePath("/more/livestock/cattle");
+  revalidatePath("/cattle");
   return key;
 }

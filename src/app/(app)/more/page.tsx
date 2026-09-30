@@ -4,7 +4,7 @@ import { Tractor, Beef, Truck, Boxes, FileStack, Settings } from "lucide-react";
 
 const TILES = [
   { href: "/more/equipment", label: "Equipment", desc: "Machinery, repairs, usage", icon: Tractor },
-  { href: "/more/livestock/cattle", label: "Cattle", desc: "Cow list by tag & year, synced with the Google Sheet", icon: Beef },
+  { href: "/cattle", label: "Cattle", desc: "Cow list by tag & year, synced with the Google Sheet", icon: Beef },
   { href: "/more/livestock", label: "Livestock", desc: "Herds, groups, sales & losses", icon: Beef },
   { href: "/more/vehicles", label: "Vehicles & Mileage", desc: "Trucks, mileage log", icon: Truck },
   { href: "/more/inventory", label: "Inventory", desc: "Chemical, fertilizer, seed, fuel", icon: Boxes },
