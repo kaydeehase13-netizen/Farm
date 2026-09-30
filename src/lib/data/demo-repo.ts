@@ -1301,3 +1301,27 @@ export function saveTankMix(input: Omit<import("@/types/domain").TankMixRecipe, 
 export function deleteTankMix(id: string) {
   mutate((db) => { db.tankMixes = (db.tankMixes ?? []).filter((m) => m.id !== id); });
 }
+
+// ---- Cattle (demo mirrors; the Google Sheet sync needs the live database) ----
+export function listCattle() {
+  return { cattle: (getDB().cattle ?? []).filter((c) => c.status !== "removed"), needsMigration: false, sync: { configured: false } as { configured: boolean; lastSyncAt?: string } };
+}
+export function saveCow(input: Omit<import("@/lib/cattle").Cow, "updatedAt" | "id"> & { id?: string }) {
+  const tag = input.tag.trim();
+  if (!tag) throw new Error("Enter the cow's tag number.");
+  return mutate((db) => {
+    db.cattle = db.cattle ?? [];
+    const clash = db.cattle.find((c) => c.tag === tag && c.id !== input.id && c.status !== "removed");
+    if (clash) throw new Error(`Tag ${tag} is already on another animal.`);
+    const cow = { ...input, tag, id: input.id ?? randomUUID(), updatedAt: new Date().toISOString() };
+    const i = db.cattle.findIndex((c) => c.id === cow.id);
+    if (i >= 0) db.cattle[i] = cow; else db.cattle.push(cow);
+    return cow;
+  });
+}
+export function removeCow(id: string) {
+  mutate((db) => { const c = (db.cattle ?? []).find((x) => x.id === id); if (c) c.status = "removed"; });
+}
+export function createCattleSyncKey(): string {
+  throw new Error("Google Sheet sync needs the live database (demo mode can't receive syncs).");
+}

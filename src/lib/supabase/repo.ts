@@ -10,6 +10,7 @@ import type {
   TaxOpportunity, TaxQuestion, FarmCategory, FieldProfitability,
   FieldOverheadAllocation, FieldOverheadCategory, Product, TankMixRecipe } from "@/types/domain";
 import type { DB } from "@/lib/data/store";
+import type { Cow, CowChange } from "@/lib/cattle";
 
 // -----------------------------------------------------------------------
 // Real Supabase-backed repository. Every function scopes to the caller's
@@ -1652,6 +1653,126 @@ export async function deleteTankMix(id: string): Promise<void> {
   const { supabase, farm } = await ctx();
   const { error } = await supabase.from("tank_mix_recipe").delete().eq("id", id).eq("farm_business_id", farm.id);
   if (error) throw new Error(error.message);
+}
+
+// -----------------------------------------------------------------------
+// Cattle (herd list synced with a Google Sheet) - migration 0030.
+// -----------------------------------------------------------------------
+
+const MIGRATION_0030 = "The cattle update to the database hasn't been applied yet. In Supabase, open SQL Editor and run supabase/migrations/0030_cattle.sql, then try again.";
+
+function mapCow(r: any): Cow {
+  return {
+    id: r.id, tag: r.tag, name: r.name ?? undefined, notes: r.notes ?? undefined,
+    calves: r.calves && typeof r.calves === "object" ? r.calves : {},
+    status: r.status, goneReason: r.gone_reason ?? undefined,
+    goneYear: r.gone_year != null ? Number(r.gone_year) : undefined, updatedAt: r.updated_at,
+  };
+}
+
+function cowRow(c: Omit<Cow, "id">) {
+  return {
+    tag: c.tag, name: c.name ?? null, notes: c.notes ?? null, calves: c.calves ?? {},
+    status: c.status, gone_reason: c.goneReason ?? null, gone_year: c.goneYear ?? null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export async function listCattle(): Promise<{ cattle: Cow[]; needsMigration: boolean; sync: { configured: boolean; lastSyncAt?: string } }> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase.from("cattle").select("*").eq("farm_business_id", farm.id).neq("status", "removed");
+  if (error) {
+    if (missingSchema(error)) return { cattle: [], needsMigration: true, sync: { configured: false } };
+    throw new Error(error.message);
+  }
+  const { data: key } = await supabase.from("cattle_sync_key").select("last_sync_at").eq("farm_business_id", farm.id).maybeSingle();
+  return { cattle: (data ?? []).map(mapCow), needsMigration: false, sync: { configured: !!key, lastSyncAt: key?.last_sync_at ?? undefined } };
+}
+
+export async function saveCow(input: Omit<Cow, "updatedAt" | "id"> & { id?: string }): Promise<Cow> {
+  const { supabase, farm } = await ctx();
+  const tag = input.tag.trim();
+  if (!tag) throw new Error("Enter the cow's tag number.");
+  const row = cowRow({ ...input, tag });
+  const { data: clash } = await supabase.from("cattle").select("id, status").eq("farm_business_id", farm.id).eq("tag", tag).maybeSingle();
+  if (clash && clash.id !== input.id && clash.status !== "removed") throw new Error(`Tag ${tag} is already on another animal.`);
+  let res;
+  if (input.id) {
+    if (clash && clash.id !== input.id) await supabase.from("cattle").delete().eq("id", clash.id); // a removed animal's old row
+    res = await supabase.from("cattle").update(row).eq("id", input.id).eq("farm_business_id", farm.id).select("*").single();
+  } else if (clash) {
+    res = await supabase.from("cattle").update(row).eq("id", clash.id).select("*").single();
+  } else {
+    res = await supabase.from("cattle").insert({ ...row, farm_business_id: farm.id }).select("*").single();
+  }
+  if (res.error) throw new Error(missingSchema(res.error) ? MIGRATION_0030 : res.error.message);
+  return mapCow(res.data);
+}
+
+export async function removeCow(id: string): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const { error } = await supabase.from("cattle").update({ status: "removed", updated_at: new Date().toISOString() }).eq("id", id).eq("farm_business_id", farm.id);
+  if (error) throw new Error(error.message);
+}
+
+/** Makes (or replaces) the Google Sheet sync key. Returns the key once; only its hash is stored. */
+export async function createCattleSyncKey(): Promise<string> {
+  const { supabase, farm } = await ctx();
+  const { randomBytes, createHash } = await import("node:crypto");
+  const key = `fl_cattle_${randomBytes(24).toString("hex")}`;
+  const hash = createHash("sha256").update(key).digest("hex");
+  const { error } = await supabase.from("cattle_sync_key").upsert({ farm_business_id: farm.id, token_hash: hash, created_at: new Date().toISOString(), last_sync_at: null }, { onConflict: "farm_business_id" });
+  if (error) throw new Error(missingSchema(error) ? MIGRATION_0030 : error.message);
+  return key;
+}
+
+/**
+ * The Google Sheet sync, run by the API route with no logged-in user: the
+ * key identifies the farm, and the service-role client is used because
+ * there's no session for row-level security to check. Only the cattle
+ * tables are touched.
+ */
+export async function cattleSyncWithKey(key: string, changes: CowChange[]): Promise<{ cattle: Cow[] }> {
+  const { createAdminClient } = await import("./admin");
+  const { createHash } = await import("node:crypto");
+  const { applyCowChange } = await import("@/lib/cattle");
+  const admin = createAdminClient();
+  const hash = createHash("sha256").update(key).digest("hex");
+  const { data: keyRow, error: keyErr } = await admin.from("cattle_sync_key").select("farm_business_id").eq("token_hash", hash).maybeSingle();
+  if (keyErr) throw new Error(keyErr.message);
+  if (!keyRow) throw Object.assign(new Error("That sync key isn't valid. Make a new one on the FarmLedger Cattle page."), { status: 401 });
+  const farmId = keyRow.farm_business_id as string;
+
+  const { data: rows, error } = await admin.from("cattle").select("*").eq("farm_business_id", farmId);
+  if (error) throw new Error(error.message);
+  const byTag = new Map<string, Cow>((rows ?? []).map((r: any) => [String(r.tag).trim(), mapCow(r)]));
+
+  const inserts: any[] = [];
+  const updates: { id: string; row: any }[] = [];
+  for (const change of changes.slice(0, 5000)) {
+    const tag = String(change.tag ?? "").trim();
+    if (!tag) continue;
+    const existing = byTag.get(tag);
+    const next = applyCowChange(existing, { ...change, tag });
+    if (existing) updates.push({ id: existing.id, row: cowRow(next) });
+    else inserts.push({ ...cowRow(next), farm_business_id: farmId });
+    byTag.set(tag, { ...next, id: existing?.id ?? "" });
+  }
+  if (inserts.length) {
+    const { error: insErr } = await admin.from("cattle").insert(inserts);
+    if (insErr) throw new Error(insErr.message);
+  }
+  for (let i = 0; i < updates.length; i += 25) {
+    await Promise.all(updates.slice(i, i + 25).map(async (u) => {
+      const { error: upErr } = await admin.from("cattle").update(u.row).eq("id", u.id).eq("farm_business_id", farmId);
+      if (upErr) throw new Error(upErr.message);
+    }));
+  }
+  await admin.from("cattle_sync_key").update({ last_sync_at: new Date().toISOString() }).eq("farm_business_id", farmId);
+
+  const { data: after, error: afterErr } = await admin.from("cattle").select("*").eq("farm_business_id", farmId).neq("status", "removed");
+  if (afterErr) throw new Error(afterErr.message);
+  return { cattle: (after ?? []).map(mapCow) };
 }
 
 /**

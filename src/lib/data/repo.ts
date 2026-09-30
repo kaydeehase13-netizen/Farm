@@ -463,3 +463,20 @@ export async function deleteTankMix(id: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteTankMix(id);
   return demo.deleteTankMix(id);
 }
+
+export async function listCattle() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listCattle();
+  return demo.listCattle();
+}
+export async function saveCow(input: Parameters<typeof demo.saveCow>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).saveCow(input);
+  return demo.saveCow(input);
+}
+export async function removeCow(id: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).removeCow(id);
+  return demo.removeCow(id);
+}
+export async function createCattleSyncKey() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createCattleSyncKey();
+  return demo.createCattleSyncKey();
+}
