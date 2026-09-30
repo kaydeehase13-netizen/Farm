@@ -442,3 +442,24 @@ export async function mergeFields(fromId: string, intoId: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).mergeFields(fromId, intoId);
   return demo.mergeFields(fromId, intoId);
 }
+
+export async function listChemicals() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listChemicals();
+  return demo.listChemicals();
+}
+export async function saveChemical(input: Parameters<typeof demo.saveChemical>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).saveChemical(input);
+  return demo.saveChemical(input);
+}
+export async function listTankMixes() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listTankMixes();
+  return demo.listTankMixes();
+}
+export async function saveTankMix(input: Parameters<typeof demo.saveTankMix>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).saveTankMix(input);
+  return demo.saveTankMix(input);
+}
+export async function deleteTankMix(id: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteTankMix(id);
+  return demo.deleteTankMix(id);
+}

@@ -3111,3 +3111,25 @@ export async function commitImportIncomeAction(rows: BulkImportDraftRow[]): Prom
 export async function commitImportExpenseAction(rows: BulkImportDraftRow[]): Promise<BulkImportSummary> {
   return bulkImportCommit(rows, "expense");
 }
+
+// -----------------------------------------------------------------------
+// Tank Mix Calculator
+// -----------------------------------------------------------------------
+
+/** Add a chemical to the library, or update its label details (EPA #, restricted use, default rate). */
+export async function saveChemicalAction(input: Parameters<typeof repo.saveChemical>[0]) {
+  const saved = await repo.saveChemical(input);
+  revalidatePath("/fields/tank-mix");
+  return saved;
+}
+
+export async function saveTankMixAction(input: Parameters<typeof repo.saveTankMix>[0]) {
+  const saved = await repo.saveTankMix(input);
+  revalidatePath("/fields/tank-mix");
+  return saved;
+}
+
+export async function deleteTankMixAction(id: string) {
+  await repo.deleteTankMix(id);
+  revalidatePath("/fields/tank-mix");
+}

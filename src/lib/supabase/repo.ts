@@ -8,8 +8,7 @@ import type {
   CustomerField, Job, Invoice, Payment, Asset, AssetRepair, MileageTrip,
   LivestockGroup, LivestockTransaction, Loan, InventoryItem, DocumentRecord,
   TaxOpportunity, TaxQuestion, FarmCategory, FieldProfitability,
-  FieldOverheadAllocation, FieldOverheadCategory,
-} from "@/types/domain";
+  FieldOverheadAllocation, FieldOverheadCategory, Product, TankMixRecipe } from "@/types/domain";
 import type { DB } from "@/lib/data/store";
 
 // -----------------------------------------------------------------------
@@ -1553,6 +1552,106 @@ export async function mergeFields(fromId: string, intoId: string): Promise<Field
   const { error: archErr } = await supabase.from("field").update({ archived_at: new Date().toISOString() }).eq("id", fromId).eq("farm_business_id", farm.id);
   if (archErr) throw new Error(archErr.message);
   return { activities, costSplits, cropYearsMoved, cropYearsDropped, overhead, documents, mileageTrips };
+}
+
+// -----------------------------------------------------------------------
+// Tank Mix Calculator: chemical library + saved mixes (migration 0029).
+// -----------------------------------------------------------------------
+
+const MIGRATION_0029 = "The tank-mix update to the database hasn't been applied yet. In Supabase, open SQL Editor and run supabase/migrations/0029_tank_mix.sql, then try again.";
+
+function missingSchema(err: { message?: string; code?: string } | null | undefined) {
+  const m = (err?.message ?? "").toLowerCase();
+  return err?.code === "42P01" || err?.code === "42703" || err?.code === "PGRST204" || err?.code === "PGRST205" ||
+    m.includes("does not exist") || m.includes("could not find");
+}
+
+function mapChemical(r: any): Product {
+  return {
+    id: r.id, farmBusinessId: r.farm_business_id, category: r.category, name: r.name,
+    epaRegistrationNumber: r.epa_registration_number ?? undefined, defaultUnit: r.default_unit,
+    manufacturer: r.manufacturer ?? undefined, activeIngredient: r.active_ingredient ?? undefined,
+    restrictedUse: !!r.restricted_use,
+    defaultRate: r.default_rate != null ? Number(r.default_rate) : undefined,
+    defaultRateUnit: r.default_rate_unit ?? undefined,
+  };
+}
+
+/** Every chemical on the farm (logged, imported or added here), with label details. */
+export async function listChemicals(): Promise<{ chemicals: Product[]; needsMigration: boolean }> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase.from("product").select("*")
+    .eq("farm_business_id", farm.id).eq("category", "chemical").is("archived_at", null).order("name");
+  if (error) throw new Error(error.message);
+  const needsMigration = (data ?? []).length > 0 && !("restricted_use" in (data as any[])[0]);
+  return { chemicals: (data ?? []).map(mapChemical), needsMigration };
+}
+
+export async function saveChemical(input: {
+  id?: string; name: string; manufacturer?: string; epaRegistrationNumber?: string; activeIngredient?: string;
+  restrictedUse: boolean; defaultRate?: number | null; defaultRateUnit?: string | null;
+}): Promise<Product> {
+  const { supabase, farm } = await ctx();
+  const row: Record<string, unknown> = {
+    manufacturer: input.manufacturer?.trim() || null,
+    epa_registration_number: input.epaRegistrationNumber?.trim() || null,
+    active_ingredient: input.activeIngredient?.trim() || null,
+    restricted_use: input.restrictedUse,
+    default_rate: input.defaultRate ?? null,
+    default_rate_unit: input.defaultRateUnit || null,
+  };
+  let res;
+  if (input.id) {
+    res = await supabase.from("product").update(row).eq("id", input.id).eq("farm_business_id", farm.id).select("*").single();
+  } else {
+    const name = input.name.trim();
+    if (!name) throw new Error("Enter the chemical's name.");
+    const { data: existing } = await supabase.from("product").select("id").eq("farm_business_id", farm.id).eq("name", name).maybeSingle();
+    res = existing
+      ? await supabase.from("product").update({ ...row, archived_at: null }).eq("id", existing.id).select("*").single()
+      : await supabase.from("product").insert({ ...row, farm_business_id: farm.id, category: "chemical", name, default_unit: "gal" }).select("*").single();
+  }
+  if (res.error) throw new Error(missingSchema(res.error) ? MIGRATION_0029 : res.error.message);
+  return mapChemical(res.data);
+}
+
+export async function listTankMixes(): Promise<{ mixes: TankMixRecipe[]; needsMigration: boolean }> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase.from("tank_mix_recipe").select("*").eq("farm_business_id", farm.id).order("name");
+  if (error) {
+    if (missingSchema(error)) return { mixes: [], needsMigration: true };
+    throw new Error(error.message);
+  }
+  return {
+    mixes: (data ?? []).map((r: any): TankMixRecipe => ({
+      id: r.id, name: r.name,
+      tankGallons: r.tank_gallons != null ? Number(r.tank_gallons) : undefined,
+      carrierGpa: r.carrier_gpa != null ? Number(r.carrier_gpa) : undefined,
+      items: Array.isArray(r.items) ? r.items : [],
+    })),
+    needsMigration: false,
+  };
+}
+
+export async function saveTankMix(input: Omit<TankMixRecipe, "id"> & { id?: string }): Promise<TankMixRecipe> {
+  const { supabase, farm } = await ctx();
+  const name = input.name.trim();
+  if (!name) throw new Error("Name the mix to save it.");
+  const row = {
+    name, tank_gallons: input.tankGallons ?? null, carrier_gpa: input.carrierGpa ?? null,
+    items: input.items, updated_at: new Date().toISOString(),
+  };
+  const res = input.id
+    ? await supabase.from("tank_mix_recipe").update(row).eq("id", input.id).eq("farm_business_id", farm.id).select("id").single()
+    : await supabase.from("tank_mix_recipe").insert({ ...row, farm_business_id: farm.id }).select("id").single();
+  if (res.error) throw new Error(missingSchema(res.error) ? MIGRATION_0029 : res.error.message);
+  return { ...input, name, id: res.data.id };
+}
+
+export async function deleteTankMix(id: string): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const { error } = await supabase.from("tank_mix_recipe").delete().eq("id", id).eq("farm_business_id", farm.id);
+  if (error) throw new Error(error.message);
 }
 
 /**

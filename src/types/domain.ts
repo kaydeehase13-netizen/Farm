@@ -149,6 +149,21 @@ export interface Product {
   name: string;
   epaRegistrationNumber?: string;
   defaultUnit: string;
+  manufacturer?: string;
+  activeIngredient?: string;
+  /** EPA Restricted Use Pesticide. */
+  restrictedUse?: boolean;
+  /** Label rate normally run, pre-filled in the tank-mix calculator. */
+  defaultRate?: number;
+  defaultRateUnit?: string;
+}
+
+export interface TankMixRecipe {
+  id: string;
+  name: string;
+  tankGallons?: number;
+  carrierGpa?: number;
+  items: { productId?: string; name: string; rate: number; unit: string }[];
 }
 
 export interface InventoryItem {

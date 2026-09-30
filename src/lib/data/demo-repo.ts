@@ -1256,3 +1256,48 @@ export function mergeFields(fromId: string, intoId: string) {
     return { activities, costSplits, cropYearsMoved, cropYearsDropped, overhead: 0, documents: 0, mileageTrips: 0 };
   });
 }
+
+// ---- Tank Mix Calculator (demo mirrors of the Supabase functions) ----
+export function listChemicals() {
+  return { chemicals: getDB().products.filter((p) => p.category === "chemical").sort((a, b) => a.name.localeCompare(b.name)), needsMigration: false };
+}
+
+export function saveChemical(input: {
+  id?: string; name: string; manufacturer?: string; epaRegistrationNumber?: string; activeIngredient?: string;
+  restrictedUse: boolean; defaultRate?: number | null; defaultRateUnit?: string | null;
+}) {
+  return mutate((db) => {
+    let p = input.id ? db.products.find((x) => x.id === input.id) : db.products.find((x) => x.name.trim().toLowerCase() === input.name.trim().toLowerCase());
+    if (!p) {
+      if (!input.name.trim()) throw new Error("Enter the chemical's name.");
+      p = { id: randomUUID(), farmBusinessId: FARM.id, category: "chemical", name: input.name.trim(), defaultUnit: "gal" };
+      db.products.push(p);
+    }
+    p.manufacturer = input.manufacturer?.trim() || undefined;
+    p.epaRegistrationNumber = input.epaRegistrationNumber?.trim() || undefined;
+    p.activeIngredient = input.activeIngredient?.trim() || undefined;
+    p.restrictedUse = input.restrictedUse;
+    p.defaultRate = input.defaultRate ?? undefined;
+    p.defaultRateUnit = input.defaultRateUnit || undefined;
+    return { ...p };
+  });
+}
+
+export function listTankMixes() {
+  return { mixes: [...(getDB().tankMixes ?? [])].sort((a, b) => a.name.localeCompare(b.name)), needsMigration: false };
+}
+
+export function saveTankMix(input: Omit<import("@/types/domain").TankMixRecipe, "id"> & { id?: string }) {
+  if (!input.name.trim()) throw new Error("Name the mix to save it.");
+  return mutate((db) => {
+    db.tankMixes = db.tankMixes ?? [];
+    const existing = input.id ? db.tankMixes.find((m) => m.id === input.id) : undefined;
+    const mix = { ...input, name: input.name.trim(), id: existing?.id ?? randomUUID() };
+    if (existing) Object.assign(existing, mix); else db.tankMixes.push(mix);
+    return mix;
+  });
+}
+
+export function deleteTankMix(id: string) {
+  mutate((db) => { db.tankMixes = (db.tankMixes ?? []).filter((m) => m.id !== id); });
+}

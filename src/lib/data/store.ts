@@ -34,6 +34,7 @@ export interface DB {
   transactions: Transaction[];
   receipts: Receipt[];
   products: Product[];
+  tankMixes?: import("@/types/domain").TankMixRecipe[];
   inventoryItems: InventoryItem[];
   inventoryMovements: InventoryMovement[];
   activities: Activity[];
