@@ -17,7 +17,8 @@ const GROUPS: { title: string; items: { label: string; href: string }[] }[] = [
     items: [
       { label: "Plant", href: "/fields/activities/new?type=plant" },
       { label: "Spray", href: "/fields/activities/new?type=spray" },
-      { label: "Tank Mix Calculator", href: "/fields/tank-mix" },
+      { label: "Tank Mix Calculator", href: "/chemicals" },
+      { label: "Chemical", href: "/chemicals?tab=list&add=1" },
       { label: "Fertilize", href: "/fields/activities/new?type=fertilize" },
       { label: "Harvest", href: "/fields/activities/new?type=harvest" },
       { label: "Other Field Work", href: "/fields/activities/new?type=other" },

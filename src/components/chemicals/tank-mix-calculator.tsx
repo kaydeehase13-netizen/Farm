@@ -68,6 +68,17 @@ export function TankMixCalculator({ chemicals, mixes, fields, needsMigration }: 
     }));
   }
 
+  function quickAdd(name: string) {
+    setErr(null); setMsg(null);
+    startTransition(async () => {
+      try {
+        await saveChemicalAction({ name, restrictedUse: false });
+        setMsg(`Added "${name.trim()}" to your chemical list — add its EPA number on the Chemical List tab.`);
+        router.refresh();
+      } catch (e) { setErr(e instanceof Error ? e.message : "Couldn't add it."); }
+    });
+  }
+
   function loadMix(id: string) {
     setMixId(id);
     const m = mixes.find((x) => x.id === id);
@@ -190,7 +201,11 @@ export function TankMixCalculator({ chemicals, mixes, fields, needsMigration }: 
                   <div className="col-span-3 sm:col-span-1 flex flex-wrap items-center gap-2">
                   {chem?.restrictedUse && <span className="text-[11px] font-semibold text-white bg-status-red rounded px-1.5 py-0.5">RUP</span>}
                   {chem?.epaRegistrationNumber && <span className="text-xs text-charcoal/55">EPA {chem.epaRegistrationNumber}</span>}
-                  {r.name.trim() && !chem && <span className="text-xs text-status-amber">not in your chemical list yet</span>}
+                  {r.name.trim() && !chem && (
+                    <button type="button" disabled={isPending} onClick={() => quickAdd(r.name)} className="text-xs text-status-amber hover:underline">
+                      Not in your list — add it
+                    </button>
+                  )}
                   <button type="button" onClick={() => setRows((rs) => rs.length > 1 ? rs.filter((x) => x.key !== r.key) : rs)} className="text-xs text-charcoal/50 hover:text-status-red">Remove</button>
                   </div>
                 </div>
@@ -203,7 +218,6 @@ export function TankMixCalculator({ chemicals, mixes, fields, needsMigration }: 
 
       <LoadSheet result={result} products={products} rups={rups} acres={acres} tank={Number(tank)} gpa={Number(gpa)} mixName={mixName} />
 
-      <ChemicalLibrary chemicals={chemicals} />
     </div>
   );
 }
@@ -303,15 +317,15 @@ function LoadSheet({ result, products, rups, acres, tank, gpa, mixName }: {
   );
 }
 
-function ChemicalLibrary({ chemicals }: { chemicals: Product[] }) {
+export function ChemicalLibrary({ chemicals, startAdding = false }: { chemicals: Product[]; startAdding?: boolean }) {
   const [filter, setFilter] = useState("");
-  const [editing, setEditing] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(startAdding ? "new" : null);
   const shown = chemicals.filter((c) => !filter || `${c.name} ${c.epaRegistrationNumber ?? ""} ${c.manufacturer ?? ""}`.toLowerCase().includes(filter.toLowerCase()));
   return (
     <div className="card p-5 print:hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <div>
-          <div className="text-sm font-semibold text-forest">My chemicals</div>
+          <div className="text-sm font-semibold text-forest">My chemicals ({chemicals.length})</div>
           <p className="text-xs text-charcoal/55">Everything already on your field activity is here. Add the EPA registration number, mark Restricted Use, and set the rate you normally run.</p>
         </div>
         <div className="flex items-center gap-2">
