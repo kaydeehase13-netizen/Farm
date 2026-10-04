@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   Home, Landmark, Sprout, Briefcase, MoreHorizontal, Plus, FileSpreadsheet,
-  Users, Search, LogOut, ChevronDown, FlaskConical, Beef,
+  Users, Search, LogOut, ChevronDown, FlaskConical, Beef, LineChart,
 } from "lucide-react";
 import { useState } from "react";
 import GlobalAddMenu from "./global-add-menu";
@@ -17,6 +17,7 @@ const PRIMARY_NAV = [
   { href: "/fields", label: "Fields", icon: Sprout },
   { href: "/chemicals", label: "Chemicals", icon: FlaskConical },
   { href: "/cattle", label: "Cattle", icon: Beef },
+  { href: "/markets", label: "Grain Prices", icon: LineChart },
   { href: "/work", label: "Work", icon: Briefcase },
   { href: "/more", label: "More", icon: MoreHorizontal },
 ];
