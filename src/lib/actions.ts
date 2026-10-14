@@ -2780,6 +2780,8 @@ export interface AllocateCostFileRow {
   category?: string;
   vendorName?: string;
   transactionDate?: string;
+  /** Spreadsheet rows folded into this one (same year + product bought at different prices). */
+  combinedRows?: number[];
 }
 
 /**
@@ -2810,12 +2812,47 @@ export async function parseAllocateCostFileAction(formData: FormData): Promise<{
     vendorName: toText(r["Vendor (optional)"]) ?? toText(r["Vendor"]),
     transactionDate: toIsoDate(r["Date (optional, YYYY-MM-DD)"]) ?? toIsoDate(r["Date"]),
   })).filter((r) => r.productName || r.totalAmount || r.category); // drop fully blank rows
-  return { rows };
+  return { rows: combineSameProductRows(rows) };
+}
+
+/**
+ * The same product bought more than once at different prices (AMS at
+ * $0.36/lb and $0.45/lb, say) is kept on separate spreadsheet rows so each
+ * price stays visible. Allocating them one at a time would have the second
+ * row replace the first one's split, since re-allocating a product for a
+ * year replaces what was there. So rows with the same year and product name
+ * are added together and split once, for the full amount.
+ */
+function combineSameProductRows(rows: AllocateCostFileRow[]): AllocateCostFileRow[] {
+  const out: AllocateCostFileRow[] = [];
+  const byKey = new Map<string, AllocateCostFileRow>();
+  for (const r of rows) {
+    // Rows that would be skipped (no amount or no category) aren't added into anything.
+    if (!r.productName || !r.totalAmount || !r.category) { out.push(r); continue; }
+    const key = `${r.year ?? ""}|${r.productName.trim().toLowerCase()}`;
+    const first = byKey.get(key);
+    if (!first) {
+      const copy = { ...r };
+      byKey.set(key, copy);
+      out.push(copy);
+      continue;
+    }
+    first.totalAmount = Math.round(((first.totalAmount ?? 0) + r.totalAmount) * 100) / 100;
+    first.combinedRows = [...(first.combinedRows ?? [first.row]), r.row];
+    first.category = first.category ?? r.category;
+    if (r.vendorName && !(first.vendorName ?? "").toLowerCase().split(" / ").includes(r.vendorName.toLowerCase())) {
+      first.vendorName = first.vendorName ? `${first.vendorName} / ${r.vendorName}` : r.vendorName;
+    }
+    if (r.transactionDate && (!first.transactionDate || r.transactionDate > first.transactionDate)) first.transactionDate = r.transactionDate;
+  }
+  return out;
 }
 
 /** Step 2 of the bulk upload: allocate a single parsed row. */
 export async function allocateCostRowAction(r: AllocateCostFileRow): Promise<BulkImportRowResult> {
-  const label = r.productName ? `${r.productName}: ` : "";
+  const label = r.productName
+    ? `${r.productName}${r.combinedRows ? ` (rows ${r.combinedRows.join(" + ")} added together, $${(r.totalAmount ?? 0).toFixed(2)})` : ""}: `
+    : "";
   if (!r.productName || !r.totalAmount) return { row: r.row, ok: false, message: `${label}Skipped — missing Product Name or Total Amount.` };
   if (!r.category) return { row: r.row, ok: false, message: `${label}Skipped — missing Category.` };
   const [farm, categories] = await Promise.all([getFarm(), repo.listFarmCategories()]);
