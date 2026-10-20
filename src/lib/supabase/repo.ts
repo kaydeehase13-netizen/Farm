@@ -2712,7 +2712,7 @@ export async function dashboardSummary(taxYear: number, yearTransactions?: Trans
   // total as "farm operations," with anything loan-related kept separate.
   const isOffBooks = (t: Transaction) => {
     const st = taxCategoryScheduleType(t.taxCategoryCode);
-    if (st === "loan" || st === "w2" || st === "real_estate") return true;
+    if (st === "loan" || st === "w2" || st === "real_estate" || st === "personal") return true;
     return t.taxCategoryCode === "exp_interest_mortgage" || t.taxCategoryCode === "exp_interest_other";
   };
   const income = active.filter((t) => t.transactionType === "income" && !isOffBooks(t)).reduce((s, t) => s + t.amount, 0);

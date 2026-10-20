@@ -17,7 +17,7 @@ export interface TaxCategoryDef {
   scheduleReference: string | null;
   type: "income" | "expense";
   /** Which return this category flows to. Omitted = "schedule_f" (the original, farm-only set below). */
-  scheduleType?: "schedule_f" | "schedule_c" | "schedule_e" | "w2" | "real_estate" | "loan";
+  scheduleType?: "schedule_f" | "schedule_c" | "schedule_e" | "w2" | "real_estate" | "loan" | "personal";
 }
 
 export const TAX_CATEGORIES: TaxCategoryDef[] = [
@@ -151,6 +151,13 @@ export const TAX_CATEGORIES: TaxCategoryDef[] = [
   // entirely, same mechanism as W-2 wages and the house project above.
   { code: "income_loan_proceeds", label: "Loan Proceeds Received (Not Income)", scheduleReference: "Not reported as income — it's borrowed money, not earnings", type: "income", scheduleType: "loan" },
   { code: "exp_loan_principal", label: "Loan Principal Repayment (Not a Deductible Expense)", scheduleReference: "Not deductible — only the interest portion of a payment is (see Interest — Mortgage / Interest — Other)", type: "expense", scheduleType: "loan" },
+
+  // Your own doctor, dental, pharmacy and other health costs. Not a farm
+  // expense, so it never touches Schedule F or the farm totals, but it's
+  // kept (on its own sheet in the CPA export) because personal medical
+  // costs can count as an itemized deduction on Schedule A. Mirrors
+  // supabase/migrations/0032_medical_category.sql.
+  { code: "personal_medical", label: "Medical — Personal (Not a Farm Expense)", scheduleReference: "Form 1040, Schedule A (itemized deductions) — ask your tax professional", type: "expense", scheduleType: "personal" },
 ];
 
 export function taxCategoryMeta(code?: string): TaxCategoryDef | undefined {
@@ -166,6 +173,6 @@ export function taxCategoryScheduleRef(code?: string): string {
   return taxCategoryMeta(code)?.scheduleReference ?? "";
 }
 
-export function taxCategoryScheduleType(code?: string): "schedule_f" | "schedule_c" | "schedule_e" | "w2" | "real_estate" | "loan" {
+export function taxCategoryScheduleType(code?: string): "schedule_f" | "schedule_c" | "schedule_e" | "w2" | "real_estate" | "loan" | "personal" {
   return taxCategoryMeta(code)?.scheduleType ?? "schedule_f";
 }

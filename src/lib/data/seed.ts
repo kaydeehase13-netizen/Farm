@@ -50,6 +50,7 @@ export const FARM_CATEGORIES: FarmCategory[] = [
   { id: "cat-other-income", name: "Other Income", defaultTaxCategoryCode: "income_other" },
   { id: "cat-w2-wages", name: "Wages (W-2)", defaultTaxCategoryCode: "income_w2_wages" },
   { id: "cat-program-payment", name: "Program Payment", defaultTaxCategoryCode: "income_govt_payments" },
+  { id: "cat-medical", name: "Medical", defaultTaxCategoryCode: "personal_medical" },
   // Gift / FCE / Kanza / Agco — each gets both an income and an expense
   // bucket (money can move either direction with any of these), mapped to
   // the same generic Other Income / Other Expense tax lines as "Other"

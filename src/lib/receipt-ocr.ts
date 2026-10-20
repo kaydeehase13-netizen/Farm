@@ -12,7 +12,7 @@
 export const CATEGORY_ENUM = [
   "Seed", "Fertilizer", "Chemical", "Fuel", "Rent", "Insurance", "Custom Work",
   "Repairs & Maintenance", "Trucking", "Supplies", "Veterinary & Medicine",
-  "Other", "Personal / Excluded",
+  "Other", "Personal / Excluded", "Medical",
 ] as const;
 
 export interface OcrLineItem {

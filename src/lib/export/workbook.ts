@@ -269,6 +269,26 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   const wageTotalRow = wageSheet.addRow({ description: "TOTAL", amount: { formula: `SUM(D2:D${wageSheet.rowCount - 1})` } });
   wageTotalRow.font = { bold: true };
 
+  // --- Medical (personal) — kept OFF Schedule F. Your own health costs
+  // aren't a farm expense, but they can be an itemized deduction on
+  // Schedule A, so they're listed here for the CPA.
+  const medicalTxns = yearTxns.filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "personal");
+  const medicalSheet = addSheet(wb, "Medical (Personal)", [
+    { header: "Date", key: "date", width: 14 }, { header: "Paid To", key: "who", width: 26 },
+    { header: "Description", key: "description", width: 36 },
+    { header: "Amount", key: "amount", width: 16, style: { numFmt: CURRENCY_FMT } }, { header: "Documentation", key: "doc", width: 16 },
+  ]);
+  for (const t of medicalTxns) {
+    medicalSheet.addRow({
+      date: dateCell(t.transactionDate), who: t.vendorName ?? "—", description: t.description,
+      amount: t.amount, doc: t.receiptId ? "On file" : "Missing",
+    });
+  }
+  medicalSheet.getColumn("date").numFmt = "mm/dd/yyyy";
+  medicalSheet.addRow({});
+  const medicalTotalRow = medicalSheet.addRow({ description: "TOTAL (not a farm expense — Schedule A, ask your CPA)", amount: { formula: `SUM(D2:D${medicalSheet.rowCount - 1})` } });
+  medicalTotalRow.font = { bold: true };
+
   // --- House Project / Real Estate — also kept OFF Schedule F and Schedule C.
   // Purchase price and rehab costs are capitalized into cost basis rather
   // than deducted as incurred. Whether the eventual sale (if it happens)
