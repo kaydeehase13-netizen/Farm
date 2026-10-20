@@ -480,3 +480,16 @@ export async function createCattleSyncKey() {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).createCattleSyncKey();
   return demo.createCattleSyncKey();
 }
+
+export async function listProductPrices() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listProductPrices();
+  return demo.listProductPrices();
+}
+export async function addProductPrices(items: Parameters<typeof demo.addProductPrices>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).addProductPrices(items);
+  return demo.addProductPrices(items);
+}
+export async function deleteProductPrice(id: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteProductPrice(id);
+  return demo.deleteProductPrice(id);
+}

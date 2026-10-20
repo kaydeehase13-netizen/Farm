@@ -1669,6 +1669,58 @@ export async function deleteTankMix(id: string): Promise<void> {
 }
 
 // -----------------------------------------------------------------------
+// Prices Paid (per-purchase price records) - migration 0031.
+// -----------------------------------------------------------------------
+
+const MIGRATION_0031 = "The Prices Paid update to the database hasn't been applied yet. In Supabase, open SQL Editor and run supabase/migrations/0031_product_price.sql, then try again.";
+
+function mapProductPrice(r: any): import("@/lib/product-prices").ProductPrice {
+  return {
+    id: r.id, productName: r.product_name, category: r.category ?? undefined,
+    purchaseDate: r.purchase_date ?? undefined, vendor: r.vendor ?? undefined,
+    quantity: Number(r.quantity), unit: r.unit, totalAmount: Number(r.total_amount),
+    invoice: r.invoice ?? undefined, notes: r.notes ?? undefined,
+  };
+}
+
+export async function listProductPrices(): Promise<{ prices: import("@/lib/product-prices").ProductPrice[]; needsMigration: boolean }> {
+  const { supabase, farm } = await ctx();
+  const rows: any[] = [];
+  for (let from = 0; ; ) {
+    const { data, error } = await supabase.from("product_price").select("*").eq("farm_business_id", farm.id)
+      .order("id").range(from, from + 999);
+    if (error) {
+      if (missingSchema(error)) return { prices: [], needsMigration: true };
+      throw new Error(error.message);
+    }
+    if (!data || data.length === 0) break;
+    rows.push(...data);
+    if (data.length < 1000) break;
+    from += data.length;
+  }
+  return { prices: rows.map(mapProductPrice), needsMigration: false };
+}
+
+export async function addProductPrices(items: Omit<import("@/lib/product-prices").ProductPrice, "id">[]): Promise<number> {
+  if (items.length === 0) return 0;
+  const { supabase, farm } = await ctx();
+  const rows = items.map((p) => ({
+    farm_business_id: farm.id, product_name: p.productName.trim(), category: p.category ?? null,
+    purchase_date: p.purchaseDate ?? null, vendor: p.vendor ?? null, quantity: p.quantity, unit: p.unit,
+    total_amount: p.totalAmount, invoice: p.invoice ?? null, notes: p.notes ?? null,
+  }));
+  const { error } = await supabase.from("product_price").insert(rows);
+  if (error) throw new Error(missingSchema(error) ? MIGRATION_0031 : error.message);
+  return rows.length;
+}
+
+export async function deleteProductPrice(id: string): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const { error } = await supabase.from("product_price").delete().eq("id", id).eq("farm_business_id", farm.id);
+  if (error) throw new Error(error.message);
+}
+
+// -----------------------------------------------------------------------
 // Cattle (herd list synced with a Google Sheet) - migration 0030.
 // -----------------------------------------------------------------------
 

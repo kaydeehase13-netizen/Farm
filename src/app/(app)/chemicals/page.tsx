@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { listChemicals, listTankMixes, listFields, listActivities } from "@/lib/data/repo";
+import { listChemicals, listTankMixes, listFields, listActivities, listProductPrices } from "@/lib/data/repo";
+import { PriceBook } from "@/components/chemicals/price-book";
 import { normalizeRateUnit } from "@/lib/tank-mix";
 import type { PastLoad } from "@/components/chemicals/tank-mix-calculator";
 import { PageHeader } from "@/components/ui/stat-card";
@@ -8,10 +9,12 @@ import { TankMixCalculator, ChemicalLibrary } from "@/components/chemicals/tank-
 export default async function ChemicalsPage({ searchParams }: { searchParams: Promise<{ tab?: string; add?: string }> }) {
   const { tab, add } = await searchParams;
   const showList = tab === "list";
-  const [{ chemicals, needsMigration: chemMigration }, { mixes, needsMigration: mixMigration }, fields] = await Promise.all([
+  const showPrices = tab === "prices";
+  const [{ chemicals, needsMigration: chemMigration }, { mixes, needsMigration: mixMigration }, fields, priceData] = await Promise.all([
     listChemicals(),
     listTankMixes(),
-    listFields(),
+    showPrices ? Promise.resolve([]) : listFields(),
+    showPrices ? listProductPrices() : Promise.resolve(null),
   ]);
   const needsMigration = chemMigration || mixMigration;
 
@@ -19,7 +22,7 @@ export default async function ChemicalsPage({ searchParams }: { searchParams: Pr
   // pickable "load" per day + product mix, so a past pass can be pulled into
   // the calculator. Only built for the calculator view.
   let pastLoads: PastLoad[] = [];
-  if (!showList) {
+  if (!showList && !showPrices) {
     const thisYear = new Date().getFullYear();
     const [sprayNow, sprayPrev, fertNow, fertPrev] = await Promise.all([
       listActivities({ activityType: "spray", year: thisYear }),
@@ -64,11 +67,12 @@ export default async function ChemicalsPage({ searchParams }: { searchParams: Pr
     <div>
       <PageHeader
         title="Chemicals"
-        description="Your chemical list with EPA numbers and Restricted Use flags, and a tank mix calculator that works out every load."
+        description="Your chemical list with EPA numbers and Restricted Use flags, a tank mix calculator that works out every load, and what you've paid for each product."
         action={
-          <div className="flex gap-2">
-            <Link prefetch={false} href="/chemicals" className={tabClass(!showList)}>Mix Calculator</Link>
+          <div className="flex flex-wrap gap-2">
+            <Link prefetch={false} href="/chemicals" className={tabClass(!showList && !showPrices)}>Mix Calculator</Link>
             <Link prefetch={false} href="/chemicals?tab=list" className={tabClass(showList)}>Chemical List ({chemicals.length})</Link>
+            <Link prefetch={false} href="/chemicals?tab=prices" className={tabClass(showPrices)}>Prices Paid</Link>
           </div>
         }
       />
@@ -78,7 +82,15 @@ export default async function ChemicalsPage({ searchParams }: { searchParams: Pr
           open <b>SQL Editor</b> and run <code>supabase/migrations/0029_tank_mix.sql</code>.
         </div>
       )}
-      {showList ? (
+      {priceData?.needsMigration && (
+        <div className="mb-4 text-sm bg-status-amber/10 border border-status-amber/30 rounded-lg p-3">
+          One database step is needed before prices can be saved: in Supabase, open <b>SQL Editor</b> and run{" "}
+          <code>supabase/migrations/0031_product_price.sql</code>.
+        </div>
+      )}
+      {showPrices ? (
+        <PriceBook prices={priceData?.prices ?? []} />
+      ) : showList ? (
         <ChemicalLibrary chemicals={chemicals} startAdding={add === "1"} />
       ) : (
         <TankMixCalculator

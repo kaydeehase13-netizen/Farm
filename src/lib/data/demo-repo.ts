@@ -1283,6 +1283,22 @@ export function saveChemical(input: {
   });
 }
 
+export function listProductPrices() {
+  return { prices: [...(getDB().productPrices ?? [])], needsMigration: false };
+}
+
+export function addProductPrices(items: Omit<import("@/lib/product-prices").ProductPrice, "id">[]) {
+  mutate((db) => {
+    db.productPrices = db.productPrices ?? [];
+    for (const p of items) db.productPrices.push({ ...p, id: randomUUID() });
+  });
+  return items.length;
+}
+
+export function deleteProductPrice(id: string) {
+  mutate((db) => { db.productPrices = (db.productPrices ?? []).filter((p) => p.id !== id); });
+}
+
 export function listTankMixes() {
   return { mixes: [...(getDB().tankMixes ?? [])].sort((a, b) => a.name.localeCompare(b.name)), needsMigration: false };
 }

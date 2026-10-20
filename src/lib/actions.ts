@@ -3172,6 +3172,99 @@ export async function deleteTankMixAction(id: string) {
 }
 
 // -----------------------------------------------------------------------
+// Prices Paid
+// -----------------------------------------------------------------------
+
+export async function addProductPriceAction(input: {
+  productName: string; category?: string; purchaseDate?: string; vendor?: string;
+  quantity: number; unit: string; totalAmount: number; invoice?: string; notes?: string;
+}) {
+  const name = input.productName.trim();
+  if (!name) throw new Error("Enter the product name.");
+  if (!(input.quantity > 0)) throw new Error("Enter how much you bought.");
+  if (!(input.totalAmount > 0)) throw new Error("Enter what you paid in total.");
+  if (!input.unit.trim()) throw new Error("Enter the unit (gal, lb, oz...).");
+  await repo.addProductPrices([{
+    ...input, productName: name, unit: input.unit.trim(),
+    category: input.category?.trim() || undefined, vendor: input.vendor?.trim() || undefined,
+    invoice: input.invoice?.trim() || undefined, notes: input.notes?.trim() || undefined,
+    purchaseDate: input.purchaseDate || undefined,
+  }]);
+  revalidatePath("/chemicals");
+}
+
+export async function deleteProductPriceAction(id: string) {
+  await repo.deleteProductPrice(id);
+  revalidatePath("/chemicals");
+}
+
+/**
+ * Upload purchases from Excel. Reads the first sheet and accepts either the
+ * Prices Paid template columns or the Allocate Product Cost workbook as-is
+ * (Product Name, Total Amount, Category, Vendor, Date, Quantity, Unit,
+ * Invoice / Source). Rows without a quantity, unit or amount are skipped,
+ * and a purchase already on file (same product, date, quantity and total)
+ * isn't added twice.
+ */
+export async function importProductPricesAction(formData: FormData): Promise<{ added: number; duplicates: number; skipped: string[]; error?: string }> {
+  const { parseXlsxRows, toIsoDate, toNumber, toText } = await import("@/lib/xlsx-import");
+  const { priceDedupeKey } = await import("@/lib/product-prices");
+  const file = formData.get("file");
+  if (!(file instanceof File)) return { added: 0, duplicates: 0, skipped: [], error: "No file uploaded." };
+  let raw: Awaited<ReturnType<typeof parseXlsxRows>>;
+  try {
+    raw = await parseXlsxRows(await file.arrayBuffer());
+  } catch (e) {
+    return { added: 0, duplicates: 0, skipped: [], error: e instanceof Error ? e.message : "Couldn't read that file." };
+  }
+  const pick = (r: (typeof raw)[number], ...names: string[]) => {
+    for (const n of names) if (r[n] !== undefined && r[n] !== "") return r[n];
+    return undefined;
+  };
+  const existing = await repo.listProductPrices();
+  if (existing.needsMigration) {
+    return { added: 0, duplicates: 0, skipped: [], error: "One database step is needed first: in Supabase, open SQL Editor and run supabase/migrations/0031_product_price.sql." };
+  }
+  const seen = new Set(existing.prices.map(priceDedupeKey));
+  const toAdd: Parameters<typeof repo.addProductPrices>[0] = [];
+  const skipped: string[] = [];
+  let duplicates = 0;
+  raw.forEach((r, i) => {
+    const rowNo = i + 2;
+    const productName = toText(pick(r, "Product Name", "Product", "Chemical"));
+    const quantity = toNumber(pick(r, "Quantity", "Qty", "Quantity Purchased", "Quantity Purchased (optional)"));
+    const unit = toText(pick(r, "Unit", "Unit (optional)", "UOM"));
+    let totalAmount = toNumber(pick(r, "Total Amount", "Total Cost", "Total", "Amount", "Total Paid"));
+    const per = toNumber(pick(r, "Price per Unit", "Unit Price", "Price"));
+    if (!totalAmount && per && quantity) totalAmount = Math.round(per * quantity * 100) / 100;
+    if (!quantity && !totalAmount) return; // blank row, or a product with nothing bought yet
+    if (!productName || !quantity || !unit || !totalAmount || quantity <= 0 || totalAmount <= 0) {
+      skipped.push(`Row ${rowNo}${productName ? ` (${productName})` : ""}: needs product, quantity, unit and amount`);
+      return;
+    }
+    const item = {
+      productName, quantity, unit, totalAmount,
+      category: toText(pick(r, "Category")),
+      vendor: toText(pick(r, "Vendor (optional)", "Vendor")),
+      purchaseDate: toIsoDate(pick(r, "Date (optional, YYYY-MM-DD)", "Date (YYYY-MM-DD)", "Date", "Purchase Date")),
+      invoice: toText(pick(r, "Invoice / Source", "Invoice", "Invoice #")),
+      notes: toText(pick(r, "Notes")),
+    };
+    const key = priceDedupeKey(item);
+    if (seen.has(key)) { duplicates++; return; }
+    seen.add(key);
+    toAdd.push(item);
+  });
+  try {
+    await repo.addProductPrices(toAdd);
+  } catch (e) {
+    return { added: 0, duplicates, skipped, error: e instanceof Error ? e.message : "Couldn't save the prices." };
+  }
+  revalidatePath("/chemicals");
+  return { added: toAdd.length, duplicates, skipped };
+}
+
+// -----------------------------------------------------------------------
 // Cattle
 // -----------------------------------------------------------------------
 
