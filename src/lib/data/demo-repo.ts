@@ -92,7 +92,7 @@ export function listTaxYears() {
 
 export function listTransactions(filters: {
   taxYear?: number; type?: string; status?: string; fieldId?: string;
-  customerId?: string; vendorId?: string; search?: string;
+  customerId?: string; vendorId?: string; search?: string; withSplits?: boolean;
 } = {}) {
   let rows = getDB().transactions;
   if (filters.taxYear) rows = rows.filter((t) => t.taxYear === filters.taxYear);

@@ -6,10 +6,13 @@ import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function HomePage() {
   const taxYear = await getViewTaxYear();
+  // One list for both the totals and Recent Activity (it used to be loaded
+  // twice). Neither needs the per-field splits.
+  const yearTxns = listTransactions({ taxYear, withSplits: false });
   const [farm, summary, allTxns] = await Promise.all([
     getFarm(),
-    dashboardSummary(taxYear),
-    listTransactions({ taxYear }),
+    dashboardSummary(taxYear, yearTxns),
+    yearTxns,
   ]);
   const recent = allTxns.slice(0, 6);
 

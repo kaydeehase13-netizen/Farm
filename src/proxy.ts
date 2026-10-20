@@ -32,7 +32,14 @@ export default async function proxy(req: NextRequest) {
     },
   });
 
-  const { data } = await supabase.auth.getUser();
+  // getClaims() checks the sign-in token's signature right here instead of
+  // calling Supabase Auth over the network on every page load and every
+  // tap (getUser() did). It still refreshes an expired session, and falls
+  // back to asking Supabase Auth itself if the project's token keys can't
+  // be checked locally.
+  const { data: claimsData } = await supabase.auth.getClaims();
+  const userId = typeof claimsData?.claims?.sub === "string" ? claimsData.claims.sub : null;
+  const data = { user: userId ? { id: userId } : null };
   const isPublic = PUBLIC_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
 
   if (!data.user && !isPublic && path !== "/onboarding") {

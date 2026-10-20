@@ -527,11 +527,20 @@ export async function renameVendor(id: string, newName: string): Promise<{ merge
 const TXN_PAGE_SIZE = 1000;
 const SPLIT_ID_CHUNK = 150;
 const TXN_SELECT = "*, vendor:vendor_id(name), tax_year:tax_year_id(year), tax_category:tax_category_id(code)";
+const TXN_SELECT_ONE_YEAR = "*, vendor:vendor_id(name), tax_year:tax_year_id!inner(year), tax_category:tax_category_id(code)";
 
 export async function listTransactions(filters: {
   taxYear?: number; type?: string; status?: string; fieldId?: string; customerId?: string; vendorId?: string; search?: string;
+  /** false skips loading each transaction's field splits (the dashboard totals don't use them). */
+  withSplits?: boolean;
 } = {}): Promise<Transaction[]> {
   const { supabase, farm } = await ctx();
+  // The tax year is filtered in the database (inner join on tax_year), not
+  // after downloading every transaction the farm has ever had. Each
+  // product allocation adds a transaction per field, so the full history
+  // runs to thousands of rows; pulling all of them, 1,000 at a time one
+  // page after another, just to keep one year was what made the home page
+  // slow to open.
   // Paged the same way as listActivities: PostgREST caps one response at
   // max-rows (1000 on Supabase), so an unpaged select silently dropped
   // everything past the first 1000 transactions. Allocate Product Cost
@@ -540,13 +549,14 @@ export async function listTransactions(filters: {
   // on top of it. The id tiebreaker keeps paging stable across the many
   // transactions that share a date.
   function buildQuery() {
-    let q = supabase.from("transaction").select(TXN_SELECT).eq("farm_business_id", farm.id)
+    let q = supabase.from("transaction").select(filters.taxYear ? TXN_SELECT_ONE_YEAR : TXN_SELECT).eq("farm_business_id", farm.id)
       .order("transaction_date", { ascending: false })
       .order("id", { ascending: true });
     if (filters.type) q = q.eq("transaction_type", filters.type);
     if (filters.status) q = q.eq("status", filters.status);
     if (filters.customerId) q = q.eq("customer_id", filters.customerId);
     if (filters.vendorId) q = q.eq("vendor_id", filters.vendorId);
+    if (filters.taxYear) q = q.eq("tax_year.year", filters.taxYear);
     return q;
   }
   const rows: any[] = [];
@@ -577,6 +587,9 @@ export async function listTransactions(filters: {
   }
   const ids = filtered.map((r: any) => r.id);
   if (ids.length === 0) return [];
+  if (filters.withSplits === false && !filters.fieldId) {
+    return filtered.map((r: any) => mapTransaction(r, []));
+  }
   // Split lookup in chunks: `.in()` puts every id in the request URL, and
   // a few hundred UUIDs is enough to exceed the URL length limit - the
   // request then fails, splitRows comes back empty, and every transaction
@@ -2632,9 +2645,9 @@ export async function allFieldProfitability(taxYear: number) {
 
 function round2(n: number) { return Math.round(n * 100) / 100; }
 
-export async function dashboardSummary(taxYear: number) {
+export async function dashboardSummary(taxYear: number, yearTransactions?: Transaction[] | Promise<Transaction[]>) {
   const [txns, receipts, invoices, taxQuestions, inventory] = await Promise.all([
-    listTransactions({ taxYear }), listReceipts(), listInvoices(), listTaxQuestions(), listInventory(),
+    yearTransactions ?? listTransactions({ taxYear, withSplits: false }), listReceipts(), listInvoices(), listTaxQuestions(), listInventory(),
   ]);
   const active = txns.filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded);
   // Loan proceeds/principal aren't income or expense at all (it's borrowed

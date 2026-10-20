@@ -406,8 +406,8 @@ export async function allFieldProfitability(taxYear: number) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).allFieldProfitability(taxYear);
   return demo.allFieldProfitability(taxYear);
 }
-export async function dashboardSummary(taxYear: number) {
-  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).dashboardSummary(taxYear);
+export async function dashboardSummary(taxYear: number, yearTransactions?: Promise<Transaction[]>) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).dashboardSummary(taxYear, yearTransactions);
   return demo.dashboardSummary(taxYear);
 }
 

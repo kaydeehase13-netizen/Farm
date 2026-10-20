@@ -6,9 +6,10 @@ import { getViewTaxYear } from "@/lib/tax-year";
 
 export default async function CpaPortalPage() {
   const [farm, taxYear] = await Promise.all([getFarm(), getViewTaxYear()]);
+  const yearTxns = listTransactions({ taxYear, withSplits: false });
   const [summary, allTxns, questions, assets] = await Promise.all([
-    dashboardSummary(taxYear),
-    listTransactions({ taxYear }),
+    dashboardSummary(taxYear, yearTxns),
+    yearTxns,
     listTaxQuestions(),
     listAssets(),
   ]);
