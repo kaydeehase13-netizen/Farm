@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { listChemicals, listTankMixes, listFields, listActivities, listProductPrices } from "@/lib/data/repo";
 import { PriceBook } from "@/components/chemicals/price-book";
+import { summarizePrices, unitPrice } from "@/lib/product-prices";
+import type { PriceRef } from "@/lib/tank-mix";
 import { normalizeRateUnit } from "@/lib/tank-mix";
 import type { PastLoad } from "@/components/chemicals/tank-mix-calculator";
 import { PageHeader } from "@/components/ui/stat-card";
@@ -14,7 +16,7 @@ export default async function ChemicalsPage({ searchParams }: { searchParams: Pr
     listChemicals(),
     listTankMixes(),
     showPrices ? Promise.resolve([]) : listFields(),
-    showPrices ? listProductPrices() : Promise.resolve(null),
+    showList ? Promise.resolve(null) : listProductPrices(),
   ]);
   const needsMigration = chemMigration || mixMigration;
 
@@ -60,6 +62,11 @@ export default async function ChemicalsPage({ searchParams }: { searchParams: Pr
       .sort((x, y) => y.date.localeCompare(x.date) || x.label.localeCompare(y.label))
       .slice(0, 300);
   }
+  // Price per unit for each product, for the calculator's chemical cost.
+  const priceRefs: PriceRef[] = summarizePrices(priceData?.prices ?? []).map((st) => ({
+    name: st.productName, unit: st.unit, average: st.weightedAverage, lowest: st.lowest, highest: st.highest,
+    last: st.last ? unitPrice(st.last) : st.weightedAverage, purchases: st.purchases.length,
+  }));
   const tabClass = (active: boolean) =>
     `px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap ${active ? "bg-forest text-white" : "card hover:border-forest"}`;
 
@@ -82,7 +89,7 @@ export default async function ChemicalsPage({ searchParams }: { searchParams: Pr
           open <b>SQL Editor</b> and run <code>supabase/migrations/0029_tank_mix.sql</code>.
         </div>
       )}
-      {priceData?.needsMigration && (
+      {showPrices && priceData?.needsMigration && (
         <div className="mb-4 text-sm bg-status-amber/10 border border-status-amber/30 rounded-lg p-3">
           One database step is needed before prices can be saved: in Supabase, open <b>SQL Editor</b> and run{" "}
           <code>supabase/migrations/0031_product_price.sql</code>.
@@ -99,6 +106,7 @@ export default async function ChemicalsPage({ searchParams }: { searchParams: Pr
           pastLoads={pastLoads}
           fields={fields.map((f) => ({ id: f.id, name: f.name, acres: f.acres }))}
           needsMigration={false}
+          prices={priceRefs}
         />
       )}
     </div>

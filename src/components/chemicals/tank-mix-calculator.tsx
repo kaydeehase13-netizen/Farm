@@ -3,7 +3,10 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Product, TankMixRecipe } from "@/types/domain";
-import { calculateMix, formatPlain, isRateUnit, RATE_UNITS, type MixProduct, type RateUnit } from "@/lib/tank-mix";
+import {
+  calculateMix, formatPlain, isRateUnit, RATE_UNITS, kindOf, amountInPurchaseUnit, findPrice, priceKey,
+  type MixProduct, type RateUnit, type PriceRef, type PriceBasis,
+} from "@/lib/tank-mix";
 import { saveChemicalAction, saveTankMixAction, deleteTankMixAction } from "@/lib/actions";
 
 type Row = { key: string; productId?: string; name: string; rate: string; unit: RateUnit; unitNote?: string };
@@ -30,14 +33,24 @@ const newKey = () => `r${++rowSeq}`;
  * full loads plus a right-sized last load - with the EPA number and a
  * Restricted Use flag on each chemical. Mixes can be saved and reloaded.
  */
-export function TankMixCalculator({ chemicals, mixes, pastLoads = [], fields, needsMigration }: {
+export function TankMixCalculator({ chemicals, mixes, pastLoads = [], fields, needsMigration, prices = [] }: {
   chemicals: Product[];
   mixes: TankMixRecipe[];
   pastLoads?: PastLoad[];
   fields: { id: string; name: string; acres?: number }[];
   needsMigration: boolean;
+  /** Prices Paid per product, for chemical cost per acre / per load. */
+  prices?: PriceRef[];
 }) {
   const router = useRouter();
+  const priceMap = useMemo(() => {
+    const m = new Map<string, PriceRef[]>();
+    for (const p of prices) {
+      const k = priceKey(p.name);
+      m.set(k, [...(m.get(k) ?? []), p]);
+    }
+    return m;
+  }, [prices]);
   const byName = useMemo(() => new Map(chemicals.map((c) => [c.name.trim().toLowerCase(), c])), [chemicals]);
 
   const [pickedFields, setPickedFields] = useState<Set<string>>(new Set());
@@ -280,6 +293,10 @@ export function TankMixCalculator({ chemicals, mixes, pastLoads = [], fields, ne
 
       <LoadSheet result={result} products={products} rups={rups} acres={acres} tank={Number(tank)} gpa={Number(gpa)} mixName={mixName} />
 
+      {products.length > 0 && result.errors.length === 0 && (
+        <ChemicalCost result={result} products={products} acres={acres} priceMap={priceMap} />
+      )}
+
     </div>
   );
 }
@@ -480,6 +497,130 @@ function ChemicalEditor({ chemical, onDone }: { chemical?: Product; onDone: () =
         <button type="button" disabled={isPending} onClick={save} className="bg-forest text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50">{isPending ? "Saving…" : "Save"}</button>
         <button type="button" disabled={isPending} onClick={onDone} className="text-xs text-charcoal/60 hover:underline">Cancel</button>
       </div>
+    </div>
+  );
+}
+
+const BASIS_LABEL: Record<PriceBasis, string> = { average: "Average", lowest: "Lowest", highest: "Highest", last: "Last paid" };
+
+function dollars(n: number, small = false) {
+  return n.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: small && n < 10 ? 4 : 2 });
+}
+
+/**
+ * Chemical cost for billing: each product's price from Prices Paid
+ * (average, lowest, highest or last paid), converted from what's in the
+ * tank to the unit it was bought in, then per acre, per load and for the
+ * whole job. A product with no price on file, or bought in a unit that
+ * can't be converted (a liquid bought by the pound), takes a price typed
+ * in here instead; typed prices aren't saved.
+ */
+function ChemicalCost({ result, products, acres, priceMap }: {
+  result: ReturnType<typeof calculateMix>;
+  products: (MixProduct & { chem?: Product })[];
+  acres: number;
+  priceMap: Map<string, PriceRef[]>;
+}) {
+  const [basis, setBasis] = useState<PriceBasis>("average");
+  const [typed, setTyped] = useState<Record<string, string>>({});
+
+  // Per product: $ per base unit (fl oz liquid / oz dry), and where it came from.
+  const lines = products.map((p, i) => {
+    const kind = kindOf(p.unit);
+    const ref = findPrice(priceMap, p.name, p.unit);
+    const perPurchaseUnit = ref ? ref[basis] : undefined;
+    const conv = ref ? amountInPurchaseUnit(kind, 1, ref.unit) : null;
+    const typedKey = `${priceKey(p.name)}|${kind}`;
+    const typedPrice = Number(typed[typedKey]);
+    let perBase: number | null = null;
+    let label = "";
+    if (ref && conv != null && perPurchaseUnit != null) {
+      perBase = perPurchaseUnit * conv;
+      label = `${dollars(perPurchaseUnit, true)}/${ref.unit}`;
+    } else if (typedPrice > 0) {
+      perBase = kind === "liquid" ? typedPrice / 128 : typedPrice / 16;
+      label = `${dollars(typedPrice, true)}/${kind === "liquid" ? "gal" : "lb"} (typed)`;
+    }
+    const jobCost = perBase != null ? perBase * (result.totals[i]?.baseAmount ?? 0) : null;
+    return { p, kind, ref, conv, typedKey, perBase, label, jobCost };
+  });
+
+  const priced = lines.filter((l) => l.jobCost != null);
+  const jobTotal = priced.reduce((s, l) => s + (l.jobCost ?? 0), 0);
+  const missing = lines.filter((l) => l.jobCost == null);
+  const loadCost = (load: (typeof result.loads)[number]) =>
+    load.products.reduce((s, lp, i) => s + (lines[i]?.perBase != null ? lines[i].perBase! * lp.baseAmount : 0), 0);
+
+  return (
+    <div className="card p-5 space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold text-forest">Chemical cost</div>
+          <div className="text-xs text-charcoal/60">From your Prices Paid, for billing. Water isn&apos;t included.</div>
+        </div>
+        <label className="text-xs flex items-center gap-1 print:hidden">Price to use
+          <select className="input w-32! text-sm" value={basis} onChange={(e) => setBasis(e.target.value as PriceBasis)}>
+            {(Object.keys(BASIS_LABEL) as PriceBasis[]).map((b) => <option key={b} value={b}>{BASIS_LABEL[b]}</option>)}
+          </select>
+        </label>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-charcoal/50 text-right">
+              <th className="text-left py-1 pr-2 font-normal">Chemical</th>
+              <th className="py-1 px-2 font-normal">Price</th>
+              <th className="py-1 px-2 font-normal">Per acre</th>
+              <th className="py-1 pl-2 font-normal">Job ({acres.toFixed(2)} ac)</th>
+            </tr>
+          </thead>
+          <tbody className="text-right">
+            {lines.map((l, i) => (
+              <tr key={i} className="border-t border-charcoal/10">
+                <td className="text-left py-1.5 pr-2">{l.p.name}<div className="text-[11px] text-charcoal/45">{l.p.rate} {l.p.unit}</div></td>
+                <td className="py-1.5 px-2 whitespace-nowrap">
+                  {l.label || null}
+                  {(!l.ref || l.conv == null) && (
+                    <div className="text-[11px] text-status-amber mt-0.5 print:hidden">
+                      {l.ref ? `Bought by the ${l.ref.unit}, can't convert. ` : "No price on file. "}
+                      <span className="inline-flex items-center gap-1">$
+                        <input className="input w-20! text-right py-0.5! text-xs" type="number" step="0.01" min="0"
+                          value={typed[l.typedKey] ?? ""} onChange={(e) => setTyped((t) => ({ ...t, [l.typedKey]: e.target.value }))} />
+                        /{l.kind === "liquid" ? "gal" : "lb"}
+                      </span>
+                    </div>
+                  )}
+                </td>
+                <td className="py-1.5 px-2 whitespace-nowrap">{l.jobCost != null && acres > 0 ? dollars(l.jobCost / acres) : "—"}</td>
+                <td className="py-1.5 pl-2 whitespace-nowrap font-medium">{l.jobCost != null ? dollars(l.jobCost) : "—"}</td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-charcoal/20 font-semibold text-forest">
+              <td className="text-left py-1.5 pr-2">Total chemical</td>
+              <td />
+              <td className="py-1.5 px-2 whitespace-nowrap">{acres > 0 ? dollars(jobTotal / acres) : "—"}/ac</td>
+              <td className="py-1.5 pl-2 whitespace-nowrap">{dollars(jobTotal)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {result.groups.length > 0 && (
+        <div className="flex flex-wrap gap-2 text-xs">
+          {result.groups.map((g) => (
+            <span key={g.from} className="rounded-lg bg-sage/15 px-2.5 py-1.5">
+              {g.from === g.to ? `Load ${g.from}` : `Loads ${g.from}–${g.to} (each)`}{g.load.partial ? " partial" : ""}:{" "}
+              <b>{dollars(loadCost(g.load))}</b> · {g.load.acres} ac
+            </span>
+          ))}
+        </div>
+      )}
+      {missing.length > 0 && (
+        <p className="text-xs text-status-amber">
+          Not in the total yet: {missing.map((l) => l.p.name).join(", ")}. Type a price above, or add the purchase on the Prices Paid tab.
+        </p>
+      )}
     </div>
   );
 }

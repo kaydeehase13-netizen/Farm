@@ -206,3 +206,44 @@ export function normalizeRateUnit(raw: string | undefined | null): RateUnit | un
   };
   return map[u];
 }
+
+export function kindOf(unit: RateUnit): Kind {
+  return UNIT_INFO[unit]?.kind ?? "liquid";
+}
+
+/**
+ * How many of the purchase unit an amount is: fl oz (liquid) or oz weight
+ * (dry) converted to gal, qt, pt, oz, lb or ton. Null when the two can't be
+ * converted without knowing the product's weight per gallon (a liquid
+ * bought by the pound, a dry product bought by the gallon) or when the
+ * product was bought by the bag/jug/"unit".
+ */
+export function amountInPurchaseUnit(kind: Kind, baseAmount: number, purchaseUnit: string): number | null {
+  const u = purchaseUnit.trim().toLowerCase();
+  const liquid: Record<string, number> = { gal: 128, qt: 32, pt: 16, oz: 1, "fl oz": 1 };
+  const dry: Record<string, number> = { oz: 1, lb: 16, ton: 32000 };
+  const per = kind === "liquid" ? liquid[u] : dry[u];
+  return per ? baseAmount / per : null;
+}
+
+export interface PriceRef {
+  name: string;
+  unit: string;
+  average: number;
+  lowest: number;
+  highest: number;
+  last: number;
+  purchases: number;
+}
+export type PriceBasis = "average" | "lowest" | "highest" | "last";
+
+export function priceKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** The price record that fits this product and its rate unit (by name, then a unit that converts). */
+export function findPrice(prices: Map<string, PriceRef[]>, name: string, unit: RateUnit): PriceRef | undefined {
+  const list = prices.get(priceKey(name)) ?? [];
+  const kind = kindOf(unit);
+  return list.find((p) => amountInPurchaseUnit(kind, 1, p.unit) != null) ?? list[0];
+}
