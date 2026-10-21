@@ -508,3 +508,8 @@ export async function deleteAllProductPrices() {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteAllProductPrices();
   return demo.deleteAllProductPrices();
 }
+
+export async function renameProductPrices(names: string[], to: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).renameProductPrices(names, to);
+  return demo.renameProductPrices(names, to);
+}

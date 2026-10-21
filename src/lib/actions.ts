@@ -2720,6 +2720,46 @@ export async function renameProductAction(input: { year: number; oldName: string
 }
 
 /**
+ * Combine product names that are really one product ("Glufosinate",
+ * "GLUFOSINATE 280", "280 SL Glupex"...) under the name to keep: field
+ * activity, cost entries and allocations, Prices Paid and the chemical list
+ * all move to it. Any year that already has it allocated by usage is
+ * re-split so the cost follows the combined usage.
+ */
+export async function mergeProductsAction(input: { names: string[]; keep: string }) {
+  const keep = input.keep.trim();
+  if (!keep) throw new Error("Pick the name to keep.");
+  const others = [...new Set(input.names.map((n) => n.trim()).filter((n) => n && n.toLowerCase() !== keep.toLowerCase()))];
+  if (others.length === 0) throw new Error("Tick at least two names to combine.");
+  let entries = 0;
+  for (const name of others) {
+    try {
+      const r = await repo.renameProduct(name, keep);
+      entries += r.transactionsRenamed;
+    } catch (e) {
+      // A name that only exists on Prices Paid has no product record to move.
+      if (!(e instanceof Error && /couldn't find a product/i.test(e.message))) throw e;
+    }
+  }
+  const prices = await repo.renameProductPrices(others, keep);
+  const resplit: string[] = [];
+  for (const year of await repo.listTaxYears()) {
+    const allocated = (await listAllocatedProductsAction(year)).find((p) => p.productName.trim().toLowerCase() === keep.toLowerCase());
+    if (allocated) {
+      const r = await reallocateProduct({ year, productName: allocated.productName });
+      if (r.reallocated) resplit.push(String(year));
+    }
+  }
+  revalidateFieldCost();
+  revalidatePath("/more/inventory");
+  revalidatePath("/chemicals");
+  return {
+    message: `Combined ${others.length + 1} names into "${keep}": ${entries} cost entr${entries === 1 ? "y" : "ies"} and ${prices} purchase${prices === 1 ? "" : "s"} moved` +
+      (resplit.length ? `, cost re-split for ${resplit.join(", ")}.` : "."),
+  };
+}
+
+/**
  * A general cost (e.g. a "Corn seed" charge the dealer didn't break down by
  * hybrid) spread over fields you pick, weighted by how much seed each of
  * those fields planted - counting only the seed products you tick (so a

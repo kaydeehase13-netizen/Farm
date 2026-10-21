@@ -19,6 +19,8 @@ import { isCostOnlyLine } from "@/lib/inventory-lines";
 export interface InventoryRow {
   key: string;
   productName: string;
+  /** Every spelling that landed on this row (same name apart from capitals, spaces, punctuation). */
+  names: string[];
   category: string;
   unit: string;
   bought: number;
@@ -40,10 +42,11 @@ export function inventoryBalance(input: { activities: Activity[]; prices: Produc
     const key = `${norm(name)}|${base.unit}`;
     let r = rows.get(key);
     if (!r) {
-      r = { key, productName: name.trim(), category, unit: base.unit, bought: 0, boughtFrom: "none", used: 0, adjusted: 0, onHand: 0,
+      r = { key, productName: name.trim(), names: [], category, unit: base.unit, bought: 0, boughtFrom: "none", used: 0, adjusted: 0, onHand: 0,
         priceQty: 0, priceCost: 0, recorded: 0, recordedCostQty: 0, recordedCost: 0 };
       rows.set(key, r);
     }
+    if (!r.names.includes(name.trim())) r.names.push(name.trim());
     return { r, factor: base.qty };
   };
   const year = (d?: string) => (d ? Number(d.slice(0, 4)) : undefined);
@@ -71,6 +74,7 @@ export function inventoryBalance(input: { activities: Activity[]; prices: Produc
     r.priceQty += p.quantity * factor;
     r.priceCost += p.totalAmount;
     if (p.category) r.category = p.category;
+    r.productName = p.productName.trim(); // show the invoice's spelling
     touch(r, year(p.purchaseDate));
   }
   for (const it of input.items) {

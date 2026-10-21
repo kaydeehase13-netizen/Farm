@@ -1742,6 +1742,20 @@ export async function addProductPrices(items: Omit<import("@/lib/product-prices"
   return rows.length;
 }
 
+/** Prices Paid rows under any of these names move to one name (product merge). */
+export async function renameProductPrices(names: string[], to: string): Promise<number> {
+  const { supabase, farm } = await ctx();
+  const wanted = new Set(names.map((n) => n.trim().toLowerCase()));
+  const { data, error } = await supabase.from("product_price").select("id, product_name").eq("farm_business_id", farm.id);
+  if (error) { if (missingSchema(error)) return 0; throw new Error(error.message); }
+  const ids = (data ?? []).filter((r: any) => wanted.has((r.product_name ?? "").trim().toLowerCase())).map((r: any) => r.id);
+  for (let i = 0; i < ids.length; i += 100) {
+    const { error: e } = await supabase.from("product_price").update({ product_name: to }).in("id", ids.slice(i, i + 100));
+    if (e) throw new Error(e.message);
+  }
+  return ids.length;
+}
+
 export async function deleteAllProductPrices(): Promise<void> {
   const { supabase, farm } = await ctx();
   const { error } = await supabase.from("product_price").delete().eq("farm_business_id", farm.id);

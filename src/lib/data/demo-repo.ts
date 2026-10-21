@@ -1314,6 +1314,13 @@ export function addProductPrices(items: Omit<import("@/lib/product-prices").Prod
   return items.length;
 }
 
+export function renameProductPrices(names: string[], to: string) {
+  const wanted = new Set(names.map((n) => n.trim().toLowerCase()));
+  let n = 0;
+  mutate((db) => { for (const p of db.productPrices ?? []) if (wanted.has(p.productName.trim().toLowerCase())) { p.productName = to; n++; } });
+  return n;
+}
+
 export function deleteAllProductPrices() {
   mutate((db) => { db.productPrices = []; });
 }
