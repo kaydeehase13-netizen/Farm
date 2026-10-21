@@ -272,7 +272,7 @@ export async function buildWorkbook(opts: WorkbookOptions): Promise<ExcelJS.Buff
   // --- Medical (personal) — kept OFF Schedule F. Your own health costs
   // aren't a farm expense, but they can be an itemized deduction on
   // Schedule A, so they're listed here for the CPA.
-  const medicalTxns = yearTxns.filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded && taxCategoryScheduleType(t.taxCategoryCode) === "personal");
+  const medicalTxns = yearTxns.filter((t) => !t.isPersonalExcluded && !t.isDuplicateExcluded && t.taxCategoryCode === "personal_medical");
   const medicalSheet = addSheet(wb, "Medical (Personal)", [
     { header: "Date", key: "date", width: 14 }, { header: "Paid To", key: "who", width: 26 },
     { header: "Description", key: "description", width: 36 },

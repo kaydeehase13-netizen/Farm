@@ -51,6 +51,7 @@ export const FARM_CATEGORIES: FarmCategory[] = [
   { id: "cat-w2-wages", name: "Wages (W-2)", defaultTaxCategoryCode: "income_w2_wages" },
   { id: "cat-program-payment", name: "Program Payment", defaultTaxCategoryCode: "income_govt_payments" },
   { id: "cat-medical", name: "Medical", defaultTaxCategoryCode: "personal_medical" },
+  { id: "cat-utilities-rental", name: "Utilities - Rental", defaultTaxCategoryCode: "personal_living" },
   // Schedule F has no line of its own for these, so both go on Line 32
   // (Other Expenses), listed under their own names for the CPA.
   { id: "cat-marketing", name: "Marketing", defaultTaxCategoryCode: "exp_other" },
@@ -79,6 +80,7 @@ export const FARM_CATEGORIES: FarmCategory[] = [
   // deductible as paid); the eventual sale/schedule is TBD with a CPA.
   { id: "cat-flip-purchase", name: "House Project: Purchase Price", defaultTaxCategoryCode: "flip_purchase_price" },
   { id: "cat-flip-rehab", name: "House Project: Rehab / Materials", defaultTaxCategoryCode: "flip_rehab_cost" },
+  { id: "cat-utilities-pratt", name: "Utilities - Pratt", defaultTaxCategoryCode: "flip_utilities" },
   { id: "cat-flip-selling-cost", name: "House Project: Selling Costs", defaultTaxCategoryCode: "flip_selling_cost" },
   { id: "cat-flip-proceeds", name: "House Project: Sale Proceeds", defaultTaxCategoryCode: "flip_sale_proceeds" },
   // Loan draws and principal repayment — never income, never a deductible

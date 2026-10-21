@@ -133,6 +133,7 @@ export const TAX_CATEGORIES: TaxCategoryDef[] = [
   // doesn't claim a deduction anywhere else in this app.
   { code: "flip_purchase_price", label: "House Project — Purchase Price (Capitalized, Not a Deduction)", scheduleReference: "Adds to cost basis", type: "expense", scheduleType: "real_estate" },
   { code: "flip_rehab_cost", label: "House Project — Rehab / Materials / Contractor Labor (Capitalized, Not a Deduction)", scheduleReference: "Adds to cost basis", type: "expense", scheduleType: "real_estate" },
+  { code: "flip_utilities", label: "House Project — Utilities While Being Fixed Up (Capitalized, Not a Deduction)", scheduleReference: "Adds to cost basis while the house is being rehabbed — confirm with your CPA", type: "expense", scheduleType: "real_estate" },
   { code: "flip_selling_cost", label: "House Project — Selling Costs (Commission, Closing Costs)", scheduleReference: "Reduces sale proceeds if/when sold", type: "expense", scheduleType: "real_estate" },
   { code: "flip_sale_proceeds", label: "House Project — Sale Proceeds (if/when sold)", scheduleReference: "Schedule C, Schedule D, or Section 121 personal-residence exclusion — confirm with your CPA", type: "income", scheduleType: "real_estate" },
 
@@ -157,6 +158,9 @@ export const TAX_CATEGORIES: TaxCategoryDef[] = [
   // kept (on its own sheet in the CPA export) because personal medical
   // costs can count as an itemized deduction on Schedule A. Mirrors
   // supabase/migrations/0032_medical_category.sql.
+  // Utilities on the house you rent and live in: a personal living cost,
+  // not deductible anywhere, so it stays off every schedule and total.
+  { code: "personal_living", label: "Personal Living Expense (Not Deductible)", scheduleReference: null, type: "expense", scheduleType: "personal" },
   { code: "personal_medical", label: "Medical — Personal (Not a Farm Expense)", scheduleReference: "Form 1040, Schedule A (itemized deductions) — ask your tax professional", type: "expense", scheduleType: "personal" },
 ];
 
