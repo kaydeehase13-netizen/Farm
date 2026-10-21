@@ -85,6 +85,35 @@ export function inventoryBalance(input: { activities: Activity[]; prices: Produc
     r.adjusted += (it.adjustedQuantity ?? 0) * factor;
   }
 
+  // Liquid fertilizer logged by the pound on the fields but bought by the
+  // gallon (or the other way round) lands on two rows with the same name.
+  // For the common liquids the weight per gallon is standard, so convert
+  // and put them on one row, in whichever unit the fields use.
+  const byName = new Map<string, (typeof rows extends Map<string, infer V> ? V : never)[]>();
+  for (const r of rows.values()) {
+    const k = r.key.split("|")[0];
+    byName.set(k, [...(byName.get(k) ?? []), r]);
+  }
+  for (const group of byName.values()) {
+    const lb = group.find((r) => r.unit === "lb");
+    const gal = group.find((r) => r.unit === "gal");
+    const d = lb && gal ? lbPerGallon(lb.productName) ?? lbPerGallon(gal.productName) : undefined;
+    if (!lb || !gal || !d) continue;
+    const keepGal = gal.used > 0 && lb.used === 0;
+    const [into, from, f] = keepGal ? [gal, lb, 1 / d] : [lb, gal, d];
+    into.used += from.used * f;
+    into.adjusted += from.adjusted * f;
+    into.priceQty += from.priceQty * f;
+    into.priceCost += from.priceCost;
+    into.recorded += from.recorded * f;
+    into.recordedCostQty += from.recordedCostQty * f;
+    into.recordedCost += from.recordedCost;
+    for (const nm of from.names) if (!into.names.includes(nm)) into.names.push(nm);
+    if (from.priceQty > 0) into.productName = from.productName;
+    if (from.firstYear) { into.firstYear = Math.min(into.firstYear ?? from.firstYear, from.firstYear); into.lastYear = Math.max(into.lastYear ?? from.lastYear!, from.lastYear!); }
+    rows.delete(from.key);
+  }
+
   const out: InventoryRow[] = [];
   for (const r of rows.values()) {
     // Prices Paid wins when it has the product: the same purchase may also
@@ -97,4 +126,14 @@ export function inventoryBalance(input: { activities: Activity[]; prices: Produc
     out.push(row);
   }
   return out.sort((x, y) => x.category.localeCompare(y.category) || x.productName.localeCompare(y.productName));
+}
+
+/** Standard weight per gallon for common liquid fertilizers (lb/gal). */
+export function lbPerGallon(name: string): number | undefined {
+  const n = name.toLowerCase();
+  if (/10-34-0|\bapp\b/.test(n)) return 11.65;
+  if (/\b32\b|32-0-0|32%|uan ?32/.test(n)) return 11.06;
+  if (/\b28\b|28-0-0|28%|uan ?28/.test(n)) return 10.67;
+  if (/thio|12-0-0-26|\bats\b/.test(n)) return 11.1;
+  return undefined;
 }
