@@ -4,6 +4,7 @@ import { requireActiveFarm } from "./auth";
 import { taxCategoryScheduleType } from "@/lib/tax-categories";
 import { seedQuantityInUnits, plantedSeedAmount } from "@/lib/seed-units";
 import { isCostOnlyLine } from "@/lib/inventory-lines";
+import { normalizeUnit } from "@/lib/product-prices";
 import type {
   Field, CropYear, Transaction, TransactionSplit, Receipt, Activity, Customer,
   CustomerField, Job, Invoice, Payment, Asset, AssetRepair, MileageTrip,
@@ -1773,6 +1774,25 @@ export async function renameProductPrices(names: string[], to: string): Promise<
     if (e) throw new Error(e.message);
   }
   return ids.length;
+}
+
+/** Relabel the unit on every purchase of a product (same amounts), e.g. Status "unit" -> "oz". */
+export async function setProductPriceUnit(productName: string, fromUnit: string, toUnit: string): Promise<number> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase.from("product_price").select("id, product_name, unit").eq("farm_business_id", farm.id);
+  if (error) throw new Error(error.message);
+  const name = productName.trim().toLowerCase();
+  const from = fromUnit.trim().toLowerCase();
+  const ids = (data ?? []).filter((r: any) => (r.product_name ?? "").trim().toLowerCase() === name && normUnitLabel(r.unit) === normUnitLabel(from)).map((r: any) => r.id);
+  for (let i = 0; i < ids.length; i += 100) {
+    const { error: e } = await supabase.from("product_price").update({ unit: toUnit }).in("id", ids.slice(i, i + 100));
+    if (e) throw new Error(e.message);
+  }
+  return ids.length;
+}
+
+function normUnitLabel(u: string | null | undefined): string {
+  return normalizeUnit(u);
 }
 
 export async function deleteAllProductPrices(): Promise<void> {

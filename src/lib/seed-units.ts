@@ -13,9 +13,11 @@
  * own bag sizes for her farm.
  */
 const SEEDS_PER_UNIT: { match: RegExp; seedsPerUnit: number }[] = [
-  { match: /soy ?bean/i, seedsPerUnit: 140_000 },
-  { match: /\bcorn\b/i, seedsPerUnit: 80_000 },
-  { match: /sorghum|milo/i, seedsPerUnit: 750_000 },
+  // Crop words, then seed company codes: DKC = DeKalb corn, DKS = DeKalb
+  // sorghum, AG = Asgrow soybeans, P####AM = Pioneer corn.
+  { match: /soy ?bean|\bAG\d{2}/i, seedsPerUnit: 140_000 },
+  { match: /\bcorn\b|\bDKC\d|\bP?\d{4}AM\b/i, seedsPerUnit: 80_000 },
+  { match: /sorghum|milo|\bDKS\d/i, seedsPerUnit: 750_000 },
 ];
 
 /** Returns the seed count per unit (bag) for a seed product name, or undefined if the crop isn't recognized. */

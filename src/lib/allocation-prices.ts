@@ -31,6 +31,8 @@ export function toBase(qty: number, rawUnit: string): { qty: number; unit: strin
   const u = rawUnit.toLowerCase().replace(/\(us\)/g, "").replace(/\./g, "").trim();
   if (TO_GAL[u] != null) return { qty: qty * TO_GAL[u], unit: "gal" };
   if (TO_LB[u] != null) return { qty: qty * TO_LB[u], unit: "lb" };
+  // A seed bag, a "unit" (Kanza's word for a bag/jug) and "each" are one count.
+  if (["bag", "bags", "unit", "units", "ea", "each", "jug", "jugs"].includes(u)) return { qty, unit: "unit" };
   return { qty, unit: u || "unit" };
 }
 

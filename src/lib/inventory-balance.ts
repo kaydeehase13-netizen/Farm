@@ -15,6 +15,7 @@ import type { Activity, InventoryItem } from "@/types/domain";
 import type { ProductPrice } from "@/lib/product-prices";
 import { toBase } from "@/lib/allocation-prices";
 import { isCostOnlyLine } from "@/lib/inventory-lines";
+import { plantedSeedAmount } from "@/lib/seed-units";
 
 export interface InventoryRow {
   key: string;
@@ -66,6 +67,17 @@ export function inventoryBalance(input: { activities: Activity[]; prices: Produc
       const { r, factor } = get(l.productName, l.quantityUnit ?? "", cat);
       r.used += l.quantityUsed * factor;
       touch(r, year(a.activityDate));
+    }
+    // Seed planted: bags/units for corn, soybeans and sorghum (seeding rate x
+    // acres / seeds per bag), pounds for wheat entered by lb/acre. A planting
+    // with no rate can't be counted.
+    if (a.seedProductName && (a.seedingRate ?? 0) > 0 && (a.acres ?? 0) > 0) {
+      const { quantity, unit } = plantedSeedAmount(a.seedProductName, a.seedingRate, a.seedingRateUnit, a.acres);
+      if (quantity && quantity > 0 && unit !== "seeds") {
+        const { r, factor } = get(a.seedProductName, unit, "Seed");
+        r.used += quantity * factor;
+        touch(r, year(a.activityDate));
+      }
     }
   }
   for (const p of input.prices) {

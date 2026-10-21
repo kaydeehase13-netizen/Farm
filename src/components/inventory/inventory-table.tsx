@@ -9,6 +9,11 @@ function n(v: number) {
   return v.toLocaleString(undefined, { maximumFractionDigits: v !== 0 && Math.abs(v) < 10 ? 2 : 0 });
 }
 
+/** Small liquid amounts (a few gallons of Status, Sivanto...) read better in oz. */
+function displayUnit(r: InventoryRow): { unit: string; f: number } {
+  return r.unit === "gal" && Math.max(Math.abs(r.bought), Math.abs(r.used), Math.abs(r.onHand)) < 4 ? { unit: "oz", f: 128 } : { unit: r.unit, f: 1 };
+}
+
 /** First real word of a name ("GLUFOSINATE 280 SL" -> "glufosinate"), used to spot spellings of one product. */
 function stem(name: string): string {
   const w = name.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((x) => x.length >= 4 && !/^\d+$/.test(x));
@@ -131,7 +136,7 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
             </tr>
           </thead>
           <tbody>
-            {shown.map((r) => (
+            {shown.map((r) => { const du = displayUnit(r); return (
               <tr key={r.key} className={picked.has(r.productName) ? "bg-sage/15" : ""}>
                 <td><input type="checkbox" checked={picked.has(r.productName)} onChange={() => toggle(r.productName)} aria-label={`Select ${r.productName}`} /></td>
                 <td className="font-medium">
@@ -140,15 +145,15 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
                 </td>
                 <td>{r.category}</td>
                 <td className="text-right whitespace-nowrap">
-                  {r.bought ? `${n(r.bought)} ${r.unit}` : "—"}
+                  {r.bought ? `${n(r.bought * du.f)} ${du.unit}` : "—"}
                   {r.boughtFrom === "recorded" && <div className="text-[11px] text-charcoal/45">from receipts</div>}
                 </td>
-                <td className="text-right whitespace-nowrap">{r.used ? `${n(r.used)} ${r.unit}` : "—"}</td>
+                <td className="text-right whitespace-nowrap">{r.used ? `${n(r.used * du.f)} ${du.unit}` : "—"}</td>
                 <td className={`text-right whitespace-nowrap font-medium ${r.onHand < -0.005 ? "text-status-amber" : ""}`}>
-                  {n(r.onHand)} {r.unit}
-                  {r.adjusted !== 0 && <div className="text-[11px] text-charcoal/45 font-normal">incl. {r.adjusted > 0 ? "+" : ""}{n(r.adjusted)} adjusted</div>}
+                  {n(r.onHand * du.f)} {du.unit}
+                  {r.adjusted !== 0 && <div className="text-[11px] text-charcoal/45 font-normal">incl. {r.adjusted > 0 ? "+" : ""}{n(r.adjusted * du.f)} adjusted</div>}
                 </td>
-                <td className="text-right whitespace-nowrap">{r.averageCost ? `$${r.averageCost.toFixed(r.averageCost < 10 ? 4 : 2)}/${r.unit}` : "—"}</td>
+                <td className="text-right whitespace-nowrap">{r.averageCost ? `$${(r.averageCost / du.f).toFixed(r.averageCost / du.f < 10 ? 4 : 2)}/${du.unit}` : "—"}</td>
                 <td>
                   {r.onHand < -0.005
                     ? <span className="status-pill status-amber">Used more than bought</span>
@@ -156,7 +161,7 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
                     : <span className="status-pill status-green">OK</span>}
                 </td>
               </tr>
-            ))}
+            ); })}
             {shown.length === 0 && <tr><td colSpan={8} className="text-sm text-charcoal/50">Nothing to show.</td></tr>}
           </tbody>
         </table>

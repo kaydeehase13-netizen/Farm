@@ -513,3 +513,8 @@ export async function renameProductPrices(names: string[], to: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).renameProductPrices(names, to);
   return demo.renameProductPrices(names, to);
 }
+
+export async function setProductPriceUnit(productName: string, fromUnit: string, toUnit: string) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).setProductPriceUnit(productName, fromUnit, toUnit);
+  return demo.setProductPriceUnit(productName, fromUnit, toUnit);
+}

@@ -3280,6 +3280,15 @@ export async function addProductPriceAction(input: {
   revalidatePath("/chemicals");
 }
 
+export async function setProductPriceUnitAction(input: { productName: string; fromUnit: string; toUnit: string }) {
+  const to = input.toUnit.trim();
+  if (!to) throw new Error("Pick a unit.");
+  const n = await repo.setProductPriceUnit(input.productName, input.fromUnit, to);
+  revalidatePath("/chemicals");
+  revalidatePath("/more/inventory");
+  return n;
+}
+
 export async function deleteAllProductPricesAction() {
   await repo.deleteAllProductPrices();
   revalidatePath("/chemicals");

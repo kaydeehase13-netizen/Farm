@@ -3,6 +3,7 @@ import { getDB, mutate, type DB } from "./store";
 import { FARM } from "./seed";
 import { taxCategoryScheduleType } from "@/lib/tax-categories";
 import { isCostOnlyLine } from "@/lib/inventory-lines";
+import { normalizeUnit } from "@/lib/product-prices";
 import type {
   Transaction, TransactionSplit, FieldProfitability, Job, Invoice, Payment,
   Activity, Receipt, DocumentRecord,
@@ -1321,6 +1322,17 @@ export function renameProductPrices(names: string[], to: string) {
   const wanted = new Set(names.map((n) => n.trim().toLowerCase()));
   let n = 0;
   mutate((db) => { for (const p of db.productPrices ?? []) if (wanted.has(p.productName.trim().toLowerCase())) { p.productName = to; n++; } });
+  return n;
+}
+
+export function setProductPriceUnit(productName: string, fromUnit: string, toUnit: string) {
+  const name = productName.trim().toLowerCase();
+  let n = 0;
+  mutate((db) => {
+    for (const p of db.productPrices ?? []) {
+      if (p.productName.trim().toLowerCase() === name && normalizeUnit(p.unit) === normalizeUnit(fromUnit)) { p.unit = toUnit; n++; }
+    }
+  });
   return n;
 }
 

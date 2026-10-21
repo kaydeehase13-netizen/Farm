@@ -4,7 +4,7 @@ import { Fragment, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { summarizePrices, unitPrice, type ProductPrice } from "@/lib/product-prices";
 import type { AllocationPrice } from "@/lib/allocation-prices";
-import { addProductPriceAction, deleteProductPriceAction, deleteAllProductPricesAction, importProductPricesAction } from "@/lib/actions";
+import { addProductPriceAction, deleteProductPriceAction, deleteAllProductPricesAction, importProductPricesAction, setProductPriceUnitAction } from "@/lib/actions";
 
 /** Per-unit prices under $10 show 4 decimals ($0.3600/lb), bigger ones 2. */
 function perUnit(n: number) {
@@ -140,6 +140,7 @@ export function PriceBook({ prices, fromAllocations = [], allocYear }: {
                       <button type="button" disabled={isPending} onClick={(e) => { e.stopPropagation(); remove(p.id); }} className="text-status-red self-center">Remove</button>
                     </div>
                   ))}
+                  <UnitChanger productName={s.productName} unit={s.unit} />
                 </div>
               )}
             </div>
@@ -217,6 +218,7 @@ export function PriceBook({ prices, fromAllocations = [], allocYear }: {
                             Plain average of the purchase prices (every purchase counted the same): {perUnit(s.simpleAverage)}/{s.unit}
                           </div>
                         )}
+                        <UnitChanger productName={s.productName} unit={s.unit} />
                       </td>
                     </tr>
                   )}
@@ -318,6 +320,41 @@ function AddPurchase({ categories, onDone }: { categories: string[]; onDone: () 
         {q > 0 && t > 0 && <span className="text-xs text-charcoal/60">= {perUnit(t / q)}/{f.unit}</span>}
         {err && <span className="text-xs text-status-red">{err}</span>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Change what unit a product's purchases are in, keeping the amounts: an
+ * invoice that says "unit" for something you log in oz on the fields
+ * (Status), so Inventory can line purchases and usage up.
+ */
+function UnitChanger({ productName, unit }: { productName: string; unit: string }) {
+  const router = useRouter();
+  const [to, setTo] = useState(unit);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const units = ["gal", "qt", "pt", "oz", "fl oz", "lb", "ton", "bag", "unit"];
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-charcoal/60" onClick={(e) => e.stopPropagation()}>
+      Bought in
+      <select className="input w-24! py-0.5! text-xs" value={to} onChange={(e) => setTo(e.target.value)}>
+        {[...new Set([unit, ...units])].map((u) => <option key={u} value={u}>{u}</option>)}
+      </select>
+      <button
+        type="button"
+        disabled={isPending || to === unit}
+        onClick={() => startTransition(async () => {
+          const n = await setProductPriceUnitAction({ productName, fromUnit: unit, toUnit: to });
+          setMsg(`Changed ${n} purchase${n === 1 ? "" : "s"} to ${to}.`);
+          router.refresh();
+        })}
+        className="text-forest font-medium hover:underline disabled:opacity-40"
+      >
+        Change unit
+      </button>
+      <span>Same amounts, new label. Use it when the invoice says &quot;unit&quot; but it&apos;s really oz, gal or lb.</span>
+      {msg && <span className="text-forest">{msg}</span>}
     </div>
   );
 }
