@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { createServerSupabaseClient } from "./server";
 import { requireActiveFarm } from "./auth";
 import { taxCategoryScheduleType } from "@/lib/tax-categories";
-import { seedQuantityInUnits } from "@/lib/seed-units";
+import { seedQuantityInUnits, plantedSeedAmount } from "@/lib/seed-units";
+import { isCostOnlyLine } from "@/lib/inventory-lines";
 import type {
   Field, CropYear, Transaction, TransactionSplit, Receipt, Activity, Customer,
   CustomerField, Job, Invoice, Payment, Asset, AssetRepair, MileageTrip,
@@ -240,7 +241,7 @@ export async function fieldProductUsage(fieldId: string, taxYear: number): Promi
         // No seeding rate logged - show planted acres instead of "0 used".
         addLine("Seed", a.seedProductName, a.acres, "ac", a);
       } else {
-        const { quantity, unit } = seedQuantityInUnits(a.seedProductName, rawSeeds);
+        const { quantity, unit } = plantedSeedAmount(a.seedProductName, a.seedingRate, a.seedingRateUnit, a.acres);
         addLine("Seed", a.seedProductName, quantity, unit, a);
       }
     }
@@ -318,7 +319,7 @@ export async function farmProductUsage(taxYear: number): Promise<FieldProductUsa
       .select("quantity_used, quantity_unit, product:product_id(name), activity:activity_id!inner(activity_date, acres, field_id, field:field_id(name), farm_business_id)")
       .eq("activity.farm_business_id", farm.id).gte("activity.activity_date", yearStart).lt("activity.activity_date", yearEnd),
     supabase.from("activity")
-      .select("activity_date, acres, field_id, field:field_id(name), planting_activity_detail(seeding_rate, seed_product:seed_product_id(name))")
+      .select("activity_date, acres, field_id, field:field_id(name), planting_activity_detail(seeding_rate, seeding_rate_unit, seed_product:seed_product_id(name))")
       .eq("farm_business_id", farm.id).eq("activity_type", "plant")
       .gte("activity_date", yearStart).lt("activity_date", yearEnd),
     listTransactions({ taxYear }),
@@ -359,8 +360,7 @@ export async function farmProductUsage(taxYear: number): Promise<FieldProductUsa
     const acres = r.acres != null ? Number(r.acres) : undefined;
     const seedingRate = planting?.seeding_rate != null ? Number(planting.seeding_rate) : undefined;
     if (seedName) {
-      const rawSeeds = seedingRate && acres ? seedingRate * acres : undefined;
-      const { quantity, unit } = seedQuantityInUnits(seedName, rawSeeds);
+      const { quantity, unit } = plantedSeedAmount(seedName, seedingRate, planting?.seeding_rate_unit, acres);
       addLine("Seed", seedName, quantity, unit,
         { activityDate: r.activity_date, acres, fieldId: r.field_id, fieldName: r.field?.name });
     }
@@ -1152,7 +1152,7 @@ export async function listActivities(filters: { fieldId?: string; activityType?:
   // differently between requests, which silently duplicates some rows
   // across page boundaries and drops others entirely.
   function buildQuery() {
-    let q = supabase.from("activity").select("*, field:field_id(name), customer_field:customer_field_id(name), spray_product_line(*, product:product_id(name, epa_registration_number)), fertilizer_product_line(*, product:product_id(name)), planting_activity_detail(seeding_rate, seed_product:seed_product_id(name)), harvest_activity_detail(yield_amount, yield_unit, moisture_pct)")
+    let q = supabase.from("activity").select("*, field:field_id(name), customer_field:customer_field_id(name), spray_product_line(*, product:product_id(name, epa_registration_number)), fertilizer_product_line(*, product:product_id(name)), planting_activity_detail(seeding_rate, seeding_rate_unit, seed_product:seed_product_id(name)), harvest_activity_detail(yield_amount, yield_unit, moisture_pct)")
       .eq("farm_business_id", farm.id)
       .order("activity_date", { ascending: false })
       .order("id", { ascending: true });
@@ -1194,6 +1194,7 @@ export async function listActivities(filters: { fieldId?: string; activityType?:
     weather: r.weather ?? undefined, syncStatus: r.sync_status, createdAt: r.created_at,
     seedProductName: planting?.seed_product?.name ?? undefined,
     seedingRate: planting?.seeding_rate != null ? Number(planting.seeding_rate) : undefined,
+    seedingRateUnit: planting?.seeding_rate_unit ?? undefined,
     yieldAmount: harvest?.yield_amount != null ? Number(harvest.yield_amount) : undefined,
     yieldUnit: harvest?.yield_unit ?? undefined,
     moisturePct: harvest?.moisture_pct != null ? Number(harvest.moisture_pct) : undefined,
@@ -1388,6 +1389,21 @@ export type ProductLineEdit =
  * (created if new). The activity's inventory usage movement follows the
  * line, so the product's on-hand count stays right.
  */
+/** Pounds-per-acre seeding rates (wheat), one per planting; null clears it. */
+export async function setSeedRatesLbPerAcre(entries: { activityId: string; lbPerAcre: number | null }[]): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const ids = entries.map((e) => e.activityId);
+  const { data: owned } = await supabase.from("activity").select("id").in("id", ids).eq("farm_business_id", farm.id);
+  const ok = new Set((owned ?? []).map((r: any) => r.id));
+  for (const e of entries) {
+    if (!ok.has(e.activityId)) continue;
+    const { error } = await supabase.from("planting_activity_detail")
+      .update({ seeding_rate: e.lbPerAcre, seeding_rate_unit: e.lbPerAcre != null ? "lb/ac" : null })
+      .eq("activity_id", e.activityId);
+    if (error) throw new Error(error.message);
+  }
+}
+
 export async function updateActivityProductLine(edit: ProductLineEdit): Promise<void> {
   const { supabase, farm } = await ctx();
   const { data: activity, error: findErr } = await supabase.from("activity").select("id").eq("id", edit.activityId).eq("farm_business_id", farm.id).maybeSingle();
@@ -1724,6 +1740,12 @@ export async function addProductPrices(items: Omit<import("@/lib/product-prices"
   const { error } = await supabase.from("product_price").insert(rows);
   if (error) throw new Error(missingSchema(error) ? MIGRATION_0031 : error.message);
   return rows.length;
+}
+
+export async function deleteAllProductPrices(): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const { error } = await supabase.from("product_price").delete().eq("farm_business_id", farm.id);
+  if (error) throw new Error(error.message);
 }
 
 export async function deleteProductPrice(id: string): Promise<void> {
@@ -2192,6 +2214,8 @@ export async function recordInventoryPurchase(input: {
 }): Promise<void> {
   const name = input.productName.trim();
   if (!name || !(input.quantity > 0) || !input.unit) return;
+  // Discounts, credits, fees and the like are cost, not something on hand.
+  if (isCostOnlyLine(name) || !(input.totalCost > 0)) return;
   const { supabase, farm } = await ctx();
 
   const { data: existingProduct, error: findErr } = await supabase.from("product").select("id")
@@ -2267,13 +2291,15 @@ export async function listInventory(): Promise<InventoryItem[]> {
 
   const ids = items.map((i: any) => i.id);
   const { data: movements } = await supabase.from("inventory_movement")
-    .select("inventory_item_id, quantity, unit_cost").in("inventory_item_id", ids);
+    .select("inventory_item_id, quantity, unit_cost, movement_type").in("inventory_item_id", ids);
 
-  const totals = new Map<string, { qty: number; costWeightedQty: number; costTotal: number }>();
+  const totals = new Map<string, { qty: number; costWeightedQty: number; costTotal: number; bought: number; used: number; adjusted: number }>();
   for (const m of movements ?? []) {
-    const t = totals.get(m.inventory_item_id) ?? { qty: 0, costWeightedQty: 0, costTotal: 0 };
+    const t = totals.get(m.inventory_item_id) ?? { qty: 0, costWeightedQty: 0, costTotal: 0, bought: 0, used: 0, adjusted: 0 };
     const qty = Number(m.quantity);
     t.qty += qty;
+    if (m.movement_type === "adjustment" || m.movement_type === "waste_loss") t.adjusted += qty;
+    else if (qty > 0) t.bought += qty; else t.used -= qty;
     if (qty > 0 && m.unit_cost != null) {
       t.costTotal += qty * Number(m.unit_cost);
       t.costWeightedQty += qty;
@@ -2289,8 +2315,11 @@ export async function listInventory(): Promise<InventoryItem[]> {
       quantityOnHand: t ? Math.round(t.qty * 1000) / 1000 : 0,
       averageUnitCost: t && t.costWeightedQty > 0 ? t.costTotal / t.costWeightedQty : 0,
       reorderThreshold: i.reorder_threshold != null ? Number(i.reorder_threshold) : undefined,
+      purchasedQuantity: t ? Math.round(t.bought * 1000) / 1000 : 0,
+      usedQuantity: t ? Math.round(t.used * 1000) / 1000 : 0,
+      adjustedQuantity: t ? Math.round(t.adjusted * 1000) / 1000 : 0,
     };
-  });
+  }).filter((it) => !isCostOnlyLine(it.productName));
 }
 
 export async function listInventoryMovements(itemId?: string) {

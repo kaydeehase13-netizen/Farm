@@ -498,3 +498,13 @@ export async function setTransactionsNotDuplicate(ids: string[], value: boolean)
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).setTransactionsNotDuplicate(ids, value);
   return demo.setTransactionsNotDuplicate(ids, value);
 }
+
+export async function setSeedRatesLbPerAcre(entries: { activityId: string; lbPerAcre: number | null }[]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).setSeedRatesLbPerAcre(entries);
+  return demo.setSeedRatesLbPerAcre(entries);
+}
+
+export async function deleteAllProductPrices() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteAllProductPrices();
+  return demo.deleteAllProductPrices();
+}

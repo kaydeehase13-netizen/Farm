@@ -8,7 +8,7 @@ import * as repo from "@/lib/data/repo";
 import { getFarm } from "@/lib/data/repo";
 import { scanReceiptImage } from "@/lib/receipt-ocr";
 import { duplicateKey } from "@/lib/duplicate-key";
-import { seedQuantityInUnits } from "@/lib/seed-units";
+import { seedQuantityInUnits, plantedSeedAmount, isPoundRate } from "@/lib/seed-units";
 
 /** Switch which tax year the app is currently displaying (Transactions, Reports, Home, etc). */
 export async function setViewTaxYearAction(formData: FormData) {
@@ -1428,6 +1428,17 @@ export async function scanDuplicatesAction(opts: { days: number; taxYear?: numbe
   };
 }
 
+/** Seed by the pound: save lb/acre per planting (wheat), then re-split that seed if it's already allocated. */
+export async function saveSeedRatesAction(input: { year: number; productName: string; entries: { activityId: string; lbPerAcre: number | null }[] }) {
+  await repo.setSeedRatesLbPerAcre(input.entries.map((e) => ({ activityId: e.activityId, lbPerAcre: e.lbPerAcre != null && e.lbPerAcre > 0 ? e.lbPerAcre : null })));
+  const allocated = (await listAllocatedProductsAction(input.year)).find((p) => p.productName.trim().toLowerCase() === input.productName.trim().toLowerCase());
+  let resplit: ReallocationResult | null = null;
+  if (allocated) resplit = await reallocateProduct({ year: input.year, productName: allocated.productName });
+  revalidatePath("/fields");
+  revalidatePath("/fields/allocate-cost");
+  return { resplit };
+}
+
 /** Category Audit: these look-alike transactions were checked and are all real (or undo that). */
 export async function markNotDuplicateAction(ids: string[], value: boolean) {
   await repo.setTransactionsNotDuplicate(ids, value);
@@ -1851,6 +1862,20 @@ export async function allocateProductCostAction(input: {
   // acres instead, so those fields still get their share; if some do carry
   // a rate, seed count wins and the rate-less ones stay out rather than
   // mixing acres with seeds.
+  // Wheat-style seed split by pounds: every planting needs its lb/acre,
+  // otherwise the ones without it would quietly get $0.
+  {
+    const plantings = activities.filter((a) => a.seedProductName && a.seedProductName.trim().toLowerCase() === needle && (a.acres ?? 0) > 0);
+    if (plantings.some((a) => isPoundRate(a.seedingRateUnit))) {
+      const missing = plantings.filter((a) => !((a.seedingRate ?? 0) > 0)).map((a) => a.fieldName ?? "a field");
+      if (missing.length > 0) {
+        return {
+          allocated: false as const,
+          message: `${input.productName} is split by pounds, but ${[...new Set(missing)].join(", ")} ${missing.length === 1 ? "has" : "have"} no lb/acre yet. Enter it under "Seed by the pound" on this page, then allocate again.`,
+        };
+      }
+    }
+  }
   const seedByAcres = seedSplitsByAcres(activities, needle);
   for (const a of activities) {
     for (const p of a.sprayProducts ?? []) {
@@ -1863,7 +1888,7 @@ export async function allocateProductCostAction(input: {
       if (seedByAcres) {
         addUsage(a.fieldId, a.fieldName, a.acres ?? 0, "ac");
       } else {
-        const { quantity, unit } = seedQuantityInUnits(a.seedProductName, (a.seedingRate ?? 0) * (a.acres ?? 0));
+        const { quantity, unit } = plantedSeedAmount(a.seedProductName, a.seedingRate ?? 0, a.seedingRateUnit, a.acres ?? 0);
         addUsage(a.fieldId, a.fieldName, quantity ?? 0, unit);
       }
     }
@@ -3213,6 +3238,12 @@ export async function addProductPriceAction(input: {
     purchaseDate: input.purchaseDate || undefined,
   }]);
   revalidatePath("/chemicals");
+}
+
+export async function deleteAllProductPricesAction() {
+  await repo.deleteAllProductPrices();
+  revalidatePath("/chemicals");
+  revalidatePath("/more/inventory");
 }
 
 export async function deleteProductPriceAction(id: string) {

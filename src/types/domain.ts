@@ -178,6 +178,11 @@ export interface InventoryItem {
   quantityOnHand: number;
   averageUnitCost: number;
   reorderThreshold?: number;
+  /** Total recorded purchases (+) and logged usage (-) behind quantityOnHand. */
+  purchasedQuantity?: number;
+  usedQuantity?: number;
+  /** Manual recounts / waste (Inventory Adjustment page). */
+  adjustedQuantity?: number;
 }
 
 export interface InventoryMovement {
@@ -230,6 +235,8 @@ export interface Activity {
   sprayProducts?: SprayProductLine[];
   seedProductName?: string;
   seedingRate?: number;
+  /** "lb/ac" when the seeding rate is pounds per acre (wheat); otherwise seeds per acre. */
+  seedingRateUnit?: string;
   fertilizerProducts?: { lineId?: string; productName: string; rate: number; rateUnit: string; quantityUsed: number; quantityUnit: string }[];
   yieldAmount?: number;
   yieldUnit?: string;

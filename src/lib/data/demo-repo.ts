@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getDB, mutate, type DB } from "./store";
 import { FARM } from "./seed";
 import { taxCategoryScheduleType } from "@/lib/tax-categories";
+import { isCostOnlyLine } from "@/lib/inventory-lines";
 import type {
   Transaction, TransactionSplit, FieldProfitability, Job, Invoice, Payment,
   Activity, Receipt, DocumentRecord,
@@ -704,6 +705,7 @@ export function recordInventoryPurchase(input: {
   totalCost: number;
   note?: string;
 }) {
+  if (isCostOnlyLine(input.productName) || !(input.totalCost > 0)) return;
   const name = input.productName.trim();
   if (!name || !(input.quantity > 0) || !input.unit) return;
   mutate((db) => {
@@ -896,7 +898,7 @@ export function createInvoice(input: {
     return invoice;
   });
 }
-export function listInventory() { return getDB().inventoryItems; }
+export function listInventory() { return getDB().inventoryItems.filter((i) => !isCostOnlyLine(i.productName)); }
 export function listInventoryMovements(itemId?: string) {
   const rows = getDB().inventoryMovements;
   return itemId ? rows.filter((m) => m.inventoryItemId === itemId) : rows;
@@ -1193,6 +1195,17 @@ export function dashboardSummary(taxYear: number) {
   };
 }
 
+export function setSeedRatesLbPerAcre(entries: { activityId: string; lbPerAcre: number | null }[]) {
+  mutate((db) => {
+    for (const e of entries) {
+      const a = db.activities.find((x) => x.id === e.activityId);
+      if (!a) continue;
+      a.seedingRate = e.lbPerAcre ?? undefined;
+      a.seedingRateUnit = e.lbPerAcre != null ? "lb/ac" : undefined;
+    }
+  });
+}
+
 /** Demo-mode mirror of the Supabase updateActivityProductLine (lines are matched by position). */
 export function updateActivityProductLine(edit:
   | { kind: "spray" | "fertilizer"; activityId: string; lineId?: string; lineIndex: number; productName: string; rate: number; quantityUsed: number }
@@ -1299,6 +1312,10 @@ export function addProductPrices(items: Omit<import("@/lib/product-prices").Prod
     for (const p of items) db.productPrices.push({ ...p, id: randomUUID() });
   });
   return items.length;
+}
+
+export function deleteAllProductPrices() {
+  mutate((db) => { db.productPrices = []; });
 }
 
 export function deleteProductPrice(id: string) {

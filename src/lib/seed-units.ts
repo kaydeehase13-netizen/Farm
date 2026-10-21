@@ -35,3 +35,18 @@ export function seedQuantityInUnits(seedProductName: string | undefined | null, 
   if (rawSeedCount == null) return { quantity: undefined, unit: perUnit ? "units" : "seeds" };
   return perUnit ? { quantity: rawSeedCount / perUnit, unit: "units" } : { quantity: rawSeedCount, unit: "seeds" };
 }
+
+/** A seeding rate entered in pounds per acre (wheat and other small grains), not seeds per acre. */
+export function isPoundRate(rateUnit: string | undefined | null): boolean {
+  return !!rateUnit && /lb|pound/i.test(rateUnit);
+}
+
+/**
+ * How much seed a planting used: pounds (lb/ac x acres) when the rate was
+ * entered per pound, otherwise seeds converted to bags/units as above.
+ */
+export function plantedSeedAmount(seedProductName: string | undefined | null, seedingRate: number | undefined, rateUnit: string | undefined | null, acres: number | undefined): { quantity: number | undefined; unit: string } {
+  const raw = seedingRate && acres ? seedingRate * acres : undefined;
+  if (isPoundRate(rateUnit)) return { quantity: raw, unit: "lb" };
+  return seedQuantityInUnits(seedProductName, raw);
+}

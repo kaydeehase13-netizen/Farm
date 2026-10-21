@@ -4,7 +4,7 @@ import { Fragment, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { summarizePrices, unitPrice, type ProductPrice } from "@/lib/product-prices";
 import type { AllocationPrice } from "@/lib/allocation-prices";
-import { addProductPriceAction, deleteProductPriceAction, importProductPricesAction } from "@/lib/actions";
+import { addProductPriceAction, deleteProductPriceAction, deleteAllProductPricesAction, importProductPricesAction } from "@/lib/actions";
 
 /** Per-unit prices under $10 show 4 decimals ($0.3600/lb), bigger ones 2. */
 function perUnit(n: number) {
@@ -54,6 +54,16 @@ export function PriceBook({ prices, fromAllocations = [], allocYear }: {
     });
   }
 
+  function clearAll() {
+    if (!window.confirm(`Remove all ${prices.length} purchases from Prices Paid? Expenses and field allocations aren't touched.`)) return;
+    setMsg(null); setErr(null);
+    startTransition(async () => {
+      await deleteAllProductPricesAction();
+      setMsg("Cleared. Upload your purchases file again.");
+      router.refresh();
+    });
+  }
+
   function remove(id: string) {
     startTransition(async () => {
       await deleteProductPriceAction(id);
@@ -79,6 +89,11 @@ export function PriceBook({ prices, fromAllocations = [], allocYear }: {
           <button type="button" onClick={() => setAdding((a) => !a)} className="card px-3 py-2 text-sm font-medium hover:border-forest">
             {adding ? "Close" : "+ Add a purchase"}
           </button>
+          {prices.length > 0 && (
+            <button type="button" onClick={clearAll} disabled={isPending} className="text-xs text-status-red hover:underline ml-auto">
+              Clear all purchases
+            </button>
+          )}
         </form>
         <p className="text-[11px] text-charcoal/50">
           Excel columns: Product Name, Quantity, Unit, Total Amount (or Price per Unit), and optionally Category, Vendor, Date, Invoice.

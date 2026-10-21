@@ -6,6 +6,7 @@ import { AllocateCostBulkImport } from "@/components/fields/allocate-cost-bulk-i
 import { GeneralCostForm, type SeedPlanting } from "@/components/fields/general-cost-form";
 import { ResplitAllButton } from "@/components/fields/resplit-all-button";
 import { distinctProductNames } from "@/lib/product-usage";
+import { SeedPoundRates, type SeedPlantingRow } from "@/components/fields/seed-pound-rates";
 
 export default async function AllocateCostPage() {
   const [taxYear, years, farmCategories, fields] = await Promise.all([
@@ -34,6 +35,16 @@ export default async function AllocateCostPage() {
   }
   const plantings = [...plantingTotals.values()];
 
+  // Every planting with acres, for "Seed by the pound" (wheat lb/acre per field).
+  const seedPlantings: SeedPlantingRow[] = allActivities
+    .filter((a) => a.seedProductName && (a.acres ?? 0) > 0)
+    .map((a) => ({
+      activityId: a.id, year: Number(a.activityDate.slice(0, 4)), date: a.activityDate,
+      fieldName: a.fieldName ?? a.customerFieldName ?? "Field", seed: a.seedProductName!.trim(), acres: a.acres ?? 0,
+      rate: a.seedingRate, rateUnit: a.seedingRateUnit,
+    }))
+    .sort((x, y) => x.fieldName.localeCompare(y.fieldName));
+
   return (
     <div className="max-w-2xl">
       <PageHeader
@@ -48,6 +59,9 @@ export default async function AllocateCostPage() {
         farmCategories={farmCategories.map((c) => ({ id: c.id, name: c.name }))}
         fields={fields.map((f) => ({ id: f.id, name: f.name }))}
       />
+      <div className="mt-6">
+        <SeedPoundRates plantings={seedPlantings} years={years} defaultYear={taxYear} />
+      </div>
       <div className="mt-6">
         <GeneralCostForm
           years={years}

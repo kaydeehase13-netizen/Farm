@@ -27,7 +27,7 @@ export interface AllocationPrice {
 const TO_GAL: Record<string, number> = { gal: 1, gallon: 1, gallons: 1, qt: 0.25, quart: 0.25, quarts: 0.25, pt: 0.125, pint: 0.125, pints: 0.125, "fl oz": 1 / 128, floz: 1 / 128, oz: 1 / 128 };
 const TO_LB: Record<string, number> = { lb: 1, lbs: 1, pound: 1, pounds: 1, ton: 2000, tons: 2000 };
 
-function toBase(qty: number, rawUnit: string): { qty: number; unit: string } {
+export function toBase(qty: number, rawUnit: string): { qty: number; unit: string } {
   const u = rawUnit.toLowerCase().replace(/\(us\)/g, "").replace(/\./g, "").trim();
   if (TO_GAL[u] != null) return { qty: qty * TO_GAL[u], unit: "gal" };
   if (TO_LB[u] != null) return { qty: qty * TO_LB[u], unit: "lb" };
