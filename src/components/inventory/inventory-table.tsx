@@ -30,12 +30,19 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
   const [isPending, startTransition] = useTransition();
 
   const names = [...new Set(rows.map((r) => r.productName))];
+  // Group by a name's first real word, and pull in any other name that has
+  // that word anywhere ("280 SL Glupex (Glufosinate)" joins "Glufosinate").
+  const wordsOf = (nm: string) => new Set(nm.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((x) => x.length >= 4 && !/^\d+$/.test(x)));
   const groups = new Map<string, string[]>();
   for (const nm of names) {
     const s = stem(nm);
-    if (s) groups.set(s, [...(groups.get(s) ?? []), nm]);
+    if (s && !groups.has(s)) groups.set(s, names.filter((other) => stem(other) === s || wordsOf(other).has(s)));
   }
-  const suggestions = [...groups.entries()].filter(([, g]) => g.length > 1).sort((a, b) => b[1].length - a[1].length);
+  const suggestions = [...groups.entries()]
+    .filter(([, g]) => g.length > 1)
+    // Drop a group that's just a smaller copy of another.
+    .filter(([k, g], _i, all) => !all.some(([k2, g2]) => k2 !== k && g2.length > g.length && g.every((x) => g2.includes(x))))
+    .sort((a, b) => b[1].length - a[1].length);
 
   const shown = rows.filter((r) => !search || r.productName.toLowerCase().includes(search.toLowerCase()));
   const pickedNames = [...picked];
