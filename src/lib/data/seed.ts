@@ -51,6 +51,10 @@ export const FARM_CATEGORIES: FarmCategory[] = [
   { id: "cat-w2-wages", name: "Wages (W-2)", defaultTaxCategoryCode: "income_w2_wages" },
   { id: "cat-program-payment", name: "Program Payment", defaultTaxCategoryCode: "income_govt_payments" },
   { id: "cat-medical", name: "Medical", defaultTaxCategoryCode: "personal_medical" },
+  // Schedule F has no line of its own for these, so both go on Line 32
+  // (Other Expenses), listed under their own names for the CPA.
+  { id: "cat-marketing", name: "Marketing", defaultTaxCategoryCode: "exp_other" },
+  { id: "cat-uniforms", name: "Uniforms", defaultTaxCategoryCode: "exp_other" },
   // Gift / FCE / Kanza / Agco — each gets both an income and an expense
   // bucket (money can move either direction with any of these), mapped to
   // the same generic Other Income / Other Expense tax lines as "Other"
