@@ -197,6 +197,12 @@ export function createTransaction(input: Omit<Transaction, "id" | "createdAt" | 
   });
 }
 
+export function setTransactionsNotDuplicate(ids: string[], value: boolean) {
+  mutate((db) => {
+    for (const t of db.transactions) if (ids.includes(t.id)) t.notDuplicate = value;
+  });
+}
+
 export function updateTransaction(id: string, patch: Partial<Transaction>) {
   return mutate((db) => {
     const idx = db.transactions.findIndex((t) => t.id === id);

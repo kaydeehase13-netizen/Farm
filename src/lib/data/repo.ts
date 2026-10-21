@@ -493,3 +493,8 @@ export async function deleteProductPrice(id: string) {
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).deleteProductPrice(id);
   return demo.deleteProductPrice(id);
 }
+
+export async function setTransactionsNotDuplicate(ids: string[], value: boolean) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).setTransactionsNotDuplicate(ids, value);
+  return demo.setTransactionsNotDuplicate(ids, value);
+}

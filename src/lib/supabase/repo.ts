@@ -435,7 +435,7 @@ function mapTransaction(r: any, splits: TransactionSplit[]): Transaction {
     paymentMethod: r.payment_method ?? undefined, farmCategoryId: r.farm_category_id ?? undefined,
     taxCategoryCode: r.tax_category?.code ?? undefined, receiptId: r.receipt_id ?? undefined,
     splitGroupId: r.split_group_id ?? undefined, productName: r.product_name ?? undefined,
-    isPersonalExcluded: r.is_personal_excluded, isDuplicateExcluded: r.is_duplicate_excluded ?? false, duplicateNote: r.duplicate_note ?? undefined,
+    isPersonalExcluded: r.is_personal_excluded, isDuplicateExcluded: r.is_duplicate_excluded ?? false, duplicateNote: r.duplicate_note ?? undefined, notDuplicate: r.not_duplicate ?? false,
     cpaFlag: r.cpa_flag, cpaNote: r.cpa_note ?? undefined,
     syncStatus: r.sync_status, splits, createdAt: r.created_at,
   };
@@ -810,6 +810,18 @@ export async function fixStaleNeedsReview(): Promise<{ checked: number; fixed: n
     if (!updErr) fixed++;
   }
   return { checked: rows.length, fixed };
+}
+
+/** Category Audit: mark (or unmark) look-alike transactions as checked and not duplicates. Migration 0035. */
+export async function setTransactionsNotDuplicate(ids: string[], value: boolean): Promise<void> {
+  if (ids.length === 0) return;
+  const { supabase, farm } = await ctx();
+  const { error } = await supabase.from("transaction").update({ not_duplicate: value }).in("id", ids).eq("farm_business_id", farm.id);
+  if (error) {
+    throw new Error(missingSchema(error)
+      ? "One database step is needed first: in Supabase, open SQL Editor and run supabase/migrations/0035_transaction_not_duplicate.sql."
+      : error.message);
+  }
 }
 
 export async function updateTransaction(id: string, patch: Partial<Transaction>) {

@@ -1412,6 +1412,12 @@ export async function setTransactionOmittedAction(transactionId: string, omitted
  * a free-text pointer to whatever it matches (e.g. "Matches July 14 Farm
  * Credit check #1042") so both copies can be found again later.
  */
+/** Category Audit: these look-alike transactions were checked and are all real (or undo that). */
+export async function markNotDuplicateAction(ids: string[], value: boolean) {
+  await repo.setTransactionsNotDuplicate(ids, value);
+  revalidatePath("/money/transactions/category-audit");
+}
+
 export async function markTransactionDuplicateAction(transactionId: string, excluded: boolean, note?: string) {
   await repo.updateTransaction(transactionId, {
     isDuplicateExcluded: excluded,

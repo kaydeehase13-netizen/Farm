@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { rescanReceiptsForSplitsAction, type ReceiptRescanFlag } from "@/lib/actions";
 
@@ -9,11 +9,12 @@ import { rescanReceiptsForSplitsAction, type ReceiptRescanFlag } from "@/lib/act
  * every already-saved receipt photo, looking line-by-line for receipts that
  * quietly cover more than one category (the same check that now runs on new
  * receipts as they're scanned). Batches itself (see MAX_PER_RUN in the
- * action) so one click never times out or burns an unbounded OpenAI bill —
- * "Scan next batch" keeps going until every receipt has been looked at.
+ * action) so no single request times out; one click then runs batch after
+ * batch on its own until every receipt has been looked at (Stop pauses it,
+ * and a failed batch stops with a "Pick up where it left off" button).
  */
 export function ReceiptRescanPanel() {
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
   const [started, setStarted] = useState(false);
   const [cursor, setCursor] = useState(0);
   const [totalScanned, setTotalScanned] = useState(0);
@@ -21,40 +22,54 @@ export function ReceiptRescanPanel() {
   const [flagged, setFlagged] = useState<ReceiptRescanFlag[]>([]);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const stopRef = useRef(false);
 
-  function runBatch(fromCursor: number) {
-    startTransition(async () => {
-      try {
-        const result = await rescanReceiptsForSplitsAction(fromCursor);
+  // Runs one batch after another until there are none left, Stop is
+  // pressed, or a batch fails (then it can pick up from the same spot).
+  async function runAll(fromCursor: number) {
+    stopRef.current = false;
+    setError(null);
+    setIsPending(true);
+    let next: number | null = fromCursor;
+    try {
+      while (next !== null && !stopRef.current) {
+        const result = await rescanReceiptsForSplitsAction(next);
         setStarted(true);
         setTotalCandidates(result.totalCandidates);
         setTotalScanned((n) => n + result.scanned);
         setFlagged((prev) => [...prev, ...result.flagged]);
-        if (result.nextCursor === null) {
-          setDone(true);
-        } else {
-          setCursor(result.nextCursor);
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "That scan didn't go through — try again.");
+        next = result.nextCursor;
+        if (next === null) setDone(true);
+        else setCursor(next);
       }
-    });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "That scan didn't go through — try again.");
+    } finally {
+      setIsPending(false);
+    }
   }
 
   return (
     <div className="card p-5 mb-6">
       <div className="flex items-center justify-between gap-3 mb-2">
         <div className="text-sm font-semibold text-forest">Re-check already-uploaded receipt photos</div>
-        {!done && (
+        {!done && (isPending ? (
           <button
             type="button"
-            disabled={isPending}
-            onClick={() => runBatch(cursor)}
-            className="rounded-full bg-forest text-white text-sm font-medium px-4 py-1.5 disabled:opacity-50"
+            onClick={() => { stopRef.current = true; }}
+            className="rounded-full border border-forest text-forest text-sm font-medium px-4 py-1.5"
           >
-            {isPending ? "Scanning…" : started ? "Scan next batch" : "Scan uploaded receipts"}
+            Scanning… Stop
           </button>
-        )}
+        ) : (
+          <button
+            type="button"
+            onClick={() => runAll(cursor)}
+            className="rounded-full bg-forest text-white text-sm font-medium px-4 py-1.5"
+          >
+            {started ? "Pick up where it left off" : "Scan uploaded receipts"}
+          </button>
+        ))}
       </div>
       <p className="text-sm text-charcoal/55 mb-3">
         Looks at each already-uploaded receipt photo line by line, the same way a new receipt gets scanned, and flags any
@@ -68,7 +83,7 @@ export function ReceiptRescanPanel() {
         <p className="text-sm text-charcoal/50 mb-3">
           Scanned {totalScanned}
           {totalCandidates !== null ? ` of ${totalCandidates}` : ""} receipt photo{totalScanned === 1 ? "" : "s"} so far.
-          {done ? " That's all of them." : " Click “Scan next batch” to keep going."}
+          {done ? " That's all of them." : isPending ? " It keeps going on its own — leave this page open." : " Paused."}
         </p>
       )}
 

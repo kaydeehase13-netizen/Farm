@@ -117,6 +117,8 @@ export interface Transaction {
   isDuplicateExcluded?: boolean;
   /** Free-text pointer to whatever this duplicate matches — e.g. "Matches July 14 Farm Credit check #1042" — so the excluded copy and its real counterpart can be found later. */
   duplicateNote?: string;
+  /** Looked like a duplicate but was checked and both are real (Category Audit "Not a duplicate"). */
+  notDuplicate?: boolean;
   cpaFlag: boolean;
   cpaNote?: string;
   syncStatus: SyncStatus;

@@ -61,13 +61,21 @@ export default async function CategoryAuditPage() {
     group.push(t);
     byKey.set(key, group);
   }
-  const duplicateGroups = Array.from(byKey.entries())
+  const allDuplicateGroups = Array.from(byKey.entries())
     .filter(([, group]) => group.length >= 2)
     .map(([key, group]) => ({ key, transactions: group }))
     .sort((a, b) =>
       a.transactions[0].transactionDate.localeCompare(b.transactions[0].transactionDate) ||
       (a.transactions[0].vendorName ?? a.transactions[0].description ?? "").localeCompare(b.transactions[0].vendorName ?? b.transactions[0].description ?? "")
     );
+  // A group stays hidden once every copy in it was marked "Not a duplicate";
+  // a new matching copy entered later isn't marked, so the group comes back.
+  const duplicateGroups = allDuplicateGroups.filter((g) => !g.transactions.every((t) => t.notDuplicate));
+  const reviewedGroups = allDuplicateGroups.filter((g) => g.transactions.every((t) => t.notDuplicate));
+  const names = {
+    categories: Object.fromEntries(farmCategories.map((c) => [c.id, c.name])),
+    fields: Object.fromEntries(fields.map((f) => [f.id, f.name])),
+  };
   const possibleDuplicatesCount = duplicateGroups.reduce((n, g) => n + g.transactions.length, 0);
 
   return (
@@ -86,10 +94,12 @@ export default async function CategoryAuditPage() {
           likely the same thing entered more than once. Duplicate copies look identical on purpose, so instead of picking
           them out of a table by eye, pick which one to keep (it defaults to the one with a receipt on file, or the oldest
           entry) and use &quot;Keep 1, delete other N&quot; to remove the rest of that group in one step. A group disappears
-          from this list once it's down to a single copy — that copy isn&apos;t deleted, it just no longer has a duplicate
-          to be flagged against; you&apos;ll still find it under Money → Transactions.
+          from this list once it&apos;s down to a single copy — that copy isn&apos;t deleted, it just no longer has a duplicate
+          to be flagged against; you&apos;ll still find it under Money → Transactions. Not sure? Tap <b>Compare</b> to see every
+          copy side by side (anything that differs is highlighted) or open each one. If they&apos;re both real, tap <b>Not a
+          duplicate</b> and the group stops showing up.
         </p>
-        <DuplicateGroups groups={duplicateGroups} />
+        <DuplicateGroups groups={duplicateGroups} reviewed={reviewedGroups} names={names} />
       </div>
 
       <ReceiptRescanPanel />
