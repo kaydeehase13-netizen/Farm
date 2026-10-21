@@ -37,17 +37,19 @@ export interface InventoryRow {
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 export function inventoryBalance(input: { activities: Activity[]; prices: ProductPrice[]; items: InventoryItem[] }): InventoryRow[] {
-  const rows = new Map<string, InventoryRow & { priceQty: number; priceCost: number; recorded: number; recordedCostQty: number; recordedCost: number }>();
+  const rows = new Map<string, InventoryRow & { priceQty: number; priceCost: number; recorded: number; recordedCostQty: number; recordedCost: number; ozOnly: boolean }>();
   const get = (name: string, rawUnit: string, category: string) => {
     const base = toBase(1, rawUnit);
     const key = `${norm(name)}|${base.unit}`;
     let r = rows.get(key);
     if (!r) {
       r = { key, productName: name.trim(), names: [], category, unit: base.unit, bought: 0, boughtFrom: "none", used: 0, adjusted: 0, onHand: 0,
-        priceQty: 0, priceCost: 0, recorded: 0, recordedCostQty: 0, recordedCost: 0 };
+        priceQty: 0, priceCost: 0, recorded: 0, recordedCostQty: 0, recordedCost: 0, ozOnly: true };
       rows.set(key, r);
     }
     if (!r.names.includes(name.trim())) r.names.push(name.trim());
+    // "oz" could be fluid ounces or weight; remember if that's all this row ever saw.
+    if (!/^oz\.?$/i.test(rawUnit.replace(/\(us\)/i, "").trim())) r.ozOnly = false;
     return { r, factor: base.qty };
   };
   const year = (d?: string) => (d ? Number(d.slice(0, 4)) : undefined);
@@ -109,7 +111,9 @@ export function inventoryBalance(input: { activities: Activity[]; prices: Produc
   for (const group of byName.values()) {
     const lb = group.find((r) => r.unit === "lb");
     const gal = group.find((r) => r.unit === "gal");
-    const d = lb && gal ? lbPerGallon(lb.productName) ?? lbPerGallon(gal.productName) : undefined;
+    // A dry product (Status) bought "by the oz" and logged by the pound: those
+    // oz are weight, 16 to the pound. 1 "gal" here = 128 oz = 8 lb.
+    const d = lb && gal ? lbPerGallon(lb.productName) ?? lbPerGallon(gal.productName) ?? (gal.ozOnly ? 8 : undefined) : undefined;
     if (!lb || !gal || !d) continue;
     const keepGal = gal.used > 0 && lb.used === 0;
     const [into, from, f] = keepGal ? [gal, lb, 1 / d] : [lb, gal, d];
@@ -134,7 +138,7 @@ export function inventoryBalance(input: { activities: Activity[]; prices: Produc
     else if (r.recorded > 0) { r.bought = r.recorded; r.boughtFrom = "recorded"; r.averageCost = r.recordedCostQty > 0 ? r.recordedCost / r.recordedCostQty : undefined; }
     r.onHand = r.bought - r.used + r.adjusted;
     if (r.bought === 0 && r.used === 0 && r.adjusted === 0) continue;
-    const { priceQty: _a, priceCost: _b, recorded: _c, recordedCostQty: _d, recordedCost: _e, ...row } = r;
+    const { priceQty: _a, priceCost: _b, recorded: _c, recordedCostQty: _d, recordedCost: _e, ozOnly: _f, ...row } = r;
     out.push(row);
   }
   return out.sort((x, y) => x.category.localeCompare(y.category) || x.productName.localeCompare(y.productName));
