@@ -1,0 +1,28 @@
+Date,Field,Activity Type,Product,Rate,Rate Unit,Quantity,Quantity Unit,Cost,Yield,Yield Unit,Moisture %,Acres,Applicator,Notes
+2026-03-25,2,plant,AP Prolific,,,,,,,,,33.77,,From AgFiniti summary report: 2026 planting Wheat
+2026-04-21,1-lambert,plant,104-08,14670,seeds/ac,,,,,,,72.73,,"From AgFiniti field report: 2026 planting Corn, 104-08 on 72.83 ac"
+2026-04-22,Davis,plant,104-08,14598,seeds/ac,,,,,,,13.07,,"From AgFiniti field report: 2026 planting Corn, 104-08 on 13.07 ac"
+2026-04-22,Davis,plant,DKC114-43RIB,14650,seeds/ac,,,,,,,87.94,,"From AgFiniti field report: 2026 planting Corn, DKC114-43RIB on 87.92 ac"
+2026-04-22,Davis,plant,DKC63-55RIB,14545,seeds/ac,,,,,,,9.79,,"From AgFiniti field report: 2026 planting Corn, DKC63-55RIB on 9.79 ac"
+2026-04-23,North center-roselake,plant,DKC61-80RIB,14770,seeds/ac,,,,,,,47.06,,"From AgFiniti field report: 2026 planting Corn, DKC61-80RIB on 47.06 ac"
+2026-04-23,North west-LakeCity,plant,DKC61-80RIB,14865,seeds/ac,,,,,,,17.43,,"From AgFiniti field report: 2026 planting Corn, DKC61-80RIB on 17.43 ac"
+2026-04-23,North west-LakeCity,plant,DKC63-55RIB,14763,seeds/ac,,,,,,,17.73,,"From AgFiniti field report: 2026 planting Corn, DKC63-55RIB on 17.74 ac"
+2026-05-21,North east-ClearSky,plant,Sunflowers,13570,seeds/ac,,,,,,,3.96,,From AgFiniti summary report: 2026 planting Sunflowers
+2026-05-21,North west-LiveWater,plant,Sunflowers,13080,seeds/ac,,,,,,,3.7,,From AgFiniti summary report: 2026 planting Sunflowers
+2026-05-26,North east-ClearSky,plant,DKC63-55RIB,14620,seeds/ac,,,,,,,56.63,,"From AgFiniti field report: 2026 planting Corn, DKC63-55RIB on 56.62 ac"
+2026-05-26,North east-ClearSky,plant,DKC64-25,14503,seeds/ac,,,,,,,2.96,,"From AgFiniti field report: 2026 planting Corn, DKC64-25 on 2.96 ac"
+2026-05-26,North east-ClearSky,plant,P1548AM,14551,seeds/ac,,,,,,,4.85,,"From AgFiniti field report: 2026 planting Corn, P1548AM on 4.85 ac"
+2026-05-26,South east-LiveWater,plant,DKC64-25,12210,seeds/ac,,,,,,,47.14,,"From AgFiniti field report: 2026 planting Corn, DKC64-25 on 47.14 ac"
+2026-05-26,South wast-FullDraw,plant,DKC64-25,12190,seeds/ac,,,,,,,34.95,,"From AgFiniti field report: 2026 planting Corn, DKC64-25 on 34.95 ac"
+2026-05-27,North home,plant,DKC64-25,19200,seeds/ac,,,,,,,9.95,,"From AgFiniti field report: 2026 planting Corn, DKC64-25 on 9.95 ac"
+2026-06-30,East-roselake,plant,44-07,26570,seeds/ac,,,,,,,69.23,,From AgFiniti summary report: 2026 planting Sorghum
+2026-06-30,West-LakeCity,plant,44-07,26810,seeds/ac,,,,,,,129.2,,From AgFiniti summary report: 2026 planting Sorghum
+2026-07-01,North-Crooks,plant,44-07,15670,seeds/ac,,,,,,,42.63,,From AgFiniti summary report: 2026 planting Sorghum
+2026-07-01,South-Crooks,plant,44-07,16040,seeds/ac,,,,,,,18.81,,From AgFiniti summary report: 2026 planting Sorghum
+2026-07-02,North west-LiveWater,plant,44-07,25750,seeds/ac,,,,,,,88.44,,From AgFiniti summary report: 2026 planting Sorghum
+2026-07-05,Center,plant,AG42XF1,67240,seeds/ac,,,,,,,124.6,,From AgFiniti summary report: 2026 planting Soybeans
+2026-07-06,East-roselake,plant,AG42XF1,67080,seeds/ac,,,,,,,52.51,,From AgFiniti summary report: 2026 planting Soybeans
+2026-07-07,North east-LakeCity,plant,AG42XF1,67640,seeds/ac,,,,,,,47.35,,From AgFiniti summary report: 2026 planting Soybeans
+2026-07-08,North wast-FullDraw,plant,AG42XF1,69190,seeds/ac,,,,,,,5.79,,From AgFiniti summary report: 2026 planting Soybeans
+2026-07-13,Lambert west,plant,Feed,,,,,,,,,57.06,,From AgFiniti summary report: 2026 planting Sorghum
+2026-07-14,Lambert east,plant,Feed,,,,,,,,,39.05,,From AgFiniti summary report: 2026 planting Sorghum
