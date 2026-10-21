@@ -1,5 +1,7 @@
 import Link from "next/link";
-import { listChemicals, listTankMixes, listFields, listActivities, listProductPrices } from "@/lib/data/repo";
+import { listChemicals, listTankMixes, listFields, listActivities, listProductPrices, listTransactions } from "@/lib/data/repo";
+import { allocationPrices } from "@/lib/allocation-prices";
+import { getViewTaxYear } from "@/lib/tax-year";
 import { PriceBook } from "@/components/chemicals/price-book";
 import { summarizePrices, unitPrice } from "@/lib/product-prices";
 import type { PriceRef } from "@/lib/tank-mix";
@@ -19,6 +21,16 @@ export default async function ChemicalsPage({ searchParams }: { searchParams: Pr
     showList ? Promise.resolve(null) : listProductPrices(),
   ]);
   const needsMigration = chemMigration || mixMigration;
+
+  // Average cost per unit used, from what's been allocated to the fields
+  // this tax year (Prices Paid and the calculator both use it).
+  const allocYear = await getViewTaxYear();
+  const [allocTxns, allocSpray, allocFert] = showList ? [[], [], []] : await Promise.all([
+    listTransactions({ taxYear: allocYear, type: "expense" }),
+    listActivities({ activityType: "spray", year: allocYear }),
+    listActivities({ activityType: "fertilize", year: allocYear }),
+  ]);
+  const fromAllocations = allocationPrices(allocTxns, [...allocSpray, ...allocFert]);
 
   // Sprays (and liquid fertilizer passes) already logged, grouped into one
   // pickable "load" per day + product mix, so a past pass can be pulled into
@@ -63,10 +75,18 @@ export default async function ChemicalsPage({ searchParams }: { searchParams: Pr
       .slice(0, 300);
   }
   // Price per unit for each product, for the calculator's chemical cost.
-  const priceRefs: PriceRef[] = summarizePrices(priceData?.prices ?? []).map((st) => ({
+  const purchaseRefs: PriceRef[] = summarizePrices(priceData?.prices ?? []).map((st) => ({
     name: st.productName, unit: st.unit, average: st.weightedAverage, lowest: st.lowest, highest: st.highest,
     last: st.last ? unitPrice(st.last) : st.weightedAverage, purchases: st.purchases.length,
   }));
+  // Purchases win; the allocation average fills in products with none uploaded.
+  const purchased = new Set(purchaseRefs.map((r) => r.name.toLowerCase().replace(/[^a-z0-9]/g, "")));
+  const priceRefs: PriceRef[] = [
+    ...purchaseRefs,
+    ...fromAllocations
+      .filter((a) => !purchased.has(a.productName.toLowerCase().replace(/[^a-z0-9]/g, "")))
+      .map((a) => ({ name: a.productName, unit: a.unit, average: a.average, lowest: a.average, highest: a.average, last: a.average, purchases: 0 })),
+  ];
   const tabClass = (active: boolean) =>
     `px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap ${active ? "bg-forest text-white" : "card hover:border-forest"}`;
 
@@ -96,7 +116,7 @@ export default async function ChemicalsPage({ searchParams }: { searchParams: Pr
         </div>
       )}
       {showPrices ? (
-        <PriceBook prices={priceData?.prices ?? []} />
+        <PriceBook prices={priceData?.prices ?? []} fromAllocations={fromAllocations} allocYear={allocYear} />
       ) : showList ? (
         <ChemicalLibrary chemicals={chemicals} startAdding={add === "1"} />
       ) : (

@@ -3,6 +3,7 @@
 import { Fragment, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { summarizePrices, unitPrice, type ProductPrice } from "@/lib/product-prices";
+import type { AllocationPrice } from "@/lib/allocation-prices";
 import { addProductPriceAction, deleteProductPriceAction, importProductPricesAction } from "@/lib/actions";
 
 /** Per-unit prices under $10 show 4 decimals ($0.3600/lb), bigger ones 2. */
@@ -22,7 +23,11 @@ function qty(n: number) {
  * billing breakdowns. Purchases are added one at a time or uploaded from
  * Excel; this is a price record only and never creates an expense.
  */
-export function PriceBook({ prices }: { prices: ProductPrice[] }) {
+export function PriceBook({ prices, fromAllocations = [], allocYear }: {
+  prices: ProductPrice[];
+  fromAllocations?: AllocationPrice[];
+  allocYear?: number;
+}) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("Chemical");
@@ -210,6 +215,47 @@ export function PriceBook({ prices }: { prices: ProductPrice[] }) {
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className="card p-5">
+        <div className="text-sm font-semibold text-forest">From your field allocations{allocYear ? ` (${allocYear})` : ""}</div>
+        <p className="text-xs text-charcoal/55 mb-3">
+          Average cost per unit actually used: what each product&apos;s field allocation adds up to ÷ how much of it is logged on
+          your spray and fertilizer passes. One average per product (no low/high). The mix calculator uses it for anything with
+          no purchases uploaded above.
+        </p>
+        {fromAllocations.length === 0 ? (
+          <p className="text-xs text-charcoal/50">Nothing allocated by usage yet for this year.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-charcoal/50 text-right">
+                  <th className="text-left py-1 pr-2 font-normal">Product</th>
+                  <th className="py-1 px-2 font-semibold text-forest">Avg per unit used</th>
+                  <th className="py-1 px-2 font-normal">Allocated</th>
+                  <th className="py-1 pl-2 font-normal">Logged on fields</th>
+                </tr>
+              </thead>
+              <tbody className="text-right">
+                {fromAllocations
+                  .filter((a) => !search || a.productName.toLowerCase().includes(search.toLowerCase()))
+                  .map((a) => (
+                    <tr key={a.productName} className="border-t border-charcoal/10">
+                      <td className="text-left py-1.5 pr-2">
+                        {a.productName}
+                        <span className="text-xs text-charcoal/45"> · {a.fields} field{a.fields === 1 ? "" : "s"}</span>
+                        {a.mixedUnits && <div className="text-[11px] text-status-amber">Logged in mixed units; only the {a.unit} entries are counted.</div>}
+                      </td>
+                      <td className="py-1.5 px-2 font-semibold text-forest whitespace-nowrap">{perUnit(a.average)}/{a.unit}</td>
+                      <td className="py-1.5 px-2 whitespace-nowrap">{money(a.totalAllocated)}</td>
+                      <td className="py-1.5 pl-2 whitespace-nowrap">{qty(a.totalUsed)} {a.unit}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
