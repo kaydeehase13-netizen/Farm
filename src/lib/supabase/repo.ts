@@ -1506,6 +1506,25 @@ export async function renameProduct(oldName: string, newName: string): Promise<{
     const { data: seeds, error: seedErr } = await supabase.from("planting_activity_detail").update({ seed_product_id: targetId }).eq("seed_product_id", old.id).select("activity_id");
     if (seedErr) throw new Error(seedErr.message);
     linesMoved += seeds?.length ?? 0;
+    // Inventory: purchases (e.g. from an imported receipts file) and usage
+    // sit on inventory items tied to the old product. Move them to the
+    // kept product's item for the same unit, or re-point the item if the
+    // kept product has none in that unit yet.
+    const { data: oldItems, error: itemsErr } = await supabase.from("inventory_item").select("id, unit").eq("farm_business_id", farm.id).eq("product_id", old.id);
+    if (itemsErr) throw new Error(itemsErr.message);
+    for (const it of (oldItems ?? []) as { id: string; unit: string }[]) {
+      const { data: target } = await supabase.from("inventory_item").select("id")
+        .eq("farm_business_id", farm.id).eq("product_id", targetId).eq("unit", it.unit).maybeSingle();
+      if (target?.id) {
+        const { error: mvErr } = await supabase.from("inventory_movement").update({ inventory_item_id: target.id }).eq("inventory_item_id", it.id);
+        if (mvErr) throw new Error(mvErr.message);
+        const { error: delErr } = await supabase.from("inventory_item").delete().eq("id", it.id).eq("farm_business_id", farm.id);
+        if (delErr) throw new Error(delErr.message);
+      } else {
+        const { error: upErr } = await supabase.from("inventory_item").update({ product_id: targetId }).eq("id", it.id).eq("farm_business_id", farm.id);
+        if (upErr) throw new Error(upErr.message);
+      }
+    }
     await supabase.from("product").update({ archived_at: new Date().toISOString() }).eq("id", old.id);
   }
 

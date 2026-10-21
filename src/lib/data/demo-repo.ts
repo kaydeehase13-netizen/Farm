@@ -1252,6 +1252,9 @@ export function renameProduct(oldName: string, newName: string): { merged: boole
       if ((t.productName ?? "").trim().toLowerCase() === fl) { t.productName = to; hit = true; }
       if (hit) transactionsRenamed++;
     }
+    for (const it of db.inventoryItems) {
+      if (it.productName.trim().toLowerCase() === fl) it.productName = to;
+    }
     return { merged, linesMoved, transactionsRenamed };
   });
 }
