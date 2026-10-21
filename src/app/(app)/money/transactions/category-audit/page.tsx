@@ -97,7 +97,8 @@ export default async function CategoryAuditPage() {
           from this list once it&apos;s down to a single copy — that copy isn&apos;t deleted, it just no longer has a duplicate
           to be flagged against; you&apos;ll still find it under Money → Transactions. Not sure? Tap <b>Compare</b> to see every
           copy side by side (anything that differs is highlighted) or open each one. If they&apos;re both real, tap <b>Not a
-          duplicate</b> and the group stops showing up.
+          duplicate</b> and the group stops showing up. For a deeper check (near-matches a few days apart or with different names),
+          use <a href="/money/transactions/duplicates" className="text-forest font-medium hover:underline">Check for Duplicates</a>.
         </p>
         <DuplicateGroups groups={duplicateGroups} reviewed={reviewedGroups} names={names} />
       </div>

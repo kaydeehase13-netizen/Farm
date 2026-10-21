@@ -1412,6 +1412,22 @@ export async function setTransactionOmittedAction(transactionId: string, omitted
  * a free-text pointer to whatever it matches (e.g. "Matches July 14 Farm
  * Credit check #1042") so both copies can be found again later.
  */
+/**
+ * Check for Duplicates: every transaction, every year, every kind (farm,
+ * W-2, royalties, house project, medical...). Groups already marked "Not a
+ * duplicate" come back separately so they can be un-marked.
+ */
+export async function scanDuplicatesAction(opts: { days: number; taxYear?: number }) {
+  const { findDuplicateGroups } = await import("@/lib/duplicate-scan");
+  const txns = await repo.listTransactions(opts.taxYear ? { taxYear: opts.taxYear } : {});
+  const groups = findDuplicateGroups(txns, { days: Math.max(0, Math.min(30, Math.round(opts.days))) });
+  return {
+    scanned: txns.length,
+    active: groups.filter((g) => !g.transactions.every((t) => t.notDuplicate)),
+    reviewed: groups.filter((g) => g.transactions.every((t) => t.notDuplicate)),
+  };
+}
+
 /** Category Audit: these look-alike transactions were checked and are all real (or undo that). */
 export async function markNotDuplicateAction(ids: string[], value: boolean) {
   await repo.setTransactionsNotDuplicate(ids, value);

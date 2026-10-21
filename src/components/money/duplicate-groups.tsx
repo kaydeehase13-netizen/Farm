@@ -32,6 +32,7 @@ function pickDefaultKeeper(group: Transaction[]): string {
 /** What gets compared, one row per item. */
 function compareRows(names: Names): { label: string; value: (t: Transaction) => string }[] {
   return [
+    { label: "Date", value: (t) => t.transactionDate },
     { label: "Description", value: (t) => t.description ?? "—" },
     { label: "Vendor", value: (t) => t.vendorName ?? "—" },
     { label: "Category", value: (t) => (t.farmCategoryId && names.categories[t.farmCategoryId]) || "Uncategorized" },
@@ -50,7 +51,7 @@ function compareRows(names: Names): { label: string; value: (t: Transaction) => 
   ];
 }
 
-function DuplicateGroup({ groupKey, transactions, names }: { groupKey: string; transactions: Transaction[]; names: Names }) {
+function DuplicateGroup({ groupKey, transactions, names, note }: { groupKey: string; transactions: Transaction[]; names: Names; note?: string }) {
   const router = useRouter();
   const [keepId, setKeepId] = useState(() => pickDefaultKeeper(transactions));
   const [isPending, startTransition] = useTransition();
@@ -107,6 +108,7 @@ function DuplicateGroup({ groupKey, transactions, names }: { groupKey: string; t
         <div className="text-sm">
           <span className="font-medium">{first.vendorName ?? first.description ?? "—"}</span>
           <span className="text-charcoal/50"> · {first.transactionDate} · {money(first.amount)} · {transactions.length} copies</span>
+          {note && <div className="text-xs mt-0.5 text-charcoal/60">{note}</div>}
           <div className={`text-xs mt-0.5 ${differences.length ? "text-status-amber" : "text-charcoal/50"}`}>
             {differences.length
               ? `Not identical: ${differences.join(", ").toLowerCase()} ${differences.length === 1 ? "differs" : "differ"}. Compare before deleting.`
@@ -218,17 +220,18 @@ function ReviewedGroups({ groups }: { groups: { key: string; transactions: Trans
   );
 }
 
-export function DuplicateGroups({ groups, reviewed = [], names }: {
-  groups: { key: string; transactions: Transaction[] }[];
+export function DuplicateGroups({ groups, reviewed = [], names, emptyText }: {
+  groups: { key: string; transactions: Transaction[]; note?: string }[];
   reviewed?: { key: string; transactions: Transaction[] }[];
   names: Names;
+  emptyText?: string;
 }) {
   return (
     <div>
       {groups.length === 0 ? (
-        <p className="text-sm text-charcoal/50">Nothing flagged — no two transactions on file share the same type, name, date, and amount.</p>
+        <p className="text-sm text-charcoal/50">{emptyText ?? "Nothing flagged — no two transactions on file share the same type, name, date, and amount."}</p>
       ) : (
-        groups.map((g) => <DuplicateGroup key={g.key} groupKey={g.key} transactions={g.transactions} names={names} />)
+        groups.map((g) => <DuplicateGroup key={g.key} groupKey={g.key} transactions={g.transactions} names={names} note={g.note} />)
       )}
       <ReviewedGroups groups={reviewed} />
     </div>
