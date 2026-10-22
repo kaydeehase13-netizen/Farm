@@ -2683,7 +2683,7 @@ async function reallocateProduct(input: {
   // Fields in the last split with no logged usage were added by hand; carry their quantity forward.
   const manualUsage: { fieldId: string; quantity: number; unit?: string }[] = [];
   // Split last time over fields picked by hand (a grower's fields, by acres): keep that pick.
-  const pickedOnly = priorSplits.length > 0 && priorSplits.every((sp) => /\(picked\)\s+used\s*$/i.test(sp.notes ?? ""));
+  const pickedOnly = priorSplits.length > 0 && priorSplits.every((sp) => /\((picked|mix)\)\s+used\s*$/i.test(sp.notes ?? ""));
   if (pickedOnly) {
     for (const sp of priorSplits) {
       const u = usageFromNote(sp.notes);
@@ -2988,6 +2988,137 @@ export async function apply32ThioFoldAction(input: { moveCostOf: string[] }) {
   return { passes: p.passes.length, results };
 }
 
+/** A tank mix applied by hand to fields (10-34-0 with IVC Zinc 10% at 1 gal per 10). */
+export interface MixInput {
+  year: number;
+  date: string;
+  mixName: string;
+  main: string;
+  mainGallons: number;
+  partner: string;
+  /** Gallons of partner per gallon of main (1 per 10 = 0.1). */
+  partnerPerMain: number;
+  fieldIds: string[];
+  farmCategoryId?: string;
+  /** Bought by the jug/unit instead of gallons: gallons in one. */
+  mainGalPerUnit?: number;
+  partnerGalPerUnit?: number;
+}
+
+const MIX_TAG = (mixName: string) => `Mix: ${mixName.trim()} (entered on Allocate Product Cost)`;
+
+/** Average price paid per gallon (Prices Paid), this year's purchases first, else all years. */
+async function pricePerGallon(name: string, year: number, galPerUnit?: number): Promise<{ perGal: number; from: string } | { needsUnit: string } | null> {
+  const { lbPerGallon } = await import("@/lib/inventory-balance");
+  const { normalizeUnit } = await import("@/lib/product-prices");
+  const { prices } = await repo.listProductPrices();
+  const sq = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const mine = prices.filter((p) => sq(p.productName) === sq(name) && p.quantity > 0 && p.totalAmount > 0);
+  const toGal = (p: (typeof mine)[number]) => {
+    const u = normalizeUnit(p.unit);
+    if (u === "gal") return p.quantity;
+    const d = lbPerGallon(p.productName) ?? lbPerGallon(name);
+    if (u === "lb" && d) return p.quantity / d;
+    if (u === "ton" && d) return (p.quantity * 2000) / d;
+    if (u === "oz") return p.quantity / 128;
+    if (galPerUnit && galPerUnit > 0) return p.quantity * galPerUnit;
+    return null;
+  };
+  for (const set of [mine.filter((p) => p.purchaseDate?.startsWith(String(year))), mine]) {
+    let gal = 0, paid = 0;
+    for (const p of set) { const g = toGal(p); if (g) { gal += g; paid += p.totalAmount; } }
+    if (gal > 0) return { perGal: paid / gal, from: set === mine ? "all purchases" : `${year} purchases` };
+  }
+  // Bought only by the unit/jug/bag: say so, so the gallons in one can be entered.
+  if (mine.length) return { needsUnit: normalizeUnit(mine[0].unit) };
+  return null;
+}
+
+/** What the mix comes to per field and in cost, before anything is saved. */
+export async function previewMixAction(input: MixInput) {
+  if (!input.mixName.trim() || !input.main.trim() || !input.partner.trim()) throw new Error("Fill in the mix, main product and mixed-in product names.");
+  if (!(input.mainGallons > 0)) throw new Error(`Enter how many gallons of ${input.main} went out.`);
+  if (!(input.partnerPerMain >= 0)) throw new Error("Enter the ratio.");
+  const fields = (await repo.listFields()).filter((f) => input.fieldIds.includes(f.id) && (f.acres ?? 0) > 0);
+  if (fields.length === 0) throw new Error("Pick at least one field with acres.");
+  const acres = fields.reduce((sum, f) => sum + (f.acres ?? 0), 0);
+  const partnerGallons = input.mainGallons * input.partnerPerMain;
+  const [mainPrice, partnerPrice] = await Promise.all([
+    pricePerGallon(input.main, input.year, input.mainGalPerUnit), pricePerGallon(input.partner, input.year, input.partnerGalPerUnit),
+  ]);
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const part = (name: string, gallons: number, pr: Awaited<ReturnType<typeof pricePerGallon>>) => {
+    const ok = pr && "perGal" in pr ? pr : null;
+    return {
+      name: name.trim(), gallons, perGal: ok?.perGal ?? null, from: ok?.from,
+      cost: ok ? r2(gallons * ok.perGal) : null,
+      needsUnit: pr && "needsUnit" in pr ? pr.needsUnit : null,
+    };
+  };
+  return {
+    acres, partnerGallons,
+    main: part(input.main, input.mainGallons, mainPrice),
+    partner: part(input.partner, partnerGallons, partnerPrice),
+    fields: fields.map((f) => {
+      const share = (f.acres ?? 0) / acres;
+      return { fieldId: f.id, name: f.name, acres: f.acres ?? 0, mainGal: input.mainGallons * share, partnerGal: partnerGallons * share };
+    }),
+  };
+}
+
+/**
+ * Saves the mix: one fertilizer pass per field (main + mixed-in gallons, by
+ * acres) so Inventory counts what was used, and each product's field cost
+ * is gallons used x average price paid - so zinc you didn't use stays on
+ * hand instead of being charged to fields. Saving again for the same mix
+ * and year replaces the earlier passes and split.
+ */
+export async function saveMixAction(input: MixInput) {
+  const plan = await previewMixAction(input);
+  const farm = await getFarm();
+  const tag = MIX_TAG(input.mixName);
+
+  // Replace this mix's earlier passes for the year.
+  const existing = (await repo.listActivities({ year: input.year })).filter((a) => (a.notes ?? "").includes(tag));
+  for (const a of existing) await repo.deleteActivity(a.id);
+
+  const round = (n: number) => Math.round(n * 1000) / 1000;
+  for (const f of plan.fields) {
+    await repo.createActivity({
+      farmBusinessId: farm.id, activityType: "fertilize", fieldId: f.fieldId, fieldName: f.name,
+      activityDate: input.date, acres: f.acres, notes: tag, syncStatus: "synced",
+      fertilizerProducts: [
+        { productName: plan.main.name, rate: round(f.mainGal / f.acres), rateUnit: "gal/ac", quantityUsed: round(f.mainGal), quantityUnit: "gal" },
+        ...(f.partnerGal > 0 ? [{ productName: plan.partner.name, rate: round(f.partnerGal / f.acres), rateUnit: "gal/ac", quantityUsed: round(f.partnerGal), quantityUnit: "gal" }] : []),
+      ],
+    });
+  }
+
+  const categories = await repo.listFarmCategories();
+  const farmCategoryId = input.farmCategoryId || categories.find((c) => /fertili[sz]er/i.test(c.name))?.id;
+  const results: string[] = [];
+  for (const part of [plan.main, plan.partner]) {
+    if (!(part.gallons > 0)) continue;
+    if (part.cost == null) {
+      results.push(part.needsUnit
+        ? `${part.name}: bought by the ${part.needsUnit}, so enter how many gallons are in one and save again. No cost was split yet.`
+        : `${part.name}: no price in Prices Paid, so no cost was split. Add its purchase there and save the mix again.`);
+      continue;
+    }
+    if (!farmCategoryId) { results.push(`${part.name}: no fertilizer category to file it under.`); continue; }
+    const res = await allocateProductCostAction({
+      year: input.year, productName: part.name, totalAmount: part.cost, farmCategoryId, transactionDate: `${input.year}-12-31`,
+      onlyManual: true, skipRevalidate: true,
+      manualUsage: plan.fields.map((f) => ({ fieldId: f.fieldId, quantity: round(part === plan.main ? f.mainGal : f.partnerGal), unit: "gal (mix)" })),
+    });
+    results.push(res.allocated ? `${part.name}: ${formatMoney(part.cost)} split over ${plan.fields.length} field(s)` : `${part.name}: ${res.message}`);
+  }
+  revalidateFieldCost();
+  revalidatePath("/more/inventory");
+  revalidatePath("/reports/billing");
+  return { passes: plan.fields.length, replaced: existing.length, results };
+}
+
 /**
  * A general cost (e.g. a "Corn seed" charge the dealer didn't break down by
  * hybrid) spread over fields you pick, weighted by how much seed each of
@@ -3050,14 +3181,16 @@ export async function allocateGeneralCostAction(input: {
  * for the year (read back from its "<product> — allocated by usage (...)"
  * entries), with what it currently adds up to.
  */
-export async function listAllocatedProductsAction(year: number): Promise<{ productName: string; total: number }[]> {
+export async function listAllocatedProductsAction(year: number): Promise<{ productName: string; total: number; mix?: boolean }[]> {
   const txns = await repo.listTransactions({ taxYear: year, type: "expense" });
-  const byName = new Map<string, { productName: string; total: number }>();
+  const byName = new Map<string, { productName: string; total: number; mix?: boolean }>();
   for (const t of txns) {
     const m = (t.description ?? "").match(/^(.*?) — allocated by usage \(/);
     if (!m || !t.splits.some((sp) => sp.targetType === "field")) continue;
     const key = m[1].trim().toLowerCase();
     const cur = byName.get(key) ?? { productName: m[1].trim(), total: 0 };
+    // Split by a saved mix (gallons used x price): Prices Paid totals don't apply.
+    if (t.splits.some((sp) => /\(mix\)\s+used\s*$/i.test(sp.notes ?? ""))) cur.mix = true;
     cur.total = Math.round((cur.total + t.amount) * 100) / 100;
     byName.set(key, cur);
   }
@@ -3136,7 +3269,7 @@ export async function planAutoAllocateAction(input: { years?: number[]; resplitO
   }
 
   const years = input.years?.length ? input.years : [...new Set([...bought.values()].map((b) => b.year))];
-  const allocatedNow = new Map<string, { productName: string; total: number }>();
+  const allocatedNow = new Map<string, { productName: string; total: number; mix?: boolean }>();
   for (const y of years) {
     for (const a of await listAllocatedProductsAction(y)) allocatedNow.set(key(y, a.productName), a);
   }
@@ -3148,6 +3281,11 @@ export async function planAutoAllocateAction(input: { years?: number[]; resplitO
     // Not on any pass that year, but already split by hand (picked fields): keep it in line too.
     if (!type && !allocatedNow.has(k)) { notUsed.push({ year: b.year, productName: b.productName, total: b.total }); continue; }
     const current = allocatedNow.get(k)?.total ?? 0;
+    // Charged by a mix (gallons used x price): leave its total alone, just re-split if asked.
+    if (allocatedNow.get(k)?.mix) {
+      if (input.resplitOthers) steps.push({ year: b.year, productName: allocatedNow.get(k)!.productName, current });
+      continue;
+    }
     if (!input.resplitOthers && Math.abs(current - b.total) < 0.01) continue; // already right
     steps.push({ year: b.year, productName: allocatedNow.get(k)?.productName ?? b.productName, total: b.total, farmCategoryId: categoryFor(b.category, type), current });
   }

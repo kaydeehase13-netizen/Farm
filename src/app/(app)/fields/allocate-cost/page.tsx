@@ -6,6 +6,7 @@ import { AllocateCostBulkImport } from "@/components/fields/allocate-cost-bulk-i
 import { GeneralCostForm, type SeedPlanting } from "@/components/fields/general-cost-form";
 import { ResplitAllButton } from "@/components/fields/resplit-all-button";
 import { AutoAllocate } from "@/components/fields/auto-allocate";
+import { MixForm } from "@/components/fields/mix-form";
 import { distinctProductNames } from "@/lib/product-usage";
 import { SeedPoundRates, type SeedPlantingRow } from "@/components/fields/seed-pound-rates";
 
@@ -70,6 +71,9 @@ export default async function AllocateCostPage() {
         farmCategories={farmCategories.map((c) => ({ id: c.id, name: c.name }))}
         fields={fields.map((f) => ({ id: f.id, name: f.name, acres: f.acres ?? undefined, grower: f.grower || undefined }))}
       />
+      <div className="mt-6">
+        <MixForm years={years} defaultYear={taxYear} fields={fields.map((f) => ({ id: f.id, name: f.name, acres: f.acres ?? undefined, grower: f.grower || undefined }))} />
+      </div>
       <div className="mt-6">
         <SeedPoundRates plantings={seedPlantings} years={years} defaultYear={taxYear} />
       </div>
