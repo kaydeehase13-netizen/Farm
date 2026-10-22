@@ -1337,6 +1337,22 @@ export function addProductPrices(items: Omit<import("@/lib/product-prices").Prod
   return items.length;
 }
 
+export function listGrowers() {
+  const db = getDB();
+  return { growers: db.growers ?? [], rates: db.billingRates ?? [], needsMigration: false };
+}
+
+export function saveGrowerSettings(input: { growers: import("@/lib/growers").Grower[]; rates: import("@/lib/growers").BillingRate[]; fieldGrowers: { fieldId: string; grower: string | null }[] }) {
+  mutate((db) => {
+    db.growers = input.growers.map((g) => ({ ...g, name: g.name.trim() }));
+    db.billingRates = input.rates;
+    for (const f of input.fieldGrowers) {
+      const field = db.fields.find((x) => x.id === f.fieldId);
+      if (field) field.grower = f.grower?.trim() || undefined;
+    }
+  });
+}
+
 export function renameProductPrices(names: string[], to: string) {
   const wanted = new Set(names.map((n) => n.trim().toLowerCase()));
   let n = 0;

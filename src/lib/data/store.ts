@@ -36,6 +36,8 @@ export interface DB {
   products: Product[];
   tankMixes?: import("@/types/domain").TankMixRecipe[];
   productPrices?: import("@/lib/product-prices").ProductPrice[];
+  growers?: import("@/lib/growers").Grower[];
+  billingRates?: import("@/lib/growers").BillingRate[];
   cattle?: import("@/lib/cattle").Cow[];
   inventoryItems: InventoryItem[];
   inventoryMovements: InventoryMovement[];

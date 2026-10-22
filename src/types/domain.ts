@@ -52,6 +52,8 @@ export interface Field {
   fsaFieldNumber?: string;
   irrigated: boolean;
   notes?: string;
+  /** Who the field is farmed for (AgFiniti "Grower"): Mohler Farms, Dennis Mohler... */
+  grower?: string;
 }
 
 export interface CropYear {

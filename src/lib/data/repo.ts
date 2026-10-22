@@ -523,3 +523,12 @@ export async function foldPassLines(input: Parameters<typeof demo.foldPassLines>
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).foldPassLines(input);
   return demo.foldPassLines(input);
 }
+
+export async function listGrowers() {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).listGrowers();
+  return demo.listGrowers();
+}
+export async function saveGrowerSettings(input: Parameters<typeof demo.saveGrowerSettings>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).saveGrowerSettings(input);
+  return demo.saveGrowerSettings(input);
+}

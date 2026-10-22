@@ -1835,17 +1835,22 @@ export async function allocateProductCostAction(input: {
   if (!(input.totalAmount > 0)) throw new Error("Enter the total amount you paid.");
   const excluded = new Set(input.excludeFieldIds ?? []);
 
-  const [activities, allFields] = await Promise.all([
+  const [activities, allFields, growerData] = await Promise.all([
     preload?.activities ?? repo.listActivities({ year: input.year }),
     repo.listFields(),
+    repo.listGrowers().catch(() => ({ growers: [] as import("@/lib/growers").Grower[] })),
   ]);
   const fieldNameById = new Map(allFields.map((f) => [f.id, f.name]));
+  // Growers who buy their own product: their fields never share your cost.
+  const ownInputs = new Set(growerData.growers.filter((g) => g.suppliesOwnInputs).map((g) => g.name.trim().toLowerCase()));
+  const ownInputsFieldIds = new Set(allFields.filter((f) => f.grower && ownInputs.has(f.grower.trim().toLowerCase())).map((f) => f.id));
 
   const usageByField = new Map<string, { fieldName: string; usage: number; unit?: string }>();
   let unmatchedUnits = false;
 
   function addUsage(fieldId: string | undefined, fieldName: string | undefined, amount: number, unit?: string) {
     if (!fieldId || !(amount > 0)) return;
+    if (ownInputsFieldIds.has(fieldId)) return;
     const existing = usageByField.get(fieldId);
     if (existing) {
       if (existing.unit && unit && existing.unit !== unit) unmatchedUnits = true;
@@ -2757,6 +2762,64 @@ export async function mergeProductsAction(input: { names: string[]; keep: string
     message: `Combined ${others.length + 1} names into "${keep}": ${entries} cost entr${entries === 1 ? "y" : "ies"} and ${prices} purchase${prices === 1 ? "" : "s"} moved` +
       (resplit.length ? `, cost re-split for ${resplit.join(", ")}.` : "."),
   };
+}
+
+/**
+ * Growers from a sheet (Grower, Field, optional Acres - e.g. from AgFiniti's
+ * Summary Reports, one per grower): sets each matching field's grower and
+ * adds any new grower. Names match ignoring capitals, spaces and dashes;
+ * a field AgFiniti names shorter than the app ("1" vs "1-lambert") is
+ * matched by acres when exactly one field starts that way and is within 3%.
+ */
+export async function assignGrowersFromFileAction(formData: FormData): Promise<{ assigned: number; unmatched: string[]; error?: string }> {
+  const { parseXlsxRows, toNumber, toText } = await import("@/lib/xlsx-import");
+  const file = formData.get("file");
+  if (!(file instanceof File)) return { assigned: 0, unmatched: [], error: "No file uploaded." };
+  let raw: Awaited<ReturnType<typeof parseXlsxRows>>;
+  try { raw = await parseXlsxRows(await file.arrayBuffer()); } catch (e) {
+    return { assigned: 0, unmatched: [], error: e instanceof Error ? e.message : "Couldn't read that file." };
+  }
+  const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const [fields, current] = await Promise.all([repo.listFields(), repo.listGrowers()]);
+  const assign = new Map<string, string>();
+  const unmatched: string[] = [];
+  const growerNames = new Map(current.growers.map((g) => [g.name.toLowerCase(), g]));
+  for (const r of raw) {
+    const grower = toText(r["Grower"]);
+    const field = toText(r["Field"]);
+    if (!grower || !field) continue;
+    const acres = toNumber(r["Acres (AgFiniti)"] ?? r["Acres"]);
+    if (!growerNames.has(grower.toLowerCase())) {
+      growerNames.set(grower.toLowerCase(), { name: grower, ownFarm: /mohler farms/i.test(grower), suppliesOwnInputs: false, markupPct: 0 });
+    }
+    let hits = fields.filter((f) => norm(f.name) === norm(field));
+    if (hits.length === 0) {
+      const near = fields.filter((f) => norm(f.name).startsWith(norm(field)) && !assign.has(f.id) &&
+        (acres == null || !f.acres || Math.abs(f.acres - acres) <= Math.max(0.5, acres * 0.03)));
+      if (near.length === 1) hits = near;
+    }
+    if (hits.length === 0) { unmatched.push(`${grower}: ${field}${acres ? ` (${acres} ac)` : ""}`); continue; }
+    for (const f of hits) assign.set(f.id, growerNames.get(grower.toLowerCase())!.name);
+  }
+  try {
+    await repo.saveGrowerSettings({
+      growers: [...growerNames.values()], rates: [],
+      fieldGrowers: [...assign.entries()].map(([fieldId, grower]) => ({ fieldId, grower })),
+    });
+  } catch (e) {
+    return { assigned: 0, unmatched, error: e instanceof Error ? e.message : "Couldn't save." };
+  }
+  revalidatePath("/fields/growers");
+  revalidatePath("/reports/billing");
+  return { assigned: assign.size, unmatched };
+}
+
+export async function saveGrowerSettingsAction(input: Parameters<typeof repo.saveGrowerSettings>[0]) {
+  for (const g of input.growers) if (!g.name.trim()) throw new Error("Every grower needs a name.");
+  await repo.saveGrowerSettings(input);
+  revalidatePath("/fields");
+  revalidatePath("/fields/growers");
+  revalidatePath("/reports/billing");
 }
 
 // -----------------------------------------------------------------------

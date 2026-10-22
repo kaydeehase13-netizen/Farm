@@ -34,6 +34,7 @@ function mapField(r: any): Field {
     ownership: r.ownership, landownerName: r.landowner_name ?? undefined, county: r.county ?? undefined,
     fsaFarmNumber: r.fsa_farm_number ?? undefined, fsaTractNumber: r.fsa_tract_number ?? undefined,
     fsaFieldNumber: r.fsa_field_number ?? undefined, irrigated: r.irrigated, notes: r.notes ?? undefined,
+    grower: r.grower ?? undefined,
   };
 }
 
@@ -1790,6 +1791,54 @@ export async function addProductPrices(items: Omit<import("@/lib/product-prices"
   const { error } = await supabase.from("product_price").insert(rows);
   if (error) throw new Error(missingSchema(error) ? MIGRATION_0031 : error.message);
   return rows.length;
+}
+
+// -----------------------------------------------------------------------
+// Growers and billing rates - migration 0037.
+// -----------------------------------------------------------------------
+
+const MIGRATION_0037 = "One database step is needed first: in Supabase, open SQL Editor and run supabase/migrations/0037_growers.sql.";
+
+export async function listGrowers(): Promise<{ growers: import("@/lib/growers").Grower[]; rates: import("@/lib/growers").BillingRate[]; needsMigration: boolean }> {
+  const { supabase, farm } = await ctx();
+  const [g, r] = await Promise.all([
+    supabase.from("grower").select("*").eq("farm_business_id", farm.id).order("name"),
+    supabase.from("billing_rate").select("*").eq("farm_business_id", farm.id),
+  ]);
+  if (g.error || r.error) {
+    if (missingSchema(g.error) || missingSchema(r.error)) return { growers: [], rates: [], needsMigration: true };
+    throw new Error((g.error ?? r.error)!.message);
+  }
+  return {
+    growers: (g.data ?? []).map((x: any) => ({ id: x.id, name: x.name, ownFarm: !!x.own_farm, suppliesOwnInputs: !!x.supplies_own_inputs, markupPct: Number(x.markup_pct ?? 0) })),
+    rates: (r.data ?? []).map((x: any) => ({ activityType: x.activity_type, ratePerAcre: Number(x.rate_per_acre ?? 0) })),
+    needsMigration: false,
+  };
+}
+
+export async function saveGrowerSettings(input: { growers: import("@/lib/growers").Grower[]; rates: import("@/lib/growers").BillingRate[]; fieldGrowers: { fieldId: string; grower: string | null }[] }): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const now = new Date().toISOString();
+  if (input.growers.length) {
+    const { error } = await supabase.from("grower").upsert(input.growers.map((g) => ({
+      farm_business_id: farm.id, name: g.name.trim(), own_farm: g.ownFarm, supplies_own_inputs: g.suppliesOwnInputs, markup_pct: g.markupPct || 0, updated_at: now,
+    })), { onConflict: "farm_business_id,name" });
+    if (error) throw new Error(missingSchema(error) ? MIGRATION_0037 : error.message);
+  }
+  const keep = new Set(input.growers.map((g) => g.name.trim().toLowerCase()));
+  const { data: existing } = await supabase.from("grower").select("id, name").eq("farm_business_id", farm.id);
+  const drop = (existing ?? []).filter((x: any) => !keep.has((x.name ?? "").toLowerCase())).map((x: any) => x.id);
+  if (drop.length) await supabase.from("grower").delete().in("id", drop);
+  if (input.rates.length) {
+    const { error } = await supabase.from("billing_rate").upsert(input.rates.map((r) => ({
+      farm_business_id: farm.id, activity_type: r.activityType, rate_per_acre: r.ratePerAcre || 0, updated_at: now,
+    })), { onConflict: "farm_business_id,activity_type" });
+    if (error) throw new Error(missingSchema(error) ? MIGRATION_0037 : error.message);
+  }
+  for (const f of input.fieldGrowers) {
+    const { error } = await supabase.from("field").update({ grower: f.grower?.trim() || null }).eq("id", f.fieldId).eq("farm_business_id", farm.id);
+    if (error) throw new Error(missingSchema(error) ? MIGRATION_0037 : error.message);
+  }
 }
 
 /** Prices Paid rows under any of these names move to one name (product merge). */
