@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   Home, Landmark, Sprout, Briefcase, MoreHorizontal, Plus, FileSpreadsheet,
-  Users, Search, LogOut, ChevronDown, FlaskConical, Beef, LineChart,
+  Users, Search, LogOut, ChevronDown, FlaskConical, Beef, LineChart, Menu, X, BarChart3,
 } from "lucide-react";
 import { useState } from "react";
 import GlobalAddMenu from "./global-add-menu";
@@ -20,6 +20,14 @@ const PRIMARY_NAV = [
   { href: "/markets", label: "Grain Prices", icon: LineChart },
   { href: "/work", label: "Work", icon: Briefcase },
   { href: "/more", label: "More", icon: MoreHorizontal },
+];
+
+/** Phone bottom bar: the few you use most, plus Menu for everything else. */
+const MOBILE_BAR = [
+  { href: "/home", label: "Home", icon: Home },
+  { href: "/money", label: "Money", icon: Landmark },
+  { href: "/fields", label: "Fields", icon: Sprout },
+  { href: "/reports", label: "Reports", icon: BarChart3 },
 ];
 
 const SECONDARY_NAV = [
@@ -40,6 +48,7 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
   const pathname = usePathname();
   const [addOpen, setAddOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <>
@@ -150,8 +159,8 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
       </aside>
 
       {/* Mobile bottom nav */}
-      <nav data-app-chrome className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-forest text-cream border-t border-white/10 flex items-stretch">
-        {PRIMARY_NAV.map((item) => {
+      <nav data-app-chrome className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-forest text-cream border-t border-white/10 flex items-stretch pb-[env(safe-area-inset-bottom)]">
+        {MOBILE_BAR.map((item) => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
           return (
@@ -159,25 +168,82 @@ export function Sidebar({ farmName = "Mohler Farms", taxYear = 2026, authenticat
               key={item.href}
               href={item.href}
               prefetch={false}
-              className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium ${
-                active ? "text-wheat" : "text-sage-light/80"
+              onClick={() => setMenuOpen(false)}
+              className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 text-[11px] font-medium ${
+                active && !menuOpen ? "text-wheat" : "text-sage-light/80"
               }`}
             >
-              <Icon size={20} />
+              <Icon size={19} />
               {item.label}
             </Link>
           );
         })}
+        <button
+          type="button"
+          onClick={() => setMenuOpen((o) => !o)}
+          className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 text-[11px] font-medium ${menuOpen ? "text-wheat" : "text-sage-light/80"}`}
+          aria-expanded={menuOpen}
+        >
+          {menuOpen ? <X size={19} /> : <Menu size={19} />}
+          Menu
+        </button>
       </nav>
+
+      {/* Mobile full menu: every page, so nothing is hidden on a phone */}
+      {menuOpen && (
+        <div data-app-chrome className="md:hidden fixed inset-x-0 top-0 bottom-[calc(3.25rem+env(safe-area-inset-bottom))] z-40 bg-forest text-cream overflow-y-auto">
+          <div className="px-5 pt-5 pb-3 flex items-center justify-between">
+            <div>
+              <div className="text-base font-semibold">FarmLedger</div>
+              <div className="text-xs text-sage-light/80">{farmName} · {taxYear}</div>
+            </div>
+            <button type="button" onClick={() => setMenuOpen(false)} aria-label="Close menu" className="p-2 text-sage-light/80"><X size={20} /></button>
+          </div>
+          <div className="grid grid-cols-3 gap-2 px-4">
+            {[...PRIMARY_NAV.filter((i) => i.href !== "/more"), ...SECONDARY_NAV, { href: "/more", label: "More", icon: MoreHorizontal }].map((item) => {
+              const active = pathname === item.href || pathname.startsWith(item.href + "/");
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  prefetch={false}
+                  onClick={() => setMenuOpen(false)}
+                  className={`flex flex-col items-center justify-center gap-1 rounded-xl py-4 text-xs font-medium ${active ? "bg-white/15 text-wheat" : "bg-white/5 text-cream"}`}
+                >
+                  <Icon size={22} />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+          {farms.length > 1 && (
+            <div className="px-5 mt-5">
+              <div className="text-xs text-sage-light/70 mb-1">Switch farm</div>
+              {farms.map((f) => (
+                <form key={f.id} action={switchFarmAction}>
+                  <input type="hidden" name="farmId" value={f.id} />
+                  <button type="submit" className={`block w-full text-left py-2 text-sm ${f.id === activeFarmId ? "text-wheat" : "text-cream"}`}>{f.name}</button>
+                </form>
+              ))}
+            </div>
+          )}
+          {authenticated && (
+            <form action={signOutAction} className="px-5 mt-5 pb-6">
+              <button type="submit" className="flex items-center gap-1.5 text-sm text-sage-light/80"><LogOut size={14} /> Sign out</button>
+            </form>
+          )}
+        </div>
+      )}
 
       {/* Mobile floating add button */}
       <button
         onClick={() => setAddOpen(true)}
         data-app-chrome
-        className="md:hidden fixed bottom-20 right-4 z-40 w-14 h-14 rounded-full bg-wheat text-forest shadow-lg flex items-center justify-center"
+        className="md:hidden fixed bottom-[calc(4rem+env(safe-area-inset-bottom))] right-4 z-40 w-12 h-12 rounded-full bg-wheat text-forest shadow-lg flex items-center justify-center"
         aria-label="Add"
       >
-        <Plus size={26} />
+        <Plus size={24} />
       </button>
 
       {addOpen && <GlobalAddMenu onClose={() => setAddOpen(false)} />}

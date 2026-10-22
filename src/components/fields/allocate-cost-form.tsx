@@ -15,7 +15,7 @@ export function AllocateCostForm({
   defaultYear: number;
   productNames: string[];
   farmCategories: { id: string; name: string }[];
-  fields: { id: string; name: string }[];
+  fields: { id: string; name: string; acres?: number; grower?: string }[];
 }) {
   const [year, setYear] = useState(defaultYear);
   const [productName, setProductName] = useState("");
@@ -35,6 +35,22 @@ export function AllocateCostForm({
   // proportional split.
   const [manualEntries, setManualEntries] = useState<ManualEntry[]>([]);
   const [showManual, setShowManual] = useState(false);
+  // "Pick" = split over fields chosen here (a grower's fields, or any), by acres, ignoring logged passes.
+  const [splitMode, setSplitMode] = useState<"usage" | "pick">("usage");
+  const [pickedFields, setPickedFields] = useState<Set<string>>(new Set());
+  const growerNames = [...new Set(fields.map((f) => f.grower).filter(Boolean) as string[])].sort();
+  const pickedAcres = fields.filter((f) => pickedFields.has(f.id)).reduce((s, f) => s + (f.acres ?? 0), 0);
+  const pickedNoAcres = fields.filter((f) => pickedFields.has(f.id) && !(f.acres && f.acres > 0));
+  function pickGrower(name: string) {
+    setPickedFields(new Set(fields.filter((f) => f.grower === name).map((f) => f.id)));
+  }
+  function pickedPayload() {
+    return fields.filter((f) => pickedFields.has(f.id) && (f.acres ?? 0) > 0)
+      .map((f) => ({ fieldId: f.id, quantity: f.acres!, unit: "ac (picked)" }));
+  }
+  function splitArgs() {
+    return splitMode === "pick" ? { manualUsage: pickedPayload(), onlyManual: true } : { manualUsage: manualUsagePayload() };
+  }
 
   function addManualEntry() {
     setManualEntries((prev) => [...prev, { fieldId: fields[0]?.id ?? "", quantity: "", unit: "" }]);
@@ -90,11 +106,14 @@ export function AllocateCostForm({
     setError(null);
     setResult(null);
     setExcludedFieldIds(new Set());
+    if (splitMode === "pick" && pickedPayload().length === 0) {
+      setError("Pick at least one field with acres."); setSaving(false); return;
+    }
     try {
       const res = await allocateProductCostAction({
         year, productName, totalAmount: Number(totalAmount), farmCategoryId,
         vendorName: vendorName || undefined, transactionDate: transactionDate || undefined,
-        manualUsage: manualUsagePayload(),
+        ...splitArgs(),
       });
       setResult(res);
     } catch (e) {
@@ -127,7 +146,7 @@ export function AllocateCostForm({
         year: result.year, productName: result.productName, totalAmount: result.totalAmount,
         farmCategoryId: result.farmCategoryId, vendorName: result.vendorName, transactionDate: result.transactionDate,
         excludeFieldIds: Array.from(excludedFieldIds),
-        manualUsage: manualUsagePayload(),
+        ...splitArgs(),
       });
       setResult(res);
     } catch (e) {
@@ -279,13 +298,55 @@ export function AllocateCostForm({
         <p className="text-xs text-charcoal/45 mt-1">Defaults to year-end for the tax year selected above — change it if you'd rather date it to the invoice.</p>
       </label>
 
+      <div className="pt-2 border-t border-[--border-color] space-y-2">
+        <div className="text-sm font-medium text-charcoal/70">Split it over</div>
+        <div className="flex flex-col gap-1 text-sm">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="split-mode" checked={splitMode === "usage"} onChange={() => setSplitMode("usage")} />
+            Fields that used it (logged passes)
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="split-mode" checked={splitMode === "pick"} onChange={() => setSplitMode("pick")} />
+            A grower&apos;s fields, or fields I pick (split by acres)
+          </label>
+        </div>
+        {splitMode === "pick" && (
+          <div className="space-y-2 pl-6">
+            {growerNames.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {growerNames.map((g) => (
+                  <button key={g} type="button" onClick={() => pickGrower(g)} className="card px-3 py-1 text-xs font-medium hover:border-forest">
+                    All {g} fields
+                  </button>
+                ))}
+                {pickedFields.size > 0 && <button type="button" onClick={() => setPickedFields(new Set())} className="text-xs text-charcoal/60 hover:underline">Clear</button>}
+              </div>
+            )}
+            <div className="max-h-64 overflow-y-auto border border-charcoal/10 rounded-lg p-2 space-y-0.5">
+              {fields.map((f) => (
+                <label key={f.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={pickedFields.has(f.id)} onChange={() => setPickedFields((prev) => { const n = new Set(prev); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n; })} />
+                  <span className="flex-1">{f.name}</span>
+                  <span className="text-xs text-charcoal/45">{f.grower ?? ""}</span>
+                  <span className="text-xs text-charcoal/55 w-16 text-right">{f.acres ? `${f.acres} ac` : "no acres"}</span>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-charcoal/55">
+              {pickedFields.size} field{pickedFields.size === 1 ? "" : "s"} · {Math.round(pickedAcres * 100) / 100} ac. Each gets its share by acres; logged passes are ignored for this product.
+              {pickedNoAcres.length > 0 && <span className="text-status-amber"> {pickedNoAcres.map((f) => f.name).join(", ")} {pickedNoAcres.length === 1 ? "has" : "have"} no acres and will be left out.</span>}
+            </p>
+          </div>
+        )}
+      </div>
+
       <div className="pt-2 border-t border-[--border-color]">
-        {!showManual && (
+        {splitMode === "usage" && !showManual && (
           <button type="button" onClick={() => { setShowManual(true); if (manualEntries.length === 0) addManualEntry(); }} className="text-xs font-medium text-forest hover:underline">
             + Add a field AgFiniti didn&apos;t cover
           </button>
         )}
-        {showManual && (
+        {splitMode === "usage" && showManual && (
           <div className="space-y-2">
             <div className="text-sm font-medium text-charcoal/70">Fields Not Tracked by AgFiniti</div>
             <p className="text-xs text-charcoal/45">

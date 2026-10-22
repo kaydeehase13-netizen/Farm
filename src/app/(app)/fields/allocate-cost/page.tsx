@@ -63,7 +63,7 @@ export default async function AllocateCostPage() {
         defaultYear={taxYear}
         productNames={productNames}
         farmCategories={farmCategories.map((c) => ({ id: c.id, name: c.name }))}
-        fields={fields.map((f) => ({ id: f.id, name: f.name }))}
+        fields={fields.map((f) => ({ id: f.id, name: f.name, acres: f.acres ?? undefined, grower: f.grower || undefined }))}
       />
       <div className="mt-6">
         <SeedPoundRates plantings={seedPlantings} years={years} defaultYear={taxYear} />

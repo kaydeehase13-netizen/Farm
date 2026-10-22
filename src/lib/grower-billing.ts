@@ -33,7 +33,7 @@ function parseUsed(note?: string): { quantity: number; unit: string } | null {
   const m = (note ?? "").match(/^\s*([\d.,]+)\s*(.*?)\s+used\s*$/i);
   if (!m) return null;
   const q = Number(m[1].replace(/,/g, ""));
-  return q > 0 ? { quantity: q, unit: m[2] || "" } : null;
+  return q > 0 ? { quantity: q, unit: (m[2] || "").replace(/\s*\(picked\)/i, "") } : null;
 }
 
 function addProduct(list: ProductLine[], name: string, qty: number, unit: string, cost: number) {

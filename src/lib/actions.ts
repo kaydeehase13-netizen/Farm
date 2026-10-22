@@ -1828,6 +1828,8 @@ export async function allocateProductCostAction(input: {
    * each response re-render pages for nothing and slows the whole run.
    */
   skipRevalidate?: boolean;
+  /** Split only over manualUsage (fields picked by hand, by acres), ignoring logged passes. */
+  onlyManual?: boolean;
 }, preload?: { activities?: Awaited<ReturnType<typeof repo.listActivities>> }) {
   const farm = await getFarm();
   const needle = input.productName.trim().toLowerCase();
@@ -1854,10 +1856,11 @@ export async function allocateProductCostAction(input: {
 
   const skippedOwnInputs = new Map<string, string>(); // field -> grower
   let zeroQuantity = 0;
-  function addUsage(fieldId: string | undefined, fieldName: string | undefined, amount: number, unit?: string) {
+  function addUsage(fieldId: string | undefined, fieldName: string | undefined, amount: number, unit?: string, picked = false) {
     if (!fieldId) return;
     if (!(amount > 0)) { zeroQuantity++; return; }
-    if (ownInputsFieldIds.has(fieldId)) {
+    // A field picked or typed in by hand is always included, whoever's it is.
+    if (!picked && ownInputsFieldIds.has(fieldId)) {
       skippedOwnInputs.set(fieldNameById.get(fieldId) ?? fieldName ?? "a field", allFields.find((f) => f.id === fieldId)?.grower ?? "");
       return;
     }
@@ -1879,7 +1882,7 @@ export async function allocateProductCostAction(input: {
   // mixing acres with seeds.
   // Wheat-style seed split by pounds: every planting needs its lb/acre,
   // otherwise the ones without it would quietly get $0.
-  {
+  if (!input.onlyManual) {
     const plantings = activities.filter((a) => a.seedProductName && a.seedProductName.trim().toLowerCase() === needle && (a.acres ?? 0) > 0);
     if (plantings.some((a) => isPoundRate(a.seedingRateUnit))) {
       const missing = plantings.filter((a) => !((a.seedingRate ?? 0) > 0)).map((a) => a.fieldName ?? "a field");
@@ -1892,7 +1895,7 @@ export async function allocateProductCostAction(input: {
     }
   }
   const seedByAcres = seedSplitsByAcres(activities, needle);
-  for (const a of activities) {
+  for (const a of input.onlyManual ? [] : activities) {
     for (const p of a.sprayProducts ?? []) {
       if (sameProduct(p.productName)) addUsage(a.fieldId, a.fieldName, p.quantityUsed, p.quantityUnit);
     }
@@ -1910,7 +1913,7 @@ export async function allocateProductCostAction(input: {
   }
 
   for (const m of input.manualUsage ?? []) {
-    addUsage(m.fieldId, fieldNameById.get(m.fieldId), m.quantity, m.unit);
+    addUsage(m.fieldId, fieldNameById.get(m.fieldId), m.quantity, m.unit, true);
   }
 
   const fieldsUsage = Array.from(usageByField.entries()).map(([fieldId, v]) => ({ fieldId, ...v }));
@@ -2679,6 +2682,25 @@ async function reallocateProduct(input: {
   const excludeFieldIds: string[] = [];
   // Fields in the last split with no logged usage were added by hand; carry their quantity forward.
   const manualUsage: { fieldId: string; quantity: number; unit?: string }[] = [];
+  // Split last time over fields picked by hand (a grower's fields, by acres): keep that pick.
+  const pickedOnly = priorSplits.length > 0 && priorSplits.every((sp) => /\(picked\)\s+used\s*$/i.test(sp.notes ?? ""));
+  if (pickedOnly) {
+    for (const sp of priorSplits) {
+      const u = usageFromNote(sp.notes);
+      if (u) manualUsage.push({ fieldId: sp.fieldId!, ...u });
+    }
+    const outcome = await allocateProductCostAction({
+      year: input.year, productName, totalAmount, farmCategoryId,
+      vendorName: input.vendorName ?? first.vendorName, transactionDate: first.transactionDate,
+      manualUsage, onlyManual: true, skipRevalidate: true,
+    }, { activities });
+    if (!outcome.allocated) return { ...base, reallocated: false, message: outcome.message };
+    return {
+      ...base, reallocated: true, totalAmount: outcome.totalAmount,
+      message: `Re-split ${formatMoney(outcome.totalAmount)} across the ${outcome.allocations.length} field(s) you picked.`,
+      fields: outcome.allocations.map((a) => ({ fieldName: a.fieldName, amount: a.amount, excluded: a.excluded })),
+    };
+  }
   for (const sp of priorSplits) {
     if (logged.has(sp.fieldId!) || sp.fieldId === input.editedFieldId) continue;
     const u = usageFromNote(sp.notes);
@@ -3123,7 +3145,8 @@ export async function planAutoAllocateAction(input: { years?: number[]; resplitO
   const notUsed: { year: number; productName: string; total: number }[] = [];
   for (const [k, b] of bought) {
     const type = used.get(k);
-    if (!type) { notUsed.push({ year: b.year, productName: b.productName, total: b.total }); continue; }
+    // Not on any pass that year, but already split by hand (picked fields): keep it in line too.
+    if (!type && !allocatedNow.has(k)) { notUsed.push({ year: b.year, productName: b.productName, total: b.total }); continue; }
     const current = allocatedNow.get(k)?.total ?? 0;
     if (!input.resplitOthers && Math.abs(current - b.total) < 0.01) continue; // already right
     steps.push({ year: b.year, productName: allocatedNow.get(k)?.productName ?? b.productName, total: b.total, farmCategoryId: categoryFor(b.category, type), current });
