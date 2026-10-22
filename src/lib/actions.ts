@@ -2759,6 +2759,116 @@ export async function mergeProductsAction(input: { names: string[]; keep: string
   };
 }
 
+// -----------------------------------------------------------------------
+// 32 Thio = each Kanza load (32-0-0 + Thio + Kanza Humic). Fold those lines
+// into one 32 Thio line on every pass that has 32 on it, and move their
+// field cost into 32 Thio. Humic or Thio on a pass with no 32 is left alone.
+// -----------------------------------------------------------------------
+
+type FoldPlan = {
+  passes: { activityId: string; year: number; fieldName: string; date: string; keep: { kind: "spray" | "fertilizer"; lineId?: string; lineIndex: number };
+    remove: { kind: "spray" | "fertilizer"; lineId?: string; lineIndex: number }[]; pounds: number; rate: number; parts: string[] }[];
+  skipped: { fieldName: string; date: string; why: string }[];
+  standaloneHumic: number;
+  standaloneThio: number;
+  costs: { year: number; productName: string; amount: number }[];
+  blendNow: { year: number; amount: number }[];
+};
+
+async function planFold32Thio(): Promise<FoldPlan> {
+  const { BLEND_32, is32Base, isFoldPart, isHumicPart, isThioPart, poundsOf } = await import("@/lib/blend-fold");
+  const activities = await repo.listActivities({});
+  const plan: FoldPlan = { passes: [], skipped: [], standaloneHumic: 0, standaloneThio: 0, costs: [], blendNow: [] };
+  for (const a of activities) {
+    const lines = [
+      ...(a.sprayProducts ?? []).map((l, i) => ({ kind: "spray" as const, i, l })),
+      ...(a.fertilizerProducts ?? []).map((l, i) => ({ kind: "fertilizer" as const, i, l })),
+    ];
+    const has32 = lines.some((x) => is32Base(x.l.productName));
+    if (!has32) {
+      if (lines.some((x) => isHumicPart(x.l.productName))) plan.standaloneHumic++;
+      if (lines.some((x) => isThioPart(x.l.productName))) plan.standaloneThio++;
+      continue;
+    }
+    const fold = lines.filter((x) => isFoldPart(x.l.productName));
+    if (fold.length === 1 && fold[0].l.productName.trim() === BLEND_32) continue; // already one 32 Thio line
+    let pounds = 0;
+    let bad: string | null = null;
+    for (const x of fold) {
+      const lb = poundsOf(x.l.productName, x.l.quantityUsed, x.l.quantityUnit);
+      if (lb == null) { bad = `${x.l.productName} is in "${x.l.quantityUnit}"`; break; }
+      pounds += lb;
+    }
+    const where = { fieldName: a.fieldName ?? a.customerFieldName ?? "Field", date: a.activityDate };
+    if (bad) { plan.skipped.push({ ...where, why: bad }); continue; }
+    const keepX = fold.find((x) => x.l.productName.trim().toLowerCase() === BLEND_32.toLowerCase()) ?? fold.find((x) => is32Base(x.l.productName))!;
+    plan.passes.push({
+      activityId: a.id, year: Number(a.activityDate.slice(0, 4)), ...where,
+      keep: { kind: keepX.kind, lineId: keepX.l.lineId, lineIndex: keepX.i },
+      remove: fold.filter((x) => x !== keepX).map((x) => ({ kind: x.kind, lineId: x.l.lineId, lineIndex: x.i })),
+      pounds: Math.round(pounds * 100) / 100,
+      rate: a.acres && a.acres > 0 ? Math.round((pounds / a.acres) * 100) / 100 : keepX.l.rate,
+      parts: [...new Set(fold.map((x) => x.l.productName.trim()))],
+    });
+  }
+  // Field cost already split under the part names, per year.
+  for (const year of await repo.listTaxYears()) {
+    const txns = await repo.listTransactions({ taxYear: year, type: "expense", withSplits: true });
+    const byName = new Map<string, number>();
+    let blend = 0;
+    for (const t of txns) {
+      const m = (t.description ?? "").match(/^(.*?) — allocated by usage \(/);
+      if (!m || !t.splits.some((s) => s.targetType === "field")) continue;
+      const name = m[1].trim();
+      if (name.toLowerCase() === BLEND_32.toLowerCase()) { blend += t.amount; continue; }
+      if (!isFoldPart(name)) continue;
+      byName.set(name, (byName.get(name) ?? 0) + t.amount);
+    }
+    for (const [productName, amount] of byName) plan.costs.push({ year, productName, amount: Math.round(amount * 100) / 100 });
+    if (blend > 0) plan.blendNow.push({ year, amount: Math.round(blend * 100) / 100 });
+  }
+  return plan;
+}
+
+export async function preview32ThioFoldAction() {
+  const p = await planFold32Thio();
+  const byYear = new Map<number, number>();
+  for (const x of p.passes) byYear.set(x.year, (byYear.get(x.year) ?? 0) + 1);
+  return {
+    passesByYear: [...byYear.entries()].sort((a, b) => a[0] - b[0]).map(([year, count]) => ({ year, count })),
+    examples: p.passes.slice(0, 6).map((x) => ({ fieldName: x.fieldName, date: x.date, parts: x.parts, pounds: x.pounds })),
+    skipped: p.skipped, standaloneHumic: p.standaloneHumic, standaloneThio: p.standaloneThio,
+    costs: p.costs, blendNow: p.blendNow,
+  };
+}
+
+export async function apply32ThioFoldAction(input: { moveCostOf: string[] }) {
+  const p = await planFold32Thio();
+  for (const x of p.passes) {
+    await repo.foldPassLines({
+      activityId: x.activityId, keep: x.keep, remove: x.remove,
+      productName: "32 Thio", quantity: x.pounds, unit: "lb", rate: x.rate, rateUnit: "lb/ac",
+    });
+  }
+  const move = new Set(input.moveCostOf.map((n) => n.trim().toLowerCase()));
+  const results: string[] = [];
+  const years = [...new Set(p.costs.filter((c) => move.has(c.productName.toLowerCase())).map((c) => c.year))];
+  for (const year of years) {
+    const yearExpenses = await repo.listTransactions({ taxYear: year, type: "expense" });
+    const moving = p.costs.filter((c) => c.year === year && move.has(c.productName.toLowerCase()));
+    const txns = (await Promise.all(moving.map((c) => findFieldAllocatedProductTransactions(year, c.productName, yearExpenses)))).flat();
+    const added = Math.round(txns.reduce((s, t) => s + t.amount, 0) * 100) / 100;
+    const category = txns.find((t) => t.farmCategoryId)?.farmCategoryId;
+    const now = p.blendNow.find((b) => b.year === year)?.amount ?? 0;
+    await Promise.all(txns.map((t) => repo.deleteTransaction(t.id)));
+    const r = await reallocateProduct({ year, productName: "32 Thio", newTotal: Math.round((now + added) * 100) / 100, farmCategoryId: category });
+    results.push(`${year}: 32 Thio is now ${formatMoney(now + added)}${r.reallocated ? "" : ` (re-split didn't run: ${r.message})`}`);
+  }
+  revalidateFieldCost();
+  revalidatePath("/more/inventory");
+  return { passes: p.passes.length, results };
+}
+
 /**
  * A general cost (e.g. a "Corn seed" charge the dealer didn't break down by
  * hybrid) spread over fields you pick, weighted by how much seed each of

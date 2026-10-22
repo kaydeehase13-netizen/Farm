@@ -1207,6 +1207,25 @@ export function setSeedRatesLbPerAcre(entries: { activityId: string; lbPerAcre: 
   });
 }
 
+export function foldPassLines(input: {
+  activityId: string;
+  keep: { kind: "spray" | "fertilizer"; lineId?: string; lineIndex: number };
+  remove: { kind: "spray" | "fertilizer"; lineId?: string; lineIndex: number }[];
+  productName: string; quantity: number; unit: string; rate: number; rateUnit: string;
+}) {
+  mutate((db) => {
+    const a = db.activities.find((x) => x.id === input.activityId);
+    if (!a) throw new Error("Couldn't find that pass.");
+    const list = (k: string) => (k === "spray" ? (a.sprayProducts ??= []) : (a.fertilizerProducts ??= [])) as { productName: string; rate: number; rateUnit: string; quantityUsed: number; quantityUnit: string }[];
+    const keep = list(input.keep.kind)[input.keep.lineIndex];
+    if (!keep) throw new Error("Couldn't find that line.");
+    Object.assign(keep, { productName: input.productName, quantityUsed: input.quantity, quantityUnit: input.unit, rate: input.rate, rateUnit: input.rateUnit });
+    const drop = new Set(input.remove.map((r) => `${r.kind}:${r.lineIndex}`));
+    if (a.sprayProducts) a.sprayProducts = a.sprayProducts.filter((_, i) => !drop.has(`spray:${i}`)) as typeof a.sprayProducts;
+    if (a.fertilizerProducts) a.fertilizerProducts = a.fertilizerProducts.filter((_, i) => !drop.has(`fertilizer:${i}`));
+  });
+}
+
 /** Demo-mode mirror of the Supabase updateActivityProductLine (lines are matched by position). */
 export function updateActivityProductLine(edit:
   | { kind: "spray" | "fertilizer"; activityId: string; lineId?: string; lineIndex: number; productName: string; rate: number; quantityUsed: number }

@@ -3,6 +3,7 @@ import { listInventory, listActivities, listProductPrices } from "@/lib/data/rep
 import { PageHeader } from "@/components/ui/stat-card";
 import { inventoryBalance } from "@/lib/inventory-balance";
 import { InventoryTable } from "@/components/inventory/inventory-table";
+import { Fold32Thio } from "@/components/inventory/fold-32-thio";
 
 export default async function InventoryPage({ searchParams }: { searchParams: Promise<{ show?: string }> }) {
   const { show } = await searchParams;
@@ -38,6 +39,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           {show === "bought" ? "Show everything" : "Only show products with a purchase on file"}
         </Link>
       </div>
+      <div className="mb-4"><Fold32Thio /></div>
       <InventoryTable rows={rows} />
     </div>
   );

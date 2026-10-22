@@ -1379,6 +1379,36 @@ export async function getActivity(activityId: string): Promise<Activity | null> 
   return activities.find((a) => a.id === activityId) ?? null;
 }
 
+/** One pass: one line becomes the blend (new amount/rate), the others are removed. */
+export async function foldPassLines(input: {
+  activityId: string;
+  keep: { kind: "spray" | "fertilizer"; lineId?: string; lineIndex: number };
+  remove: { kind: "spray" | "fertilizer"; lineId?: string; lineIndex: number }[];
+  productName: string; quantity: number; unit: string; rate: number; rateUnit: string;
+}): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const { data: activity } = await supabase.from("activity").select("id").eq("id", input.activityId).eq("farm_business_id", farm.id).maybeSingle();
+  if (!activity) throw new Error("Couldn't find that pass.");
+  const name = input.productName.trim();
+  let { data: prod } = await supabase.from("product").select("id").eq("farm_business_id", farm.id).eq("name", name).maybeSingle();
+  if (!prod?.id) {
+    const { data: created, error } = await supabase.from("product").insert({ farm_business_id: farm.id, category: "fertilizer", name, default_unit: input.unit }).select("id").single();
+    if (error || !created) throw new Error(`Product "${name}": ${error?.message ?? "couldn't create it"}`);
+    prod = created;
+  }
+  const table = (k: string) => (k === "spray" ? "spray_product_line" : "fertilizer_product_line");
+  if (!input.keep.lineId) throw new Error("That pass can't be edited - reload and try again.");
+  const { error: upErr } = await supabase.from(table(input.keep.kind))
+    .update({ product_id: prod!.id, quantity_used: input.quantity, quantity_unit: input.unit, rate: input.rate, rate_unit: input.rateUnit })
+    .eq("id", input.keep.lineId).eq("activity_id", input.activityId);
+  if (upErr) throw new Error(upErr.message);
+  for (const r of input.remove) {
+    if (!r.lineId) continue;
+    const { error } = await supabase.from(table(r.kind)).delete().eq("id", r.lineId).eq("activity_id", input.activityId);
+    if (error) throw new Error(error.message);
+  }
+}
+
 export type ProductLineEdit =
   | { kind: "spray" | "fertilizer"; activityId: string; lineId?: string; lineIndex: number; productName: string; rate: number; quantityUsed: number }
   | { kind: "seed"; activityId: string; seedProductName: string; seedingRate: number | null; acres: number | null };

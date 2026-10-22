@@ -518,3 +518,8 @@ export async function setProductPriceUnit(productName: string, fromUnit: string,
   if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).setProductPriceUnit(productName, fromUnit, toUnit);
   return demo.setProductPriceUnit(productName, fromUnit, toUnit);
 }
+
+export async function foldPassLines(input: Parameters<typeof demo.foldPassLines>[0]) {
+  if (await supabaseConfigured()) return (await import("@/lib/supabase/repo")).foldPassLines(input);
+  return demo.foldPassLines(input);
+}
