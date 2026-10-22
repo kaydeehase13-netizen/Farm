@@ -1832,6 +1832,10 @@ export async function allocateProductCostAction(input: {
   const farm = await getFarm();
   const needle = input.productName.trim().toLowerCase();
   if (!needle) throw new Error("Enter a product name to allocate.");
+  // "10-34-0", "10 34 0" and "10-34-0 " are the same product.
+  const squash = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const squashed = squash(needle);
+  const sameProduct = (x?: string) => !!x && (x.trim().toLowerCase() === needle || (squashed.length > 0 && squash(x) === squashed));
   if (!(input.totalAmount > 0)) throw new Error("Enter the total amount you paid.");
   const excluded = new Set(input.excludeFieldIds ?? []);
 
@@ -1848,9 +1852,15 @@ export async function allocateProductCostAction(input: {
   const usageByField = new Map<string, { fieldName: string; usage: number; unit?: string }>();
   let unmatchedUnits = false;
 
+  const skippedOwnInputs = new Map<string, string>(); // field -> grower
+  let zeroQuantity = 0;
   function addUsage(fieldId: string | undefined, fieldName: string | undefined, amount: number, unit?: string) {
-    if (!fieldId || !(amount > 0)) return;
-    if (ownInputsFieldIds.has(fieldId)) return;
+    if (!fieldId) return;
+    if (!(amount > 0)) { zeroQuantity++; return; }
+    if (ownInputsFieldIds.has(fieldId)) {
+      skippedOwnInputs.set(fieldNameById.get(fieldId) ?? fieldName ?? "a field", allFields.find((f) => f.id === fieldId)?.grower ?? "");
+      return;
+    }
     const existing = usageByField.get(fieldId);
     if (existing) {
       if (existing.unit && unit && existing.unit !== unit) unmatchedUnits = true;
@@ -1884,10 +1894,10 @@ export async function allocateProductCostAction(input: {
   const seedByAcres = seedSplitsByAcres(activities, needle);
   for (const a of activities) {
     for (const p of a.sprayProducts ?? []) {
-      if (p.productName.trim().toLowerCase() === needle) addUsage(a.fieldId, a.fieldName, p.quantityUsed, p.quantityUnit);
+      if (sameProduct(p.productName)) addUsage(a.fieldId, a.fieldName, p.quantityUsed, p.quantityUnit);
     }
     for (const p of a.fertilizerProducts ?? []) {
-      if (p.productName.trim().toLowerCase() === needle) addUsage(a.fieldId, a.fieldName, p.quantityUsed, p.quantityUnit);
+      if (sameProduct(p.productName)) addUsage(a.fieldId, a.fieldName, p.quantityUsed, p.quantityUnit);
     }
     if (a.seedProductName && a.seedProductName.trim().toLowerCase() === needle) {
       if (seedByAcres) {
@@ -1908,6 +1918,24 @@ export async function allocateProductCostAction(input: {
   const totalUsage = includedUsage.reduce((s, f) => s + f.usage, 0);
 
   if (fieldsUsage.length === 0 || totalUsage <= 0) {
+    // Say WHY nothing matched, not just that it didn't.
+    let why = "";
+    if (skippedOwnInputs.size > 0) {
+      const growersHit = [...new Set(skippedOwnInputs.values())].filter(Boolean);
+      why = `Every field that used "${input.productName}" in ${input.year} (${[...skippedOwnInputs.keys()].join(", ")}) belongs to ${growersHit.join(", ") || "a grower"}, marked "Buys own product" on Fields → Growers, so none of your cost goes there. If you paid for it, untick "Buys own product" for ${growersHit.length === 1 ? "that grower" : "those growers"} and allocate again.`;
+    } else if (zeroQuantity > 0) {
+      why = `"${input.productName}" is on ${zeroQuantity} pass${zeroQuantity === 1 ? "" : "es"} in ${input.year}, but with no amount used, so there's nothing to split by. Add the amount on those passes (field → Activity History) or add the fields by hand below.`;
+    } else {
+      const near = new Set<string>();
+      for (const a of activities) {
+        for (const p of [...(a.sprayProducts ?? []), ...(a.fertilizerProducts ?? [])]) {
+          const q = squash(p.productName ?? "");
+          if (q && squashed && (q.includes(squashed) || squashed.includes(q))) near.add(p.productName.trim());
+        }
+      }
+      if (near.size) why = `No ${input.year} pass is named exactly "${input.productName}", but these are close: ${[...near].slice(0, 5).join(", ")}. Use that name, or combine the names on the Inventory page.`;
+    }
+    if (why) return { allocated: false as const, message: why };
     return {
       allocated: false as const,
       message: excluded.size > 0 && fieldsUsage.length > 0
@@ -3047,7 +3075,8 @@ export async function planAutoAllocateAction(input: { years?: number[]; resplitO
   const [{ prices }, activities, farmCategories] = await Promise.all([
     repo.listProductPrices(), repo.listActivities({}), repo.listFarmCategories(),
   ]);
-  const key = (y: number, n: string) => `${y}::${n.trim().toLowerCase()}`;
+  // "10-34-0" and "10 34 0" are the same product.
+  const key = (y: number, n: string) => `${y}::${n.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
 
   // What each product was used on, per year.
   const used = new Map<string, string>(); // key -> activity type
