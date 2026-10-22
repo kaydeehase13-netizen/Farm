@@ -4,7 +4,7 @@ import { getViewTaxYear } from "@/lib/tax-year";
 import { ExportYearPicker } from "@/components/reports/export-year-picker";
 
 const REPORTS = [
-  { title: "Grower Billing", desc: "Product at cost + markup and per-acre work, by grower and field", href: "/reports/billing" },
+  { title: "Grower Billing", desc: "Product at cost + markup, and work by the acre or hour, by grower and field", href: "/reports/billing" },
   { title: "Income Summary", desc: "Income by source and category", href: "/money/transactions?type=income" },
   { title: "Expense Summary", desc: "Expenses by category", href: "/money/transactions?type=expense" },
   { title: "Field Profitability", desc: "Income, expense and margin per field", href: "/fields" },

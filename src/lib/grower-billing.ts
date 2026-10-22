@@ -4,13 +4,21 @@
  * Product: every product cost already split to fields by usage (Allocate
  * Product Cost) on that grower's fields, at your cost, plus the grower's
  * markup %. Work: every pass logged on their fields, acres x your per-acre
- * rate for that job type. Your own farm shows its cost only, never billed.
+ * rate for that job type; hourly jobs (harvest) are hours x your hourly
+ * rate, using the hours you enter for that grower (or the start/end times
+ * on the logged passes when none are entered). Your own farm shows its
+ * cost only, never billed.
  */
 import type { Activity, Field, Transaction } from "@/types/domain";
-import { BILLABLE_WORK, UNASSIGNED, type BillingRate, type Grower } from "@/lib/growers";
+import { BILLABLE_WORK, UNASSIGNED, defaultUnit, type BillingHours, type BillingRate, type Grower, type RateUnit } from "@/lib/growers";
 
 export interface ProductLine { productName: string; quantity: number; unit: string; cost: number }
-export interface WorkLine { type: string; label: string; passes: number; acres: number; rate: number; amount: number }
+export interface WorkLine {
+  type: string; label: string; passes: number; acres: number; rate: number; amount: number;
+  unit: RateUnit;
+  /** Hourly jobs: hours billed, hours from logged start/end times, and whether hours were entered by hand. */
+  hours: number; loggedHours: number; hoursEntered: boolean;
+}
 export interface FieldBill { fieldId: string; fieldName: string; acres: number; products: ProductLine[]; work: WorkLine[]; productCost: number; workTotal: number }
 export interface GrowerBill {
   grower: string; ownFarm: boolean; markupPct: number;
@@ -33,13 +41,25 @@ function addProduct(list: ProductLine[], name: string, qty: number, unit: string
   if (hit) { hit.quantity += qty; hit.cost += cost; } else list.push({ productName: name, quantity: qty, unit, cost });
 }
 
+/** Hours from a pass's start and end time ("07:30" / "2026-06-20T07:30"), 0 when not logged. */
+function loggedHours(a: Activity): number {
+  const t = (x?: string) => { const m = (x ?? "").match(/(\d{1,2}):(\d{2})/); return m ? Number(m[1]) + Number(m[2]) / 60 : null; };
+  const s = t(a.startTime), e = t(a.endTime);
+  if (s == null || e == null) return 0;
+  const h = e >= s ? e - s : e + 24 - s;
+  return h > 0 && h < 24 ? h : 0;
+}
+
 export function growerBilling(input: {
   fields: Field[]; growers: Grower[]; rates: BillingRate[]; transactions: Transaction[]; activities: Activity[];
+  hours?: BillingHours[];
 }): GrowerBill[] {
   const fieldById = new Map(input.fields.map((f) => [f.id, f]));
   const growerOf = (fieldId: string) => fieldById.get(fieldId)?.grower?.trim() || UNASSIGNED;
   const settings = new Map(input.growers.map((g) => [g.name.trim().toLowerCase(), g]));
   const rate = new Map(input.rates.map((r) => [r.activityType, r.ratePerAcre]));
+  const unitOf = (type: string): RateUnit => input.rates.find((r) => r.activityType === type)?.unit ?? defaultUnit(type);
+  const entered = new Map((input.hours ?? []).map((h) => [`${h.grower.trim().toLowerCase()}|${h.activityType}`, h.hours]));
   const label = new Map(BILLABLE_WORK.map((w) => [w.type, w.label]));
 
   const fb = new Map<string, FieldBill>();
@@ -72,10 +92,16 @@ export function growerBilling(input: {
     const acres = a.acres ?? fieldById.get(a.fieldId)?.acres ?? 0;
     const b = fieldBill(a.fieldId);
     const r = rate.get(type) ?? 0;
+    const unit = unitOf(type);
     let w = b.work.find((x) => x.type === type);
-    if (!w) { w = { type, label: label.get(type) ?? type, passes: 0, acres: 0, rate: r, amount: 0 }; b.work.push(w); }
-    w.passes += 1; w.acres += acres; w.amount += acres * r;
-    b.workTotal += acres * r;
+    if (!w) { w = { type, label: label.get(type) ?? type, passes: 0, acres: 0, rate: r, amount: 0, unit, hours: 0, loggedHours: 0, hoursEntered: false }; b.work.push(w); }
+    w.passes += 1; w.acres += acres;
+    if (unit === "hour") {
+      w.loggedHours += loggedHours(a);
+    } else {
+      w.amount += acres * r;
+      b.workTotal += acres * r;
+    }
   }
 
   const bills = new Map<string, GrowerBill>();
@@ -92,10 +118,29 @@ export function growerBilling(input: {
     for (const p of b.products) addProduct(bill.products, p.productName, p.quantity, p.unit, p.cost);
     for (const w of b.work) {
       const x = bill.work.find((y) => y.type === w.type);
-      if (x) { x.passes += w.passes; x.acres += w.acres; x.amount += w.amount; } else bill.work.push({ ...w });
+      if (x) { x.passes += w.passes; x.acres += w.acres; x.amount += w.amount; x.loggedHours += w.loggedHours; } else bill.work.push({ ...w });
     }
     bill.productCost += b.productCost;
     bill.workTotal += b.workTotal;
+  }
+
+  // Hourly jobs: hours entered for the grower (else logged times) x rate,
+  // spread over their fields by acres for the by-field view.
+  for (const bill of bills.values()) {
+    for (const w of bill.work) {
+      if (w.unit !== "hour") continue;
+      const typed = entered.get(`${bill.grower.toLowerCase()}|${w.type}`);
+      w.hoursEntered = typed != null;
+      w.hours = typed ?? r2(w.loggedHours);
+      w.amount = w.hours * w.rate;
+      bill.workTotal += w.amount;
+      for (const f of bill.fields) {
+        const fw = f.work.find((x) => x.type === w.type);
+        if (!fw || !w.acres) continue;
+        const share = fw.acres / w.acres;
+        fw.hours = r2(w.hours * share); fw.amount = w.amount * share; f.workTotal += fw.amount;
+      }
+    }
   }
 
   for (const bill of bills.values()) {

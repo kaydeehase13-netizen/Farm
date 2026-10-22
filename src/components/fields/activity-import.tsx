@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { parseCsv, rowsToObjects } from "@/lib/csv";
 import { importActivitiesAction, createFieldsForImportAction, allocateImportedProductCostsAction } from "@/lib/actions";
+import { AutoAllocate } from "@/components/fields/auto-allocate";
 import type { Field } from "@/types/domain";
 
 const CREATE_NEW = "__create_new__";
@@ -147,6 +148,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
   const [replaceOnMismatch, setReplaceOnMismatch] = useState(false);
+  const [importedYears, setImportedYears] = useState<number[]>([]);
   const [result, setResult] = useState<{ imported: number; repaired?: number; replaced?: number; failed: number; errors: string[]; createdFieldNames: string[]; skippedDuplicates?: number } | null>(null);
   const [costResult, setCostResult] = useState<Awaited<ReturnType<typeof allocateImportedProductCostsAction>> | null>(null);
 
@@ -314,6 +316,7 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
       }
     }
 
+    setImportedYears([...new Set(finalRows.map((r) => Number(r.activityDate?.slice(0, 4))).filter((y) => y > 0))]);
     setResult({ ...combined, createdFieldNames });
     setImporting(false);
     setStep("done");
@@ -513,6 +516,13 @@ export function ActivityImport({ fields }: { fields: Field[] }) {
               <li key={i}>{sk.productName} ({sk.year}) — {formatUsd(sk.total)}: {sk.reason}</li>
             ))}
           </ul>
+        </div>
+      )}
+      {result && importedYears.length > 0 && (
+        <div className="text-left bg-sage/20 border border-sage/40 rounded-lg p-3">
+          <div className="text-sm font-medium mb-1">Field costs</div>
+          <p className="text-xs text-charcoal/60 mb-1">Splitting what you paid (Prices Paid) and costs already on file across the new field data for {importedYears.sort().join(", ")}.</p>
+          <AutoAllocate years={importedYears} resplitOthers runKey={1} showButton={false} />
         </div>
       )}
       {result && result.failed > 0 && (

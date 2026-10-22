@@ -38,6 +38,7 @@ export interface DB {
   productPrices?: import("@/lib/product-prices").ProductPrice[];
   growers?: import("@/lib/growers").Grower[];
   billingRates?: import("@/lib/growers").BillingRate[];
+  billingHours?: import("@/lib/growers").BillingHours[];
   cattle?: import("@/lib/cattle").Cow[];
   inventoryItems: InventoryItem[];
   inventoryMovements: InventoryMovement[];

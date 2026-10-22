@@ -1797,6 +1797,7 @@ export async function addProductPrices(items: Omit<import("@/lib/product-prices"
 // Growers and billing rates - migration 0037.
 // -----------------------------------------------------------------------
 
+const MIGRATION_0038 = "One database step is needed first: in Supabase, open SQL Editor and run supabase/migrations/0038_billing_hours.sql.";
 const MIGRATION_0037 = "One database step is needed first: in Supabase, open SQL Editor and run supabase/migrations/0037_growers.sql.";
 
 export async function listGrowers(): Promise<{ growers: import("@/lib/growers").Grower[]; rates: import("@/lib/growers").BillingRate[]; needsMigration: boolean }> {
@@ -1811,7 +1812,7 @@ export async function listGrowers(): Promise<{ growers: import("@/lib/growers").
   }
   return {
     growers: (g.data ?? []).map((x: any) => ({ id: x.id, name: x.name, ownFarm: !!x.own_farm, suppliesOwnInputs: !!x.supplies_own_inputs, markupPct: Number(x.markup_pct ?? 0) })),
-    rates: (r.data ?? []).map((x: any) => ({ activityType: x.activity_type, ratePerAcre: Number(x.rate_per_acre ?? 0) })),
+    rates: (r.data ?? []).map((x: any) => ({ activityType: x.activity_type, ratePerAcre: Number(x.rate_per_acre ?? 0), unit: x.unit === "hour" ? "hour" as const : x.unit === "acre" ? "acre" as const : undefined })),
     needsMigration: false,
   };
 }
@@ -1830,15 +1831,36 @@ export async function saveGrowerSettings(input: { growers: import("@/lib/growers
   const drop = (existing ?? []).filter((x: any) => !keep.has((x.name ?? "").toLowerCase())).map((x: any) => x.id);
   if (drop.length) await supabase.from("grower").delete().in("id", drop);
   if (input.rates.length) {
-    const { error } = await supabase.from("billing_rate").upsert(input.rates.map((r) => ({
-      farm_business_id: farm.id, activity_type: r.activityType, rate_per_acre: r.ratePerAcre || 0, updated_at: now,
-    })), { onConflict: "farm_business_id,activity_type" });
+    const rows = input.rates.map((r) => ({
+      farm_business_id: farm.id, activity_type: r.activityType, rate_per_acre: r.ratePerAcre || 0, unit: r.unit ?? "acre", updated_at: now,
+    }));
+    let { error } = await supabase.from("billing_rate").upsert(rows, { onConflict: "farm_business_id,activity_type" });
+    if (error && missingSchema(error) && rows.some((x) => x.unit === "hour")) throw new Error(MIGRATION_0038);
+    if (error && missingSchema(error)) {
+      // 0038 not run yet: save without the unit column.
+      ({ error } = await supabase.from("billing_rate").upsert(rows.map(({ unit: _u, ...x }) => x), { onConflict: "farm_business_id,activity_type" }));
+    }
     if (error) throw new Error(missingSchema(error) ? MIGRATION_0037 : error.message);
   }
   for (const f of input.fieldGrowers) {
     const { error } = await supabase.from("field").update({ grower: f.grower?.trim() || null }).eq("id", f.fieldId).eq("farm_business_id", farm.id);
     if (error) throw new Error(missingSchema(error) ? MIGRATION_0037 : error.message);
   }
+}
+
+export async function listBillingHours(year: number): Promise<import("@/lib/growers").BillingHours[]> {
+  const { supabase, farm } = await ctx();
+  const { data, error } = await supabase.from("billing_hours").select("*").eq("farm_business_id", farm.id).eq("year", year);
+  if (error) { if (missingSchema(error)) return []; throw new Error(error.message); }
+  return (data ?? []).map((x: any) => ({ year: x.year, grower: x.grower, activityType: x.activity_type, hours: Number(x.hours ?? 0) }));
+}
+
+export async function saveBillingHours(h: import("@/lib/growers").BillingHours): Promise<void> {
+  const { supabase, farm } = await ctx();
+  const { error } = await supabase.from("billing_hours").upsert({
+    farm_business_id: farm.id, year: h.year, grower: h.grower, activity_type: h.activityType, hours: h.hours || 0, updated_at: new Date().toISOString(),
+  }, { onConflict: "farm_business_id,year,grower,activity_type" });
+  if (error) throw new Error(missingSchema(error) ? MIGRATION_0038 : error.message);
 }
 
 /** Prices Paid rows under any of these names move to one name (product merge). */

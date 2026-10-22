@@ -5,6 +5,7 @@ import { AllocateCostForm } from "@/components/fields/allocate-cost-form";
 import { AllocateCostBulkImport } from "@/components/fields/allocate-cost-bulk-import";
 import { GeneralCostForm, type SeedPlanting } from "@/components/fields/general-cost-form";
 import { ResplitAllButton } from "@/components/fields/resplit-all-button";
+import { AutoAllocate } from "@/components/fields/auto-allocate";
 import { distinctProductNames } from "@/lib/product-usage";
 import { SeedPoundRates, type SeedPlantingRow } from "@/components/fields/seed-pound-rates";
 
@@ -51,6 +52,11 @@ export default async function AllocateCostPage() {
         title="Allocate Product Cost by Field Usage"
         description="Enter what you actually paid for a fertilizer, seed, feed, or chemical — we'll split it across fields based on how much each field's logged activity used. Fields AgFiniti never covered can be added manually below."
       />
+      <div className="card p-4 mb-4 space-y-1">
+        <div className="text-sm font-semibold text-forest">From Prices Paid</div>
+        <p className="text-xs text-charcoal/55">Splits every product&apos;s Prices Paid total for each year onto the fields that used it. Runs on its own when you upload purchases or field data.</p>
+        <AutoAllocate />
+      </div>
       <ResplitAllButton years={years} defaultYear={taxYear} />
       <AllocateCostForm
         years={years}

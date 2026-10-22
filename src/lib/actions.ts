@@ -2814,6 +2814,12 @@ export async function assignGrowersFromFileAction(formData: FormData): Promise<{
   return { assigned: assign.size, unmatched };
 }
 
+export async function saveBillingHoursAction(h: { year: number; grower: string; activityType: string; hours: number }) {
+  if (!(h.hours >= 0)) throw new Error("Hours can't be negative.");
+  await repo.saveBillingHours({ ...h, hours: Math.round(h.hours * 100) / 100 });
+  revalidatePath("/reports/billing");
+}
+
 export async function saveGrowerSettingsAction(input: Parameters<typeof repo.saveGrowerSettings>[0]) {
   for (const g of input.growers) if (!g.name.trim()) throw new Error("Every grower needs a name.");
   await repo.saveGrowerSettings(input);
@@ -3013,9 +3019,107 @@ export async function resplitProductAction(input: { year: number; productName: s
   return reallocateProduct({ year: input.year, productName: input.productName });
 }
 
+/** One product/year to bring in line, run one per request by the browser (AutoAllocate). */
+export interface AutoAllocateStep {
+  year: number;
+  productName: string;
+  /** What Prices Paid says was paid that year; absent = just re-split the cost already on file. */
+  total?: number;
+  farmCategoryId?: string;
+  /** What's split to fields now, to show the change. */
+  current: number;
+}
+
+/**
+ * Plan for keeping field costs in line with Prices Paid and field data.
+ * Every product bought in a year (Prices Paid, by purchase date) that was
+ * also used on fields that year gets its full purchase total split by usage.
+ * With resplitOthers (after new field data), products already allocated
+ * some other way (receipts, by hand) are re-split by the new usage too,
+ * keeping their totals. Products bought but not used that year are listed
+ * so they can be checked (often bought one year, used the next).
+ */
+export async function planAutoAllocateAction(input: { years?: number[]; resplitOthers?: boolean }): Promise<{
+  steps: AutoAllocateStep[];
+  notUsed: { year: number; productName: string; total: number }[];
+  noDate: number;
+}> {
+  const [{ prices }, activities, farmCategories] = await Promise.all([
+    repo.listProductPrices(), repo.listActivities({}), repo.listFarmCategories(),
+  ]);
+  const key = (y: number, n: string) => `${y}::${n.trim().toLowerCase()}`;
+
+  // What each product was used on, per year.
+  const used = new Map<string, string>(); // key -> activity type
+  for (const a of activities) {
+    const y = Number(a.activityDate?.slice(0, 4));
+    if (!y) continue;
+    for (const p of a.sprayProducts ?? []) if (p.productName) used.set(key(y, p.productName), "spray");
+    for (const p of a.fertilizerProducts ?? []) if (p.productName) used.set(key(y, p.productName), "fertilize");
+    if (a.seedProductName) used.set(key(y, a.seedProductName), "plant");
+  }
+
+  const categoryFor = (priceCategory: string | undefined, activityType: string | undefined): string | undefined => {
+    const tries = [
+      ...(priceCategory ? [priceCategory.toLowerCase()] : []),
+      ...(activityType === "plant" ? ["seed"] : activityType === "fertilize" ? ["fertilizer", "fertiliser"] : activityType === "spray" ? ["chemical", "herbicide", "pesticide"] : []),
+    ];
+    for (const t of tries) {
+      const hit = farmCategories.find((c) => c.name.toLowerCase() === t) ?? farmCategories.find((c) => c.name.toLowerCase().includes(t));
+      if (hit) return hit.id;
+    }
+    return undefined;
+  };
+
+  // Prices Paid totals per year + product.
+  let noDate = 0;
+  const bought = new Map<string, { year: number; productName: string; total: number; category?: string }>();
+  for (const p of prices) {
+    const y = Number(p.purchaseDate?.slice(0, 4));
+    if (!y) { noDate++; continue; }
+    if (input.years?.length && !input.years.includes(y)) continue;
+    const k = key(y, p.productName);
+    const cur = bought.get(k) ?? { year: y, productName: p.productName.trim(), total: 0, category: p.category };
+    cur.total = Math.round((cur.total + p.totalAmount) * 100) / 100;
+    bought.set(k, cur);
+  }
+
+  const years = input.years?.length ? input.years : [...new Set([...bought.values()].map((b) => b.year))];
+  const allocatedNow = new Map<string, { productName: string; total: number }>();
+  for (const y of years) {
+    for (const a of await listAllocatedProductsAction(y)) allocatedNow.set(key(y, a.productName), a);
+  }
+
+  const steps: AutoAllocateStep[] = [];
+  const notUsed: { year: number; productName: string; total: number }[] = [];
+  for (const [k, b] of bought) {
+    const type = used.get(k);
+    if (!type) { notUsed.push({ year: b.year, productName: b.productName, total: b.total }); continue; }
+    const current = allocatedNow.get(k)?.total ?? 0;
+    if (!input.resplitOthers && Math.abs(current - b.total) < 0.01) continue; // already right
+    steps.push({ year: b.year, productName: allocatedNow.get(k)?.productName ?? b.productName, total: b.total, farmCategoryId: categoryFor(b.category, type), current });
+  }
+  if (input.resplitOthers) {
+    for (const [k, a] of allocatedNow) {
+      if (bought.has(k)) continue;
+      steps.push({ year: Number(k.slice(0, 4)), productName: a.productName, current: a.total });
+    }
+  }
+  steps.sort((a, b) => b.year - a.year || a.productName.localeCompare(b.productName));
+  notUsed.sort((a, b) => b.year - a.year || a.productName.localeCompare(b.productName));
+  return { steps, notUsed, noDate };
+}
+
+/** Run one planned step: split the Prices Paid total (or re-split what's on file) by current field usage. */
+export async function runAutoAllocateStepAction(step: AutoAllocateStep): Promise<ReallocationResult> {
+  return reallocateProduct({ year: step.year, productName: step.productName, newTotal: step.total, farmCategoryId: step.farmCategoryId });
+}
+
 /** "Re-split all" step 3: refresh pages once at the end. */
 export async function finishResplitAllAction(): Promise<void> {
   revalidateFieldCost();
+  revalidatePath("/reports/billing");
+  revalidatePath("/more/inventory");
 }
 
 /** Field page: change what a product cost in total for the year, and re-split it across its fields. */

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
-import { listFields, listGrowers, listTransactions, listActivities } from "@/lib/data/repo";
+import { listFields, listGrowers, listTransactions, listActivities, listBillingHours } from "@/lib/data/repo";
 import { growerBilling } from "@/lib/grower-billing";
 
 const CURRENCY = '"$"#,##0.00';
@@ -8,10 +8,10 @@ const CURRENCY = '"$"#,##0.00';
 /** Grower billing for a year: a summary tab, then one tab per grower (product, work, by field). */
 export async function GET(req: NextRequest) {
   const year = Number(req.nextUrl.searchParams.get("year")) || new Date().getFullYear();
-  const [fields, { growers, rates }, transactions, activities] = await Promise.all([
-    listFields(), listGrowers(), listTransactions({ taxYear: year, type: "expense" }), listActivities({ year }),
+  const [fields, { growers, rates }, transactions, activities, hours] = await Promise.all([
+    listFields(), listGrowers(), listTransactions({ taxYear: year, type: "expense" }), listActivities({ year }), listBillingHours(year),
   ]);
-  const bills = growerBilling({ fields, growers, rates, transactions, activities });
+  const bills = growerBilling({ fields, growers, rates, transactions, activities, hours });
 
   const wb = new ExcelJS.Workbook();
   const head = (ws: ExcelJS.Worksheet, row: number) => {
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
 
   for (const b of bills) {
     const ws = wb.addWorksheet(b.grower.replace(/[\\/?*[\]:]/g, " ").slice(0, 31) || "Grower");
-    ws.columns = [{ width: 30 }, { width: 14 }, { width: 10 }, { width: 14 }, { width: 14 }];
+    ws.columns = [{ width: 30 }, { width: 14 }, { width: 10 }, { width: 14 }, { width: 14 }, { width: 14 }];
     ws.addRow([`${b.grower} — ${year}`]).font = { bold: true, size: 13 };
     ws.addRow([]);
     ws.addRow(["Product", "Quantity", "Unit", "Cost"]); head(ws, ws.rowCount);
@@ -42,9 +42,12 @@ export async function GET(req: NextRequest) {
     ws.addRow(["Product at cost", null, null, b.productCost]).font = { bold: true };
     if (b.markup) ws.addRow([`Markup ${b.markupPct}%`, null, null, b.markup]);
     ws.addRow([]);
-    ws.addRow(["Work", "Passes", "Acres", "Rate / ac", "Amount"]); head(ws, ws.rowCount);
-    for (const w of b.work) { const r = ws.addRow([w.label, w.passes, Math.round(w.acres * 100) / 100, w.rate, w.amount]); r.getCell(4).numFmt = CURRENCY; r.getCell(5).numFmt = CURRENCY; }
-    ws.addRow(["Work total", null, null, null, b.workTotal]).font = { bold: true };
+    ws.addRow(["Work", "Passes", "Acres", "Hours", "Rate", "Amount"]); head(ws, ws.rowCount);
+    for (const w of b.work) {
+      const r = ws.addRow([w.label, w.passes, Math.round(w.acres * 100) / 100, w.unit === "hour" ? w.hours : null, w.rate ? `${w.rate.toFixed(2)} / ${w.unit === "hour" ? "hr" : "ac"}` : "", w.amount]);
+      r.getCell(6).numFmt = CURRENCY;
+    }
+    ws.addRow(["Work total", null, null, null, null, b.workTotal]).font = { bold: true };
     ws.addRow([]);
     ws.addRow([b.ownFarm ? "Your cost" : "TOTAL TO BILL", null, null, null, b.total]).font = { bold: true, size: 12 };
     ws.addRow([]);

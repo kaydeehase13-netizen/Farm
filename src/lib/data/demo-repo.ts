@@ -1353,6 +1353,17 @@ export function saveGrowerSettings(input: { growers: import("@/lib/growers").Gro
   });
 }
 
+export function listBillingHours(year: number) {
+  return (getDB().billingHours ?? []).filter((h) => h.year === year);
+}
+
+export function saveBillingHours(h: import("@/lib/growers").BillingHours) {
+  mutate((db) => {
+    db.billingHours = (db.billingHours ?? []).filter((x) => !(x.year === h.year && x.grower === h.grower && x.activityType === h.activityType));
+    db.billingHours.push(h);
+  });
+}
+
 export function renameProductPrices(names: string[], to: string) {
   const wanted = new Set(names.map((n) => n.trim().toLowerCase()));
   let n = 0;

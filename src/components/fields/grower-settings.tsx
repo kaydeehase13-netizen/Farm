@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { saveGrowerSettingsAction, assignGrowersFromFileAction } from "@/lib/actions";
-import { BILLABLE_WORK, type BillingRate, type Grower } from "@/lib/growers";
+import { BILLABLE_WORK, defaultUnit, type BillingRate, type Grower, type RateUnit } from "@/lib/growers";
 
 type FieldRow = { id: string; name: string; acres: number; grower?: string };
 
@@ -25,6 +25,8 @@ export function GrowerSettings({ fields, growers: initialGrowers, rates: initial
   const [assign, setAssign] = useState<Record<string, string>>(() => Object.fromEntries(fields.map((f) => [f.id, f.grower ?? ""])));
   const [rates, setRates] = useState<Record<string, string>>(() =>
     Object.fromEntries(BILLABLE_WORK.map((w) => [w.type, String(initialRates.find((r) => r.activityType === w.type)?.ratePerAcre ?? "")])));
+  const [units, setUnits] = useState<Record<string, RateUnit>>(() =>
+    Object.fromEntries(BILLABLE_WORK.map((w) => [w.type, initialRates.find((r) => r.activityType === w.type)?.unit ?? defaultUnit(w.type)])));
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [bulkTo, setBulkTo] = useState("");
   const [search, setSearch] = useState("");
@@ -48,7 +50,7 @@ export function GrowerSettings({ fields, growers: initialGrowers, rates: initial
       try {
         await saveGrowerSettingsAction({
           growers: growers.filter((g) => g.name.trim()).map((g) => ({ ...g, markupPct: Number(g.markupPct) || 0 })),
-          rates: BILLABLE_WORK.map((w) => ({ activityType: w.type, ratePerAcre: Number(rates[w.type]) || 0 })),
+          rates: BILLABLE_WORK.map((w) => ({ activityType: w.type, ratePerAcre: Number(rates[w.type]) || 0, unit: units[w.type] })),
           fieldGrowers: fields.filter((f) => (f.grower ?? "") !== (assign[f.id] ?? "")).map((f) => ({ fieldId: f.id, grower: assign[f.id] || null })),
         });
         setMsg("Saved.");
@@ -145,12 +147,21 @@ export function GrowerSettings({ fields, growers: initialGrowers, rates: initial
       </div>
 
       <div className="card p-5 space-y-3">
-        <div className="text-sm font-semibold text-forest">Work rates ($ per acre)</div>
-        <p className="text-xs text-charcoal/55">What you charge growers you farm for, per acre, for each pass. Leave blank for no charge.</p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="text-sm font-semibold text-forest">Work rates</div>
+        <p className="text-xs text-charcoal/55">
+          What you charge growers you farm for. Per acre = acres of every pass × rate. Per hour = the hours you type for each grower on the
+          Grower Billing report × rate (harvest starts per hour). Leave blank for no charge.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {BILLABLE_WORK.map((w) => (
             <label key={w.type} className="text-xs">{w.label}
-              <input className="input mt-0.5" type="number" step="0.25" min="0" value={rates[w.type] ?? ""} onChange={(e) => setRates((r) => ({ ...r, [w.type]: e.target.value }))} placeholder="0.00" />
+              <div className="flex gap-1 mt-0.5">
+                <input className="input" type="number" step="0.25" min="0" value={rates[w.type] ?? ""} onChange={(e) => setRates((r) => ({ ...r, [w.type]: e.target.value }))} placeholder="0.00" aria-label={`${w.label} rate`} />
+                <select className="input w-24! text-xs" value={units[w.type]} onChange={(e) => setUnits((u) => ({ ...u, [w.type]: e.target.value as RateUnit }))} aria-label={`${w.label} per`}>
+                  <option value="acre">/ acre</option>
+                  <option value="hour">/ hour</option>
+                </select>
+              </div>
             </label>
           ))}
         </div>

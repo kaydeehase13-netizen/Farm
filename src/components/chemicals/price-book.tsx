@@ -4,6 +4,7 @@ import { Fragment, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { summarizePrices, unitPrice, type ProductPrice } from "@/lib/product-prices";
 import type { AllocationPrice } from "@/lib/allocation-prices";
+import { AutoAllocate } from "@/components/fields/auto-allocate";
 import { addProductPriceAction, deleteProductPriceAction, deleteAllProductPricesAction, importProductPricesAction, setProductPriceUnitAction } from "@/lib/actions";
 
 /** Per-unit prices under $10 show 4 decimals ($0.3600/lb), bigger ones 2. */
@@ -36,6 +37,7 @@ export function PriceBook({ prices, fromAllocations = [], allocYear }: {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [allocRun, setAllocRun] = useState(0);
 
   const categories = Array.from(new Set(prices.map((p) => p.category).filter(Boolean) as string[])).sort();
   const stats = summarizePrices(prices).filter((s) =>
@@ -51,6 +53,7 @@ export function PriceBook({ prices, fromAllocations = [], allocYear }: {
         (res.duplicates ? `, ${res.duplicates} already on file` : "") +
         (res.skipped.length ? `, skipped ${res.skipped.length} without a quantity or unit` : "") + ".");
       router.refresh();
+      if (res.added > 0) setAllocRun((n) => n + 1);
     });
   }
 
@@ -95,13 +98,20 @@ export function PriceBook({ prices, fromAllocations = [], allocYear }: {
             </button>
           )}
         </form>
+        <div className="border-t border-charcoal/10 pt-2">
+          <p className="text-[11px] text-charcoal/50 mb-1">
+            New purchases are split onto the fields that used them that year automatically (purchase year = field year). Same as Allocate
+            Product Cost, just done for you.
+          </p>
+          <AutoAllocate runKey={allocRun} />
+        </div>
         <p className="text-[11px] text-charcoal/50">
           Excel columns: Product Name, Quantity, Unit, Total Amount (or Price per Unit), and optionally Category, Vendor, Date, Invoice.
           Your Allocate Product Cost workbook uploads as-is. Re-uploading the same file doesn&apos;t add anything twice.
         </p>
         {msg && <div className="text-sm text-forest">{msg}</div>}
         {err && <div className="text-sm text-status-red">{err}</div>}
-        {adding && <AddPurchase categories={categories} onDone={() => { setAdding(false); router.refresh(); }} />}
+        {adding && <AddPurchase categories={categories} onDone={() => { setAdding(false); router.refresh(); setAllocRun((n) => n + 1); }} />}
       </div>
 
       <div className="card p-5">

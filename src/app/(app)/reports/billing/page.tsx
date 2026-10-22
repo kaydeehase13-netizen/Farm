@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { listFields, listGrowers, listTransactions, listActivities } from "@/lib/data/repo";
+import { listFields, listGrowers, listTransactions, listActivities, listBillingHours } from "@/lib/data/repo";
+import { BillingHoursInput } from "@/components/reports/billing-hours-input";
 import { PageHeader } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 import { growerBilling } from "@/lib/grower-billing";
@@ -10,16 +11,16 @@ const qty = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 
 
 export default async function GrowerBillingPage() {
   const year = await getViewTaxYear();
-  const [fields, { growers, rates, needsMigration }, transactions, activities] = await Promise.all([
-    listFields(), listGrowers(), listTransactions({ taxYear: year, type: "expense" }), listActivities({ year }),
+  const [fields, { growers, rates, needsMigration }, transactions, activities, hours] = await Promise.all([
+    listFields(), listGrowers(), listTransactions({ taxYear: year, type: "expense" }), listActivities({ year }), listBillingHours(year),
   ]);
-  const bills = growerBilling({ fields, growers, rates, transactions, activities });
+  const bills = growerBilling({ fields, growers, rates, transactions, activities, hours });
 
   return (
     <div>
       <PageHeader
         title={`Grower Billing — ${year}`}
-        description="Product split to each grower's fields at your cost (+ their markup), and work at your per-acre rates. Change the year at the top of the page."
+        description="Product split to each grower's fields at your cost (+ their markup), and work at your rates (per acre, or per hour for harvest). Change the year at the top of the page."
         action={
           <div className="flex flex-wrap gap-2">
             <Link prefetch={false} href="/fields/growers" className="card px-4 py-2 text-sm font-medium hover:border-forest">Growers & rates</Link>
@@ -34,7 +35,8 @@ export default async function GrowerBillingPage() {
       )}
       <p className="text-xs text-charcoal/55 mb-4">
         Product comes from Allocate Product Cost (each product&apos;s bill split by how much each field used), so a product only shows here
-        once it&apos;s allocated for {year}. Work = acres of every logged pass × your rate for that job.
+        once it&apos;s allocated for {year}. Work = acres of every logged pass × your per-acre rate. Hourly jobs (harvest): type the hours
+        worked for each grower in the box.
       </p>
       <div className="space-y-5">
         {bills.map((b) => (
@@ -78,7 +80,16 @@ export default async function GrowerBillingPage() {
                     {b.work.map((w) => (
                       <tr key={w.type} className="border-t border-charcoal/10">
                         <td className="py-1 pr-2">{w.label}<span className="text-xs text-charcoal/50"> · {w.passes} pass{w.passes === 1 ? "" : "es"}</span></td>
-                        <td className="py-1 text-right text-xs text-charcoal/55 whitespace-nowrap">{qty(w.acres)} ac{w.rate ? ` × ${money(w.rate)}` : ""}</td>
+                        <td className="py-1 text-right text-xs text-charcoal/55 whitespace-nowrap">
+                          {w.unit === "hour" ? (
+                            b.ownFarm ? `${qty(w.acres)} ac` : (
+                              <span className="inline-flex items-center gap-1">
+                                <BillingHoursInput year={year} grower={b.grower} activityType={w.type} hours={w.hours} loggedHours={w.loggedHours} entered={w.hoursEntered} />
+                                {w.rate ? <span>× {money(w.rate)}</span> : <span className="text-status-amber">no rate</span>}
+                              </span>
+                            )
+                          ) : <>{qty(w.acres)} ac{w.rate ? ` × ${money(w.rate)}` : ""}</>}
+                        </td>
                         <td className="py-1 text-right whitespace-nowrap">{w.rate ? money(w.amount) : "—"}</td>
                       </tr>
                     ))}
