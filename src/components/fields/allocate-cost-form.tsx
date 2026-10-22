@@ -239,13 +239,17 @@ export function AllocateCostForm({
           list="product-names" className="input" value={productName}
           onChange={(e) => setProductName(e.target.value)}
           onBlur={(e) => lookup(e.target.value, year)}
-          placeholder="Must match the product name on your logged/imported field activities"
+          placeholder="e.g. 10-34-0, IVC Zinc 10%"
           required
         />
         <datalist id="product-names">
           {productNames.map((p) => <option key={p} value={p} />)}
         </datalist>
-        <p className="text-xs text-charcoal/45 mt-1">Match it to what shows up in a field&apos;s Activity History — e.g. the exact brand/product name from your equipment import.</p>
+        <p className="text-xs text-charcoal/45 mt-1">
+          {splitMode === "pick"
+            ? "Any name works when you pick the fields below — type it the way it's on the receipt."
+            : "Splitting by field passes? Use the name on the passes (field → Activity History). Not on any passes? Type any name and pick the fields below."}
+        </p>
       </label>
 
       {isLookingUp && <p className="text-xs text-charcoal/45">Checking for an existing entry…</p>}

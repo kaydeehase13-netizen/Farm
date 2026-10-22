@@ -1,4 +1,4 @@
-import { listActivities, listFarmCategories, listTaxYears, listFields } from "@/lib/data/repo";
+import { listActivities, listFarmCategories, listTaxYears, listFields, listProductPrices } from "@/lib/data/repo";
 import { PageHeader } from "@/components/ui/stat-card";
 import { getViewTaxYear } from "@/lib/tax-year";
 import { AllocateCostForm } from "@/components/fields/allocate-cost-form";
@@ -20,7 +20,12 @@ export default async function AllocateCostPage() {
   // Pull every product name we can see across all years so the form can
   // suggest one as you type, no matter which year you're allocating to.
   const allActivities = await listActivities({});
-  const productNames = distinctProductNames(allActivities);
+  // Plus everything in Prices Paid (zinc and anything else not on a pass).
+  const priced = await listProductPrices().then((r) => r.prices.map((p) => p.productName.trim())).catch(() => [] as string[]);
+  const seen = new Set<string>();
+  const productNames = [...distinctProductNames(allActivities), ...priced]
+    .filter((n) => { const k = n.toLowerCase(); if (!n || seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => a.localeCompare(b));
 
   // Seeds planted per year / field / seed product, for the general-cost form.
   const plantingTotals = new Map<string, SeedPlanting>();
